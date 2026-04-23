@@ -17,7 +17,7 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        jvmTarget = "17"
     }
 
     defaultConfig {
@@ -31,17 +31,34 @@ android {
         versionName = flutter.versionName
     }
 
+    packaging {
+        jniLibs.pickFirsts.add("lib/x86/libc++_shared.so")
+        jniLibs.pickFirsts.add("lib/x86_64/libc++_shared.so")
+        jniLibs.pickFirsts.add("lib/armeabi-v7a/libc++_shared.so")
+        jniLibs.pickFirsts.add("lib/arm64-v8a/libc++_shared.so")
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
         }
     }
 }
 
 flutter {
     source = "../.."
+}
+
+// Windows: AGP cannot create native-debug-symbols dir due to AccessDeniedException
+tasks.whenTaskAdded {
+    if (name.contains("mergeReleaseNativeDebugMetadata")) {
+        enabled = false
+    }
 }
 
 dependencies {
