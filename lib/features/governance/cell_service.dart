@@ -485,6 +485,8 @@ class CellService {
           ' inDismissed=${_dismissedCellIds.contains(cell.id)}');
     }
 
+    final myDid = IdentityService.instance.currentIdentity?.did;
+
     // Check tombstone first — dissolved cells NEVER come back.
     final existingOwned = _myCells.where((c) => c.id == cell.id).firstOrNull;
     final existingDiscovered =
@@ -503,6 +505,9 @@ class CellService {
       }
       print('[CELL-IMPORT] Decision: BLOCKED reason=tombstoned');
       print('[CELL-UPDATE] Decision: SKIPPED reason=tombstoned');
+      if (myDid != null && cell.createdBy == myDid) {
+        print('[AUTO-RECOVERY] Skipped (tombstoned): name="${cell.name}"');
+      }
       return;
     }
     final ownedIdx = _myCells.indexWhere((c) => c.id == cell.id);
@@ -520,6 +525,9 @@ class CellService {
         _notify();
       } else {
         print('[CELL-UPDATE] Decision: SKIPPED reason=name_unchanged (${existing.name})');
+      }
+      if (myDid != null && cell.createdBy == myDid) {
+        print('[AUTO-RECOVERY] Already in _myCells, skipping: name="${cell.name}"');
       }
       return;
     }
@@ -540,6 +548,21 @@ class CellService {
       print('[CELL-UPDATE] Decision: SKIPPED reason=older_than_wipe');
       return;
     }
+    // ── AUTO-RECOVERY: own cell discovered via Nostr signature after data loss ──
+    // Triggered when cell.createdBy matches the local DID (kryptographisch gesichert
+    // durch die Nostr-Schnorr-Signatur des Kind-30000 Events).  Idempotent: upsert
+    // statt insert, und der ownedIdx-Guard oben verhindert Doppel-Einträge.
+    if (myDid != null && cell.createdBy == myDid) {
+      print('[AUTO-RECOVERY] Found own cell via Nostr: name="${cell.name}" id=${cell.id} createdBy=${cell.createdBy}');
+      // Temporarily place in _discovered so claimDiscoveredCell() can locate it.
+      _discovered.removeWhere((c) => c.id == cell.id);
+      _discovered.add(cell);
+      await claimDiscoveredCell(cell.id);
+      print('[AUTO-RECOVERY] Founder membership restored: name="${cell.name}"');
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     _discovered.removeWhere((c) => c.id == cell.id);
     _discovered.add(cell);
     _notify();
