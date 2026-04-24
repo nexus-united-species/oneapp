@@ -8,18 +8,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Creates a fake GitHub releases/latest JSON response.
+/// Creates a fake version.json response matching the GitHub Pages format.
 http.Client _mockClient({
-  required String tagName,
-  String body = 'What is new',
+  required String version,
+  required int versionCode,
+  String releaseNotes = 'What is new',
+  String apkUrl = 'https://example.com/nexus.apk',
   int statusCode = 200,
-  List<Map<String, dynamic>> assets = const [],
+  int minVersionCode = 1,
 }) {
   final responseBody = jsonEncode({
-    'tag_name': tagName,
-    'body': body,
-    'html_url': 'https://github.com/example/releases/tag/$tagName',
-    'assets': assets,
+    'version': version,
+    'version_code': versionCode,
+    'release_notes': releaseNotes,
+    'apk_url': apkUrl,
+    'min_version_code': minVersionCode,
   });
   return MockClient((_) async => http.Response(responseBody, statusCode));
 }
@@ -105,62 +108,67 @@ void main() {
       SharedPreferences.setMockInitialValues({});
     });
 
-    test('returns UpdateInfo when remote is newer', () async {
+    test('returns UpdateInfo when remote version_code is higher', () async {
       final client = _mockClient(
-        tagName: 'v0.2.0',
-        body: 'Bug fixes and improvements.',
+        version: '0.2.0',
+        versionCode: 20,
+        releaseNotes: 'Bug fixes and improvements.',
+        apkUrl: 'https://example.com/nexus-v0.2.0.apk',
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 5,
       );
       expect(info, isNotNull);
-      expect(info!.version, 'v0.2.0');
+      expect(info!.version, '0.2.0');
       expect(info.releaseNotes, 'Bug fixes and improvements.');
+      expect(info.downloadUrl, 'https://example.com/nexus-v0.2.0.apk');
     });
 
-    test('returns null when remote equals local', () async {
-      final client = _mockClient(tagName: 'v0.1.3');
+    test('returns null when remote version_code equals local', () async {
+      final client = _mockClient(version: '0.1.9', versionCode: 9);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNull);
     });
 
-    test('returns null when remote is older than local', () async {
-      final client = _mockClient(tagName: 'v0.1.0');
+    test('returns null when remote version_code is lower than local', () async {
+      final client = _mockClient(version: '0.1.0', versionCode: 5);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNull);
     });
 
     test('returns null on HTTP error', () async {
-      final client = _mockClient(tagName: 'v9.9.9', statusCode: 500);
+      final client =
+          _mockClient(version: '9.9.9', versionCode: 999, statusCode: 500);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNull);
     });
 
-    test('does not crash when GitHub API is unreachable', () async {
+    test('does not crash when server is unreachable', () async {
       final client = MockClient((_) async => throw Exception('no network'));
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNull);
     });
 
     test('truncates release notes to 500 characters', () async {
       final longNotes = 'x' * 600;
-      final client = _mockClient(tagName: 'v1.0.0', body: longNotes);
+      final client =
+          _mockClient(version: '1.0.0', versionCode: 100, releaseNotes: longNotes);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNotNull);
       // 500 chars + '…' = 501
@@ -168,46 +176,86 @@ void main() {
       expect(info.releaseNotes.endsWith('…'), isTrue);
     });
 
-    test('prefers APK asset URL', () async {
+    test('uses apk_url as download URL', () async {
       final client = _mockClient(
-        tagName: 'v1.0.0',
-        assets: [
-          {
-            'name': 'nexus-v1.0.0.apk',
-            'browser_download_url': 'https://example.com/nexus.apk'
-          },
-          {
-            'name': 'nexus-v1.0.0.zip',
-            'browser_download_url': 'https://example.com/nexus.zip'
-          },
-        ],
+        version: '1.0.0',
+        versionCode: 100,
+        apkUrl: 'https://project-nexus-official.github.io/terminal/downloads/nexus-oneapp-v1.0.0.apk',
       );
-      // downloadUrl depends on platform; just verify it is not empty
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNotNull);
-      expect(info!.downloadUrl, isNotEmpty);
-    });
-
-    test('falls back to html_url when no matching asset exists', () async {
-      final client = _mockClient(tagName: 'v1.0.0');
-      final info = await UpdateService.instance.checkForUpdateWithMock(
-        client: client,
-        currentVersion: '0.1.3',
+      expect(
+        info!.downloadUrl,
+        'https://project-nexus-official.github.io/terminal/downloads/nexus-oneapp-v1.0.0.apk',
       );
-      expect(info, isNotNull);
-      expect(info!.downloadUrl,
-          'https://github.com/example/releases/tag/v1.0.0');
     });
   });
 
-  // ── 6-hour rate limit ────────────────────────────────────────────────────────
+  // ── 24-hour dialog throttle ──────────────────────────────────────────────────
 
-  group('6-hour rate limit', () {
+  group('24-hour dialog throttle', () {
+    test('shows dialog when never shown before', () async {
+      SharedPreferences.setMockInitialValues({});
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        skipDialogThrottle: false,
+      );
+      expect(info, isNotNull);
+    });
+
+    test('suppresses dialog when last shown < 24h ago', () async {
+      SharedPreferences.setMockInitialValues({
+        'last_update_dialog_shown': DateTime.now().toIso8601String(),
+      });
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        skipDialogThrottle: false,
+      );
+      expect(info, isNull);
+    });
+
+    test('shows dialog when last shown > 24h ago', () async {
+      SharedPreferences.setMockInitialValues({
+        'last_update_dialog_shown':
+            DateTime.now().subtract(const Duration(hours: 25)).toIso8601String(),
+      });
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        skipDialogThrottle: false,
+      );
+      expect(info, isNotNull);
+    });
+
+    test('checkNow bypasses the 24h throttle', () async {
+      // Even with a very recent dialog timestamp, checkNow must return UpdateInfo.
+      SharedPreferences.setMockInitialValues({
+        'last_update_dialog_shown': DateTime.now().toIso8601String(),
+      });
+      // checkNow calls _fetchAndEvaluate(skipDialogThrottle: true), which
+      // we mirror here via skipDialogThrottle: true.
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        skipDialogThrottle: true,
+      );
+      expect(info, isNotNull);
+    });
+  });
+
+  // ── 6-hour API rate limit ────────────────────────────────────────────────────
+
+  group('6-hour API rate limit', () {
     test('skips API call when last check was < 6 h ago', () async {
-      // Pre-seed SharedPreferences with a recent timestamp.
       SharedPreferences.setMockInitialValues({
         'nexus_last_update_check': DateTime.now().toIso8601String(),
       });
@@ -215,45 +263,47 @@ void main() {
       final client = MockClient((_) async {
         callCount++;
         return http.Response(
-            jsonEncode({'tag_name': 'v9.9.9', 'assets': [], 'html_url': ''}),
+            jsonEncode({
+              'version': '9.9.9',
+              'version_code': 999,
+              'release_notes': '',
+              'apk_url': '',
+              'min_version_code': 1,
+            }),
             200);
       });
-      // startPeriodicCheck respects the rate limit.
-      // We can't easily test the Timer, so test the underlying logic via
-      // checkForUpdateWithMock which bypasses the rate limit — confirm
-      // the counter increments, proving the guard only lives in
-      // _checkWithRateLimit (not in _fetchAndEvaluate itself).
+      // checkForUpdateWithMock bypasses the rate limit — confirms the network
+      // is still hit (rate limit lives only in _checkWithRateLimit, not here).
       await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.0',
+        currentVersionCode: 9,
       );
-      // _fetchAndEvaluate always hits the network; rate limit is in the caller.
       expect(callCount, 1);
     });
 
     test('skipped version is not shown again', () async {
       SharedPreferences.setMockInitialValues({
-        'nexus_skipped_version': 'v1.0.0',
+        'nexus_skipped_version': '1.0.0',
       });
-      final client = _mockClient(tagName: 'v1.0.0');
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNull);
     });
 
     test('a different version is shown even when another is skipped', () async {
       SharedPreferences.setMockInitialValues({
-        'nexus_skipped_version': 'v0.9.0',
+        'nexus_skipped_version': '0.9.0',
       });
-      final client = _mockClient(tagName: 'v1.0.0');
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
       expect(info, isNotNull);
-      expect(info!.version, 'v1.0.0');
+      expect(info!.version, '1.0.0');
     });
   });
 
@@ -262,25 +312,22 @@ void main() {
   group('UpdateService session control', () {
     test('dismissForSession clears current', () async {
       SharedPreferences.setMockInitialValues({});
-      final client = _mockClient(tagName: 'v2.0.0');
+      final client = _mockClient(version: '2.0.0', versionCode: 200);
       await UpdateService.instance.checkForUpdateWithMock(
         client: client,
-        currentVersion: '0.1.3',
+        currentVersionCode: 9,
       );
-      // current is set by the real singleton — we only test dismissForSession
-      // by verifying it sets current to null without throwing.
       expect(() => UpdateService.instance.dismissForSession(), returnsNormally);
       expect(UpdateService.instance.current, isNull);
     });
 
     test('skipVersion stores version and clears current', () async {
       SharedPreferences.setMockInitialValues({});
-      await UpdateService.instance.skipVersion('v2.0.0');
+      await UpdateService.instance.skipVersion('1.0.0');
       expect(UpdateService.instance.current, isNull);
 
-      // Confirm the version is now skipped.
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('nexus_skipped_version'), 'v2.0.0');
+      expect(prefs.getString('nexus_skipped_version'), '1.0.0');
     });
   });
 }

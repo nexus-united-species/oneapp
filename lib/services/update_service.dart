@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -20,7 +19,7 @@ class UpdateInfo {
   });
 }
 
-/// Checks GitHub Releases for available updates.
+/// Checks GitHub Pages version.json for available updates.
 ///
 /// Usage:
 /// ```dart
@@ -31,11 +30,13 @@ class UpdateService {
   UpdateService._();
   static final instance = UpdateService._();
 
-  static const _kApiUrl =
-      'https://api.github.com/repos/project-nexus-official/oneapp/releases/latest';
+  static const _kVersionJsonUrl =
+      'https://project-nexus-official.github.io/terminal/downloads/version.json';
   static const _kLastCheckKey = 'nexus_last_update_check';
+  static const _kLastDialogKey = 'last_update_dialog_shown';
   static const _kSkippedVersionKey = 'nexus_skipped_version';
   static const _checkIntervalHours = 6;
+  static const _dialogIntervalHours = 24;
 
   final _controller = StreamController<UpdateInfo?>.broadcast();
 
@@ -53,9 +54,9 @@ class UpdateService {
 
   /// Starts the periodic check cycle.
   ///
-  /// The first check respects the 6-hour rate limit — it is a no-op if the
-  /// last API call happened less than 6 h ago.  Subsequent checks run every
-  /// 6 hours via a background [Timer].
+  /// The first check respects the 6-hour rate limit. Subsequent checks run
+  /// every 6 hours via a background [Timer]. The dialog is shown at most once
+  /// per 24 hours.
   Future<void> startPeriodicCheck() async {
     await _checkWithRateLimit();
     _timer?.cancel();
@@ -71,9 +72,10 @@ class UpdateService {
     _timer = null;
   }
 
-  /// Forces an immediate GitHub API call regardless of the 6-hour rate limit.
-  /// Returns [UpdateInfo] if a newer version is available, null otherwise.
-  Future<UpdateInfo?> checkNow() => _fetchAndEvaluate();
+  /// Forces an immediate check, bypassing both the 6-hour API rate limit and
+  /// the 24-hour dialog throttle. Use this for the "Nach Updates suchen" button.
+  Future<UpdateInfo?> checkNow() =>
+      _fetchAndEvaluate(skipDialogThrottle: true);
 
   /// Hides the update banner for this session only (until next cold start).
   void dismissForSession() {
@@ -82,7 +84,7 @@ class UpdateService {
   }
 
   /// Permanently skips [version]: stores it in SharedPreferences so the banner
-  /// is never shown again for this specific release tag.
+  /// is never shown again for this specific release.
   Future<void> skipVersion(String version) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kSkippedVersionKey, version);
@@ -105,106 +107,111 @@ class UpdateService {
     await _fetchAndEvaluate();
   }
 
-  /// Fetches the latest release from GitHub, compares with the installed
-  /// version and updates [current] / [updateStream] if a newer version is
-  /// available.
+  /// Fetches version.json from GitHub Pages, compares version_code with the
+  /// installed build number, and updates [current] / [updateStream] if a newer
+  /// version is available and the 24-hour dialog throttle allows it.
   ///
-  /// [clientOverride] and [currentVersionOverride] are used in tests only.
+  /// [clientOverride] and [currentVersionCodeOverride] are used in tests only.
+  /// [skipDialogThrottle] bypasses the 24-hour dialog check (used by [checkNow]).
   Future<UpdateInfo?> _fetchAndEvaluate({
     http.Client? clientOverride,
-    String? currentVersionOverride,
+    int? currentVersionCodeOverride,
+    bool skipDialogThrottle = false,
   }) async {
     final ownClient = clientOverride == null;
     final client = clientOverride ?? http.Client();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          _kLastCheckKey, DateTime.now().toIso8601String());
+      await prefs.setString(_kLastCheckKey, DateTime.now().toIso8601String());
 
+      debugPrint('[UPDATE-CHECK] Checking: $_kVersionJsonUrl');
       final response = await client
-          .get(
-            Uri.parse(_kApiUrl),
-            headers: {'Accept': 'application/vnd.github+json'},
-          )
+          .get(Uri.parse(_kVersionJsonUrl))
           .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        debugPrint('[UPDATE-CHECK] Check failed (HTTP ${response.statusCode})');
+        return null;
+      }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final tagName = (data['tag_name'] as String? ?? '').trim();
-      final body = data['body'] as String? ?? '';
+      final remoteVersionCode = data['version_code'] as int? ?? 0;
+      final remoteVersion = data['version'] as String? ?? '';
+      final rawNotes = data['release_notes'] as String? ?? '';
       final releaseNotes =
-          body.length > 500 ? '${body.substring(0, 500)}…' : body;
+          rawNotes.length > 500 ? '${rawNotes.substring(0, 500)}…' : rawNotes;
+      final apkUrl = data['apk_url'] as String? ?? '';
 
-      // Find the best download URL for the current platform.
-      final assets = (data['assets'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      final downloadUrl =
-          _platformAssetUrl(assets) ?? (data['html_url'] as String? ?? _kApiUrl);
+      // Get local version_code from the build number (+N in pubspec.yaml).
+      final ownVersionCode = currentVersionCodeOverride ??
+          int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ??
+          0;
 
-      // Compare with the installed version.
-      final currentVer = currentVersionOverride ??
-          (await PackageInfo.fromPlatform()).version;
-      final remote = parseVersion(tagName);
-      final local = parseVersion(currentVer);
-      if (remote == null || local == null) return null;
-      if (!isNewer(remote, local)) return null;
+      debugPrint('[UPDATE-CHECK] Current: $ownVersionCode, Remote: $remoteVersionCode');
+
+      if (remoteVersionCode <= ownVersionCode) {
+        debugPrint('[UPDATE-CHECK] Up to date');
+        return null;
+      }
 
       // Check whether the user has permanently skipped this release.
       final skipped = prefs.getString(_kSkippedVersionKey);
-      if (skipped == tagName) return null;
+      if (skipped == remoteVersion) return null;
+
+      // 24-hour dialog throttle.
+      if (!skipDialogThrottle) {
+        final lastDialogStr = prefs.getString(_kLastDialogKey);
+        if (lastDialogStr != null) {
+          final lastDialog = DateTime.tryParse(lastDialogStr);
+          if (lastDialog != null &&
+              DateTime.now().difference(lastDialog).inHours <
+                  _dialogIntervalHours) {
+            debugPrint(
+                '[UPDATE-CHECK] Update available but dialog shown < 24h ago, skipping');
+            return null;
+          }
+        }
+      }
+
+      await prefs.setString(_kLastDialogKey, DateTime.now().toIso8601String());
+      debugPrint('[UPDATE-CHECK] Update available: v$remoteVersion — showing dialog');
 
       final info = UpdateInfo(
-        version: tagName,
+        version: remoteVersion,
         releaseNotes: releaseNotes,
-        downloadUrl: downloadUrl,
+        downloadUrl: apkUrl,
       );
       _current = info;
       _controller.add(info);
       return info;
     } catch (e) {
-      debugPrint('[UPDATE] check failed: $e');
+      debugPrint('[UPDATE-CHECK] Check failed (network error): $e');
       return null;
     } finally {
       if (ownClient) client.close();
     }
   }
 
-  /// Returns the browser_download_url of the first asset matching the current
-  /// platform's extension (.apk for Android, .zip for Windows), or null if
-  /// none is found.
-  String? _platformAssetUrl(List<Map<String, dynamic>> assets) {
-    String? suffix;
-    if (!kIsWeb) {
-      if (Platform.isAndroid) suffix = '.apk';
-      if (Platform.isWindows) suffix = '.zip';
-    }
-    if (suffix == null) return null;
-    for (final a in assets) {
-      final name = (a['name'] as String? ?? '').toLowerCase();
-      if (name.endsWith(suffix)) {
-        return a['browser_download_url'] as String?;
-      }
-    }
-    return null;
-  }
-
   // ── Test helpers ───────────────────────────────────────────────────────────
 
   /// For unit tests only: bypasses SharedPreferences rate limit and
   /// [PackageInfo.fromPlatform].
+  ///
+  /// Set [skipDialogThrottle] to false to test the 24-hour dialog throttle.
   @visibleForTesting
   Future<UpdateInfo?> checkForUpdateWithMock({
     required http.Client client,
-    required String currentVersion,
+    required int currentVersionCode,
+    bool skipDialogThrottle = true,
   }) =>
       _fetchAndEvaluate(
         clientOverride: client,
-        currentVersionOverride: currentVersion,
+        currentVersionCodeOverride: currentVersionCode,
+        skipDialogThrottle: skipDialogThrottle,
       );
 }
 
-// ── Pure version helpers (top-level, exported for testing) ───────────────────
+// ── Pure version helpers (kept for external use / tests) ─────────────────────
 
 /// Parses a semver-ish string into [major, minor, patch].
 ///
