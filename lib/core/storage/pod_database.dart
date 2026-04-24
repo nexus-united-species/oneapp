@@ -437,6 +437,16 @@ class PodDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tombstones_type ON tombstones(type)');
   }
 
+  /// Returns true if [table] exists in the database.
+  /// Used to guard RENAME / DROP migrations that have no IF NOT EXISTS variant.
+  static Future<bool> _hasTable(Database db, String table) async {
+    final result = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      [table],
+    );
+    return result.isNotEmpty;
+  }
+
   /// Returns true if [column] already exists in [table].
   /// Used to make ALTER TABLE … ADD COLUMN migrations idempotent: SQLite has no
   /// "ADD COLUMN IF NOT EXISTS" syntax, so we guard every column addition here.
@@ -620,7 +630,13 @@ class PodDatabase {
       // The old enc-blob table is preserved as proposals_legacy for recovery.
       // Actual data migration (decryption) happens in ProposalService.load()
       // since the encryption key is only available at runtime.
-      await db.execute('ALTER TABLE proposals RENAME TO proposals_legacy');
+      //
+      // Guard: proposals_legacy may already exist if this migration ran
+      // partially in a previous session (same root cause as cell_id duplicate).
+      if (!await _hasTable(db, 'proposals_legacy') &&
+          await _hasTable(db, 'proposals')) {
+        await db.execute('ALTER TABLE proposals RENAME TO proposals_legacy');
+      }
       await db.execute('''
         CREATE TABLE IF NOT EXISTS proposals (
           id                    TEXT PRIMARY KEY,
