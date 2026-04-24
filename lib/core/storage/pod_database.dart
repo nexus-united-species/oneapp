@@ -437,22 +437,37 @@ class PodDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tombstones_type ON tombstones(type)');
   }
 
+  /// Returns true if [column] already exists in [table].
+  /// Used to make ALTER TABLE … ADD COLUMN migrations idempotent: SQLite has no
+  /// "ADD COLUMN IF NOT EXISTS" syntax, so we guard every column addition here.
+  static Future<bool> _hasColumn(
+      Database db, String table, String column) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    return info.any((row) => row['name'] == column);
+  }
+
   static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       // Add encryption_public_key column to contacts (unencrypted, for quick lookup)
-      await db.execute(
-        'ALTER TABLE pod_contacts ADD COLUMN encryption_public_key TEXT',
-      );
+      if (!await _hasColumn(db, 'pod_contacts', 'encryption_public_key')) {
+        await db.execute(
+          'ALTER TABLE pod_contacts ADD COLUMN encryption_public_key TEXT',
+        );
+      }
       // Add encrypted flag to messages
-      await db.execute(
-        'ALTER TABLE pod_messages ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0',
-      );
+      if (!await _hasColumn(db, 'pod_messages', 'encrypted')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0',
+        );
+      }
     }
     if (oldVersion < 3) {
       // Add message_id column for deduplication (catches missed messages on restart)
-      await db.execute(
-        'ALTER TABLE pod_messages ADD COLUMN message_id TEXT',
-      );
+      if (!await _hasColumn(db, 'pod_messages', 'message_id')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN message_id TEXT',
+        );
+      }
     }
     if (oldVersion < 4) {
       // Add group_channels table for named multi-user channels.
@@ -467,15 +482,21 @@ class PodDatabase {
     }
     if (oldVersion < 5) {
       // Add local-state columns for message actions (favorite, delete, edit).
-      await db.execute(
-        'ALTER TABLE pod_messages ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0',
-      );
-      await db.execute(
-        'ALTER TABLE pod_messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
-      );
-      await db.execute(
-        'ALTER TABLE pod_messages ADD COLUMN edited_body TEXT',
-      );
+      if (!await _hasColumn(db, 'pod_messages', 'is_favorite')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+      if (!await _hasColumn(db, 'pod_messages', 'is_deleted')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+      if (!await _hasColumn(db, 'pod_messages', 'edited_body')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN edited_body TEXT',
+        );
+      }
     }
     if (oldVersion < 6) {
       // Add system_roles and channel_roles tables for the role hierarchy.
@@ -588,9 +609,11 @@ class PodDatabase {
     }
     if (oldVersion < 11) {
       // Add cell_id column to group_channels for cell-internal channels.
-      await db.execute(
-        'ALTER TABLE group_channels ADD COLUMN cell_id TEXT',
-      );
+      if (!await _hasColumn(db, 'group_channels', 'cell_id')) {
+        await db.execute(
+          'ALTER TABLE group_channels ADD COLUMN cell_id TEXT',
+        );
+      }
     }
     if (oldVersion < 12) {
       // G2: migrate proposals from enc-blob pattern to flat-column schema.
@@ -740,17 +763,21 @@ class PodDatabase {
     if (oldVersion < 15) {
       // Add nostr_event_id column to message_reactions so reaction deletions
       // (NIP-09 Kind-5) can be synced across devices via the reaction event ID.
-      await db.execute(
-        'ALTER TABLE message_reactions ADD COLUMN nostr_event_id TEXT',
-      );
+      if (!await _hasColumn(db, 'message_reactions', 'nostr_event_id')) {
+        await db.execute(
+          'ALTER TABLE message_reactions ADD COLUMN nostr_event_id TEXT',
+        );
+      }
     }
     if (oldVersion < 16) {
       // Add nostr_event_id column to group_channels so NIP-09 Kind-5 channel
       // deletion events can use the real 64-hex Nostr event ID in the e-tag
       // instead of the internal UUID (which violates NIP-01).
-      await db.execute(
-        'ALTER TABLE group_channels ADD COLUMN nostr_event_id TEXT',
-      );
+      if (!await _hasColumn(db, 'group_channels', 'nostr_event_id')) {
+        await db.execute(
+          'ALTER TABLE group_channels ADD COLUMN nostr_event_id TEXT',
+        );
+      }
     }
   }
 
