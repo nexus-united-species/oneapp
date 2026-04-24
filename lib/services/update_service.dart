@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -111,11 +112,14 @@ class UpdateService {
   /// installed build number, and updates [current] / [updateStream] if a newer
   /// version is available and the 24-hour dialog throttle allows it.
   ///
-  /// [clientOverride] and [currentVersionCodeOverride] are used in tests only.
+  /// [clientOverride], [currentVersionCodeOverride] and [platformOverride] are
+  /// used in tests only. [platformOverride] accepts `'android'` or `'windows'`
+  /// to simulate platform-specific URL selection without real device context.
   /// [skipDialogThrottle] bypasses the 24-hour dialog check (used by [checkNow]).
   Future<UpdateInfo?> _fetchAndEvaluate({
     http.Client? clientOverride,
     int? currentVersionCodeOverride,
+    String? platformOverride,
     bool skipDialogThrottle = false,
   }) async {
     final ownClient = clientOverride == null;
@@ -141,6 +145,10 @@ class UpdateService {
       final releaseNotes =
           rawNotes.length > 500 ? '${rawNotes.substring(0, 500)}…' : rawNotes;
       final apkUrl = data['apk_url'] as String? ?? '';
+      final exeUrl = data['exe_url'] as String? ?? '';
+
+      // Select the download URL for the current platform.
+      final downloadUrl = _selectDownloadUrl(apkUrl, exeUrl, platformOverride);
 
       // Get local version_code from the build number (+N in pubspec.yaml).
       final ownVersionCode = currentVersionCodeOverride ??
@@ -179,7 +187,7 @@ class UpdateService {
       final info = UpdateInfo(
         version: remoteVersion,
         releaseNotes: releaseNotes,
-        downloadUrl: apkUrl,
+        downloadUrl: downloadUrl,
       );
       _current = info;
       _controller.add(info);
@@ -197,18 +205,44 @@ class UpdateService {
   /// For unit tests only: bypasses SharedPreferences rate limit and
   /// [PackageInfo.fromPlatform].
   ///
+  /// [platformOverride]: `'android'` or `'windows'` to test platform-specific
+  /// URL selection. Defaults to `'android'` (the most common test case).
   /// Set [skipDialogThrottle] to false to test the 24-hour dialog throttle.
   @visibleForTesting
   Future<UpdateInfo?> checkForUpdateWithMock({
     required http.Client client,
     required int currentVersionCode,
+    String platformOverride = 'android',
     bool skipDialogThrottle = true,
   }) =>
       _fetchAndEvaluate(
         clientOverride: client,
         currentVersionCodeOverride: currentVersionCode,
+        platformOverride: platformOverride,
         skipDialogThrottle: skipDialogThrottle,
       );
+}
+
+// ── Platform helper ───────────────────────────────────────────────────────────
+
+/// Returns the appropriate download URL for the current platform.
+///
+/// On Windows → [exeUrl] (installer, opened via url_launcher in the UI).
+/// On all other platforms (Android, etc.) → [apkUrl].
+///
+/// [platformOverride] is used in tests only (`'android'` or `'windows'`).
+@visibleForTesting
+String selectDownloadUrl(String apkUrl, String exeUrl,
+    [String? platformOverride]) =>
+    _selectDownloadUrl(apkUrl, exeUrl, platformOverride);
+
+String _selectDownloadUrl(
+    String apkUrl, String exeUrl, String? platformOverride) {
+  if (platformOverride != null) {
+    return platformOverride == 'windows' ? exeUrl : apkUrl;
+  }
+  if (!kIsWeb && Platform.isWindows) return exeUrl;
+  return apkUrl;
 }
 
 // ── Pure version helpers (kept for external use / tests) ─────────────────────

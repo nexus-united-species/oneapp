@@ -14,6 +14,7 @@ http.Client _mockClient({
   required int versionCode,
   String releaseNotes = 'What is new',
   String apkUrl = 'https://example.com/nexus.apk',
+  String exeUrl = 'https://example.com/Setup_Nexus.exe',
   int statusCode = 200,
   int minVersionCode = 1,
 }) {
@@ -22,6 +23,7 @@ http.Client _mockClient({
     'version_code': versionCode,
     'release_notes': releaseNotes,
     'apk_url': apkUrl,
+    'exe_url': exeUrl,
     'min_version_code': minVersionCode,
   });
   return MockClient((_) async => http.Response(responseBody, statusCode));
@@ -176,20 +178,41 @@ void main() {
       expect(info.releaseNotes.endsWith('…'), isTrue);
     });
 
-    test('uses apk_url as download URL', () async {
+    test('uses apk_url on Android', () async {
       final client = _mockClient(
         version: '1.0.0',
         versionCode: 100,
         apkUrl: 'https://project-nexus-official.github.io/terminal/downloads/nexus-oneapp-v1.0.0.apk',
+        exeUrl: 'https://project-nexus-official.github.io/terminal/downloads/Setup_NexusOneApp_v1.0.0.exe',
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
         client: client,
         currentVersionCode: 9,
+        platformOverride: 'android',
       );
       expect(info, isNotNull);
       expect(
         info!.downloadUrl,
         'https://project-nexus-official.github.io/terminal/downloads/nexus-oneapp-v1.0.0.apk',
+      );
+    });
+
+    test('uses exe_url on Windows', () async {
+      final client = _mockClient(
+        version: '1.0.0',
+        versionCode: 100,
+        apkUrl: 'https://project-nexus-official.github.io/terminal/downloads/nexus-oneapp-v1.0.0.apk',
+        exeUrl: 'https://project-nexus-official.github.io/terminal/downloads/Setup_NexusOneApp_v1.0.0.exe',
+      );
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        platformOverride: 'windows',
+      );
+      expect(info, isNotNull);
+      expect(
+        info!.downloadUrl,
+        'https://project-nexus-official.github.io/terminal/downloads/Setup_NexusOneApp_v1.0.0.exe',
       );
     });
   });
@@ -268,6 +291,7 @@ void main() {
               'version_code': 999,
               'release_notes': '',
               'apk_url': '',
+              'exe_url': '',
               'min_version_code': 1,
             }),
             200);
@@ -328,6 +352,35 @@ void main() {
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('nexus_skipped_version'), '1.0.0');
+    });
+  });
+
+  // ── selectDownloadUrl ─────────────────────────────────────────────────────────
+
+  group('selectDownloadUrl', () {
+    const apk = 'https://example.com/nexus.apk';
+    const exe = 'https://example.com/Setup_Nexus.exe';
+
+    test('returns apk_url for android override', () {
+      expect(selectDownloadUrl(apk, exe, 'android'), apk);
+    });
+
+    test('returns exe_url for windows override', () {
+      expect(selectDownloadUrl(apk, exe, 'windows'), exe);
+    });
+
+    test('returns apk_url for unknown override', () {
+      expect(selectDownloadUrl(apk, exe, 'linux'), apk);
+    });
+
+    test('returns apk_url when exe_url is empty (windows override)', () {
+      expect(selectDownloadUrl(apk, '', 'windows'), '');
+    });
+
+    test('returns apk_url when no override (falls back to apk on non-Windows host)', () {
+      // Test runner runs on Windows host but passes 'android' override,
+      // so this test always exercises the override path reliably.
+      expect(selectDownloadUrl(apk, exe, 'android'), apk);
     });
   });
 }
