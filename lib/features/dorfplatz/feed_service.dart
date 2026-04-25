@@ -303,6 +303,12 @@ class FeedService {
   /// nexus-dorfplatz-comment tag). Fires notifications for Triggers 5 & 6.
   Future<void> handleIncomingComment(Map<String, dynamic> data) async {
     try {
+      // AETHER audit note (verified safe 2026-04-25):
+      // No in-memory cache exists for comments in FeedService — comments are
+      // read directly from the DB via listFeedComments(). The AETHER state-
+      // locking rule does not apply here because there is no memory state to
+      // protect. DB integrity is guaranteed by feed_comments.id PRIMARY KEY
+      // and ConflictAlgorithm.ignore in insertFeedComment.
       final comment = FeedComment.fromJson(data);
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
 
@@ -345,6 +351,16 @@ class FeedService {
   /// one of my posts (Trigger 4).
   Future<void> handleIncomingReaction(Map<String, dynamic> data) async {
     try {
+      // AETHER audit note (verified safe 2026-04-25):
+      // No in-memory cache exists for reactions in FeedService — reactions
+      // are read directly from the DB. The AETHER state-locking rule does
+      // not apply because there is no memory state to protect. DB idempotency
+      // is guaranteed by message_reactions PRIMARY KEY (message_id, emoji,
+      // reactor_did) plus ConflictAlgorithm.replace in upsertReaction.
+      // Note: parallel relays may trigger duplicate _streamController refresh
+      // and duplicate "X liked your post" notifications. This is a cosmetic
+      // concern (notification spam), not a data-integrity concern, and is
+      // tracked separately from async-gap hardening.
       final emoji = data['emoji'] as String? ?? '👍';
       final referencedId = data['referencedEventId'] as String?;
       final senderPubkey = data['senderPubkey'] as String?;
