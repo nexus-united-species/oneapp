@@ -438,11 +438,26 @@ class BackupService {
       // Fallback: internal documents (won't survive reinstall but always works).
       final docs = await getApplicationDocumentsDirectory();
       return Directory('${docs.path}/nexus_backups');
-    } else {
-      // Windows / Linux / macOS / iOS: documents directory.
-      final docs = await getApplicationDocumentsDirectory();
-      return Directory('${docs.path}/nexus_backups');
     }
+    if (Platform.isWindows) {
+      // Phase 6b.1: write backups to %USERPROFILE%\Documents\NEXUS\nexus_backups\
+      // instead of getApplicationDocumentsDirectory() (which on Windows
+      // resolves to %APPDATA%\com.nexus.oneapp\). The old path is removed
+      // when the user uninstalls — the new path survives install/uninstall
+      // cycles and is reachable from Windows Explorer under "Dokumente / NEXUS".
+      // The NEXUS\ parent folder is reserved for future siblings (logs,
+      // exports) so the file tree stays organised.
+      final profile = Platform.environment['USERPROFILE'];
+      if (profile != null && profile.isNotEmpty) {
+        return Directory('$profile\\Documents\\NEXUS\\nexus_backups');
+      }
+      // Fallback: app documents (won't survive reinstall but always works).
+      final docs = await getApplicationDocumentsDirectory();
+      return Directory('${docs.path}\\nexus_backups');
+    }
+    // Linux / macOS / iOS: app documents directory (sandboxed but stable).
+    final docs = await getApplicationDocumentsDirectory();
+    return Directory('${docs.path}/nexus_backups');
   }
 
   /// Keep at most [maxCount] backups, deleting the oldest.
