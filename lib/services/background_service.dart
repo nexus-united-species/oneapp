@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -68,6 +70,11 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
 
 @pragma('vm:entry-point')
 void _onStart(ServiceInstance service) async {
+  // Architektonischer Fix: Baut die Brücke zu nativen Plugins im Background Isolate auf,
+  // um MissingPluginExceptions und daraus resultierende Crash-Loops (z. B. bei Samsung) zu verhindern.
+  DartPluginRegistrant.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();
+
   bool paused = false;
   WebSocketChannel? ws;
   StreamSubscription<dynamic>? wsSub;
