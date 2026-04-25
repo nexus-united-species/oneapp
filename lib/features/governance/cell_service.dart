@@ -715,14 +715,21 @@ class CellService {
   Future<void> handleIncomingJoinRequest(CellJoinRequest req) async {
     // Only process if we manage this cell.
     if (!_myCells.any((c) => c.id == req.cellId)) return;
-    // Deduplicate.
-    final existing = _requests[req.cellId];
-    if (existing?.any((r) => r.id == req.id) ?? false) return;
 
+    // AETHER state-locking: dedup-check AND in-memory insert must happen
+    // together in the same synchronous microtask BEFORE any await. Two
+    // relays delivering the same Kind-31003 event in parallel would both
+    // pass the dedup check otherwise, both call upsertCellJoinRequest,
+    // both append to _requests, and the founder would receive two push
+    // notifications for the same request.
+    final list = (_requests[req.cellId] ??= []);
+    if (list.any((r) => r.id == req.id)) return;
+    list.add(req);
+    _notify();
+
+    // DB persistence after memory lock is established.
     await PodDatabase.instance.upsertCellJoinRequest(
         req.id, req.cellId, req.toJson(), isSent: false);
-    (_requests[req.cellId] ??= []).add(req);
-    _notify();
 
     // Notify founder/moderators.
     await NotificationService.instance.showGenericNotification(
