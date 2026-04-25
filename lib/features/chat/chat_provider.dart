@@ -228,7 +228,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // G2 governance – wire ProposalService callbacks to NostrTransport.
       _wireGovernanceTransport();
 
-      // Subscribe to events before starting
+      // ── AETHER pre-flight: register the four discovery/deletion listeners
+      // and load tombstones BEFORE _manager.start() so that no relay event
+      // can slip through during the start-up race window (~117 ms on Windows
+      // measured 2026-04). The four streams below feed _onChannelAnnounced
+      // and _onCellAnnounced, which both call isTombstoned* checks — those
+      // require GroupChannelService.load() to have completed first.
+      // CLAUDE.md rule: LISTENER VOR TRANSPORT-START.
+      await GroupChannelService.instance.load();
+      await GroupChannelService.instance.ensureDefaults(identity.did);
+      _channelAnnouncedSub?.cancel();
+      final preRegPlatform = defaultTargetPlatform.name;
+      final preRegTs = DateTime.now().toIso8601String();
+      print('[DISCOVERY-INIT] _onChannelAnnounced listener registered on '
+          '$preRegPlatform at $preRegTs (AETHER-RULES: PRE-START)');
+      _channelAnnouncedSub =
+          _nostrTransport!.onChannelAnnounced.listen(_onChannelAnnounced);
+      _channelDeletedSub?.cancel();
+      _channelDeletedSub =
+          _nostrTransport!.onChannelDeleted.listen(_onChannelDeletedFromNostr);
+      _nostrTransport!.onCellAnnounced.listen(_onCellAnnounced);
+      _nostrTransport!.onCellDeleted.listen(_onCellDeleted);
+
+      // Subscribe to TransportManager events before starting
       _msgSub = _manager.onMessageReceived.listen((msg) => _onMessageReceived(msg));
       _peersSub = _manager.onPeersChanged.listen((_) => notifyListeners());
 
@@ -242,24 +264,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _restoreNostrTimestamp();
       await _initNostrKeys(identity);
       await _initEncryptionKeys();
-
-      // Pre-register channel/cell discovery listeners BEFORE relay subscriptions
-      // open to prevent a race condition on fast networks (e.g. Windows ~117 ms).
-      // GroupChannelService.load() must run first so tombstones are populated.
-      await GroupChannelService.instance.load();
-      await GroupChannelService.instance.ensureDefaults(identity.did);
-      _channelAnnouncedSub?.cancel();
-      final preRegPlatform = defaultTargetPlatform.name;
-      final preRegTs = DateTime.now().toIso8601String();
-      print('[DISCOVERY-INIT] _onChannelAnnounced listener registered on '
-          '$preRegPlatform at $preRegTs');
-      _channelAnnouncedSub =
-          _nostrTransport!.onChannelAnnounced.listen(_onChannelAnnounced);
-      _channelDeletedSub?.cancel();
-      _channelDeletedSub =
-          _nostrTransport!.onChannelDeleted.listen(_onChannelDeletedFromNostr);
-      _nostrTransport!.onCellAnnounced.listen(_onCellAnnounced);
-      _nostrTransport!.onCellDeleted.listen(_onCellDeleted);
 
       await _startNostrIfConnected();
       _watchConnectivity();
