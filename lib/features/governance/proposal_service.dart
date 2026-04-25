@@ -83,6 +83,27 @@ class ProposalService {
   /// Tombstones are never cleared (except on full app data wipe).
   final Set<String> _proposalTombstones = {};
 
+  /// AETHER synchronous seen-set for incoming Kind-31010 proposal events.
+  /// Prevents duplicate audit log entries (PROPOSAL_EDITED, PROPOSAL_STATUS_
+  /// CHANGED) when two relays deliver the same event in parallel. Set is
+  /// cleared on app restart; cross-session dedup is provided by the
+  /// version-gating logic (version > existing.version) inside the handler.
+  final Set<String> _seenProposalEventIds = <String>{};
+
+  /// AETHER synchronous seen-set for incoming Kind-31011 vote events.
+  /// Prevents duplicate audit log entries (VOTE_CAST, VOTE_CHANGED) when
+  /// two relays deliver the same event in parallel. Set is cleared on
+  /// app restart; cross-session dedup is provided by the async
+  /// hasAuditEntryForNostrEvent DB check inside the handler.
+  final Set<String> _seenVoteEventIds = <String>{};
+
+  /// AETHER synchronous seen-set for incoming Kind-31013 decision records.
+  /// Prevents duplicate audit log entries (RESULT_CALCULATED) when two
+  /// relays deliver the same event in parallel. Set is cleared on app
+  /// restart; cross-session dedup is provided by the decision_records
+  /// proposal_id UNIQUE constraint at the DB level.
+  final Set<String> _seenDecisionEventIds = <String>{};
+
   static const _tombstonesKey = 'proposal_tombstones';
 
   final _streamCtrl = StreamController<void>.broadcast();
@@ -1024,6 +1045,21 @@ class ProposalService {
   /// entries are generated so both devices build an identical audit log.
   Future<void> handleIncomingProposal(NostrEvent event) async {
     print('[PROPOSAL] handleIncomingProposal: ${event.id}');
+
+    // AETHER state-locking: synchronous seen-set check by Nostr event ID.
+    // Two relays delivering the same Kind-31010 in parallel would otherwise
+    // both enter the existing-vs-new branching, both call _saveEditToDb +
+    // addAuditEntry (with freshly generated editIds/entryIds — no UNIQUE
+    // constraint to deduplicate them), and both mutate `existing` fields
+    // after multiple awaits. The version-gating (version > existing.version)
+    // remains the authoritative guard for legitimate edit ordering across
+    // sessions; this set only suppresses duplicate event-id deliveries
+    // within a session.
+    if (!_seenProposalEventIds.add(event.id)) {
+      print('[PROPOSAL] Proposal event already processed: ${event.id}');
+      return;
+    }
+
     try {
       final proposalId = event.tagValue('d');
       final cellId = event.tagValues('t')
@@ -1237,6 +1273,17 @@ class ProposalService {
   /// Processes a received Kind-31011 vote event from Nostr.
   Future<void> handleIncomingVote(NostrEvent event) async {
     print('[VOTE] handleIncomingVote: ${event.id}');
+
+    // AETHER state-locking: synchronous seen-set check by Nostr event ID.
+    // Same rationale as handleIncomingProposal — protects the audit log
+    // against duplicate VOTE_CAST/VOTE_CHANGED entries from parallel relay
+    // delivery while keeping the async hasAuditEntryForNostrEvent DB check
+    // (further down in the method) as cross-session dedup guard.
+    if (!_seenVoteEventIds.add(event.id)) {
+      print('[VOTE] Vote event already processed: ${event.id}');
+      return;
+    }
+
     try {
       // Skip echo of own votes – castVote() already wrote the audit entry locally.
       final myPubkey = getMyNostrPubkeyHex?.call();
@@ -1384,6 +1431,20 @@ class ProposalService {
   /// Processes a received Kind-31013 decision record from Nostr.
   Future<void> handleIncomingDecisionRecord(NostrEvent event) async {
     print('[PROPOSAL] handleIncomingDecisionRecord: ${event.id}');
+
+    // AETHER state-locking: synchronous seen-set check by Nostr event ID.
+    // Two relays delivering the same Kind-31013 in parallel would otherwise
+    // both pass the async _getDecisionRecordByProposal dedup check (since
+    // neither call has yet written to DB), both insert RESULT_CALCULATED
+    // audit entries (with freshly generated entryIds — no UNIQUE constraint),
+    // and both fire _notify(). The decision_records.proposal_id UNIQUE
+    // constraint protects the DB itself across sessions; this set adds
+    // protection for the audit trail and UI refresh within a session.
+    if (!_seenDecisionEventIds.add(event.id)) {
+      print('[PROPOSAL] Decision record event already processed: ${event.id}');
+      return;
+    }
+
     try {
       final cellId = event.tagValues('t')
           .where((v) => v.startsWith('nexus-cell-'))
