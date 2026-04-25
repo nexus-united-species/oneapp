@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/contacts/contact_service.dart';
 import '../../core/identity/identity_service.dart';
@@ -1218,6 +1219,61 @@ class _BackupSectionState extends State<_BackupSection> {
     );
   }
 
+  Future<void> _exportBackup() async {
+    final svc = BackupService.instance;
+
+    // Windows: open Explorer at the backup directory so the user can
+    // copy backups manually to cloud / USB / external drive.
+    if (Platform.isWindows) {
+      final dirPath = await svc.getBackupDirectoryPath();
+      if (dirPath == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup-Ordner nicht gefunden.')),
+        );
+        return;
+      }
+      // Ensure the directory exists so Explorer doesn't error out.
+      try {
+        await Directory(dirPath).create(recursive: true);
+      } catch (_) {}
+      try {
+        await Process.start('explorer.exe', [dirPath]);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Explorer konnte nicht geöffnet werden: $e')),
+        );
+      }
+      return;
+    }
+
+    // Android / iOS / macOS: share the newest backup via the system share
+    // sheet so the user can route it to cloud storage, e-mail, messengers.
+    final backups = await svc.findBackups();
+    if (backups.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Noch kein Backup zum Teilen vorhanden.'),
+        ),
+      );
+      return;
+    }
+    try {
+      await Share.shareXFiles(
+        [XFile(backups.first.path)],
+        subject: 'NEXUS Backup',
+        text: 'Verschlüsseltes Backup. Nur mit deiner Seed Phrase entschlüsselbar.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Teilen fehlgeschlagen: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final svc = BackupService.instance;
@@ -1249,6 +1305,22 @@ class _BackupSectionState extends State<_BackupSection> {
           subtitle: const Text('Daten aus einem Backup importieren'),
           trailing: const Icon(Icons.chevron_right),
           onTap: _restoreFromFile,
+        ),
+        ListTile(
+          leading: Icon(
+            Platform.isWindows
+                ? Icons.folder_open_outlined
+                : Icons.share_outlined,
+            color: AppColors.gold,
+          ),
+          title: Text(Platform.isWindows
+              ? 'Backup-Ordner öffnen'
+              : 'Backup teilen'),
+          subtitle: Text(Platform.isWindows
+              ? 'Im Windows Explorer anzeigen, um Backup zu kopieren'
+              : 'In Cloud, E-Mail oder andere App exportieren'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _exportBackup,
         ),
         SwitchListTile(
           secondary: const Icon(Icons.schedule_outlined,

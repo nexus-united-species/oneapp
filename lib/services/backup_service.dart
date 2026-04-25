@@ -276,6 +276,20 @@ class BackupService {
     }
   }
 
+  /// Public path to the backup directory used for the current platform.
+  /// Returns `null` if the directory cannot be resolved (extremely rare).
+  /// Used by the settings screen to open Windows Explorer at this location
+  /// or to expose the path in user-facing dialogs.
+  Future<String?> getBackupDirectoryPath() async {
+    try {
+      final dir = await _backupDirectory();
+      return dir.path;
+    } catch (e) {
+      debugPrint('[BACKUP] getBackupDirectoryPath error: $e');
+      return null;
+    }
+  }
+
   /// Returns preview info for a backup file without restoring.
   /// Returns null if the file cannot be decrypted (wrong key / corrupted).
   Future<BackupFileInfo?> previewBackup(String path, String mnemonic) async {
