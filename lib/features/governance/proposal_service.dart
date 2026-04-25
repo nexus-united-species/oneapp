@@ -268,8 +268,12 @@ class ProposalService {
     final myDid = IdentityService.instance.currentIdentity!.did;
     _checkCanCreateProposal(proposal.cellId, myDid);
 
-    await _saveProposalToDb(proposal);
+    // AETHER state-locking: write in-memory first (synchronous, same microtask)
+    // so concurrent relay echoes cannot insert a phantom duplicate during the
+    // DB await window.
     _proposals[proposal.id] = proposal;
+
+    await _saveProposalToDb(proposal);
     _notify();
     debugPrint('[PROPOSAL] Draft created: ${proposal.id}');
     return proposal;
@@ -1189,8 +1193,14 @@ class ProposalService {
               : null,
         );
 
-        await _saveProposalToDb(proposal);
+        // AETHER state-locking: write in-memory first (synchronous, same microtask).
+        // Two relays can deliver the same Kind-31010 within milliseconds; both
+        // fall into this else-branch because _proposals[proposalId] is still null.
+        // Locking the map BEFORE the DB await prevents UNIQUE-constraint failures
+        // and phantom duplicates.
         _proposals[proposalId] = proposal;
+
+        await _saveProposalToDb(proposal);
 
         await addAuditEntry(AuditLogEntry(
           entryId: AuditLogEntry.generateId(),
@@ -1324,14 +1334,19 @@ class ProposalService {
           .firstOrNull;
       final isChange = existing != null;
 
-      // DB: upsert handles UNIQUE(proposal_id, voter_pubkey) replacement.
-      await _saveVoteToDb(vote);
-
-      // Memory: replace.
+      // AETHER state-locking: build the new list and replace _votes[proposalId]
+      // synchronously BEFORE the DB await. A parallel relay echoing the same
+      // vote would otherwise see the still-old list, build its own "updated"
+      // copy, and overwrite ours after both DB upserts complete — losing one
+      // of the two memory replacements depending on scheduling order.
+      // List.from is a shallow copy; we never mutate the previous list.
       final updated = List<Vote>.from(existingVotes)
         ..removeWhere((v) => v.voterPubkey == event.pubkey);
       updated.add(vote);
       _votes[proposalId] = updated;
+
+      // DB: upsert handles UNIQUE(proposal_id, voter_pubkey) replacement.
+      await _saveVoteToDb(vote);
 
       if (isChange) {
         print('[VOTE] Updated (replaced existing)');
