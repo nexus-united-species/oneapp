@@ -755,10 +755,6 @@ class CellService {
       decidedBy: myDid,
       decidedAt: now,
     );
-    await PodDatabase.instance.updateCellJoinRequestStatus(
-        req.id, 'approved', myDid, now);
-
-    // Create member record.
     final newMember = CellMember(
       cellId: req.cellId,
       did: req.requesterDid,
@@ -766,27 +762,41 @@ class CellService {
       role: MemberRole.member,
       confirmedBy: myDid,
     );
-    await PodDatabase.instance.upsertCellMember(
-        req.cellId, req.requesterDid, newMember.toJson());
 
-    // Update in-memory state.
+    // AETHER state-locking: update all in-memory state SYNCHRONOUSLY before
+    // any DB await. A double-tap on the approve button or a re-entrant call
+    // through the UI would otherwise cause both calls to take stale snapshots
+    // of _requests/_members across the await points, leading to lost in-memory
+    // updates or duplicate member entries. DB persistence follows after.
+    // Variant A (Optimistic UI): chosen for snappy founder UX. Local SQLite
+    // failures are extremely rare and would surface as catastrophic errors.
     final reqList = _requests[req.cellId];
     final idx = reqList?.indexWhere((r) => r.id == req.id) ?? -1;
     if (idx >= 0) reqList![idx] = updated;
-    (_members[req.cellId] ??= [])
-        .removeWhere((m) => m.did == req.requesterDid);
-    (_members[req.cellId] ??= []).add(newMember);
+    final memberList = (_members[req.cellId] ??= []);
+    memberList.removeWhere((m) => m.did == req.requesterDid);
+    memberList.add(newMember);
 
-    // Update member count on cell.
+    // Update member count on cell (in-memory).
     final cellIdx = _myCells.indexWhere((c) => c.id == req.cellId);
+    Cell? updatedCell;
     if (cellIdx >= 0) {
-      final memberCount = (_members[req.cellId]?.length ?? 1);
-      _myCells[cellIdx] = _myCells[cellIdx].copyWith(memberCount: memberCount);
-      await PodDatabase.instance.upsertCell(
-          _myCells[cellIdx].id, _myCells[cellIdx].toJson());
+      final memberCount = memberList.length;
+      updatedCell = _myCells[cellIdx].copyWith(memberCount: memberCount);
+      _myCells[cellIdx] = updatedCell;
     }
 
     _notify();
+
+    // DB persistence after memory lock is established.
+    await PodDatabase.instance.updateCellJoinRequestStatus(
+        req.id, 'approved', myDid, now);
+    await PodDatabase.instance.upsertCellMember(
+        req.cellId, req.requesterDid, newMember.toJson());
+    if (updatedCell != null) {
+      await PodDatabase.instance.upsertCell(
+          updatedCell.id, updatedCell.toJson());
+    }
     debugPrint('[CELLS] Approved request ${req.id} for ${req.requesterPseudonym}');
     print('[JOIN] Request approved by founder for: ${req.requesterPseudonym}');
     print('[JOIN] Member added + cell channels subscribed');
@@ -1146,13 +1156,30 @@ class CellService {
     }
 
     if (!_myCells.any((c) => c.id == cell.id)) {
+      // AETHER state-locking: add to in-memory _myCells SYNCHRONOUSLY before
+      // the DB await. Two relays delivering the same Kind-31004 in parallel
+      // would otherwise both pass the _myCells.any() check (since neither
+      // call has yet appended), both call upsertCell, and both append to
+      // _myCells — causing the cell to appear twice in the list and the
+      // _members/_requests maps to be reset twice (potentially clobbering a
+      // member already added by a concurrent call).
+      // The Post-Await Tombstone Guard below remains as second line of
+      // defence: if a cell-dissolution event arrives during upsertCell, we
+      // must undo BOTH the DB insert and the in-memory additions.
+      _myCells.add(cell);
+      _members[cell.id] = [];
+      _requests[cell.id] = [];
+
       await PodDatabase.instance.upsertCell(cell.id, cell.toJson());
 
       // Guard 2 (post-await): a dissolution event may have arrived and saved
       // its tombstone while we were waiting for the DB write above.
       if (_deletedCellIds.contains(cell.id) ||
           _dismissedCellIds.contains(cell.id)) {
-        // Undo the DB insert — tombstone wins.
+        // Undo BOTH the DB insert and the in-memory additions — tombstone wins.
+        _myCells.removeWhere((c) => c.id == cell.id);
+        _members.remove(cell.id);
+        _requests.remove(cell.id);
         await PodDatabase.instance.deleteCell(cell.id);
         if (kDebugMode) {
           print('[ZOMBIE-V2] Post-await guard triggered for ${cell.id} —'
@@ -1168,9 +1195,6 @@ class CellService {
         print('[ZOMBIE-V2] Decision: ADDED to myCells (source: membership_confirmed)');
       }
       print('[CELL-IMPORT] Decision: ALLOWED reason=membership_confirmed_Kind31004');
-      _myCells.add(cell);
-      _members[cell.id] = [];
-      _requests[cell.id] = [];
     }
 
     (_members[cell.id] ??= []).removeWhere((m) => m.did == member.did);
