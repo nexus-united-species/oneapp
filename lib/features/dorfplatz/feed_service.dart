@@ -231,15 +231,20 @@ class FeedService {
       final post = FeedPost.fromJson(data);
 
       // ── Case 2: post already known — check for visibility expansion ────────
+      // AETHER state-locking: if visibility expansion applies, update the
+      // in-memory cache SYNCHRONOUSLY before the DB await. Two relays echoing
+      // the same expansion event would otherwise both pass the index lookup,
+      // both run async DB updates, and parallel _posts.insert calls from
+      // other concurrent handleIncomingPost invocations could shift indices
+      // mid-flight, causing the wrong slot to be overwritten.
       final existingIdx = _posts.indexWhere((p) => p.id == post.id);
       if (existingIdx != -1) {
         final existing = _posts[existingIdx];
         if (post.visibility.index > existing.visibility.index) {
-          // Visibility was expanded by the author — update DB and in-memory cache.
           final updated = existing.copyWith(visibility: post.visibility);
-          await PodDatabase.instance.updateFeedPost(existing.id, updated.toJson());
           _posts[existingIdx] = updated;
           _streamController.add(null);
+          await PodDatabase.instance.updateFeedPost(existing.id, updated.toJson());
           debugPrint('[FEED] Visibility updated ${post.id}: '
               '${existing.visibility.name} → ${post.visibility.name}');
         }
@@ -257,11 +262,19 @@ class FeedService {
       if (_mutedAuthors.contains(post.authorDid)) return;
 
       // ── Case 1: new post ───────────────────────────────────────────────────
-      await PodDatabase.instance.insertFeedPost(post.toJson());
+      // AETHER state-locking: insert into in-memory cache SYNCHRONOUSLY before
+      // the DB await. Two relays delivering the same Kind-1/Kind-6 event in
+      // parallel would otherwise both pass the dedup checks (since _posts
+      // doesn't yet contain the post), both call insertFeedPost, and both
+      // append to _posts — causing duplicate posts in the feed and a
+      // UNIQUE-constraint failure on one of the DB inserts. Optimistic UI
+      // update: variant A (snappy feed). Local SQLite failures are extremely
+      // rare and would surface as catastrophic errors anyway.
       _posts
         ..insert(0, post)
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       _streamController.add(null);
+      await PodDatabase.instance.insertFeedPost(post.toJson());
 
       // Trigger 7: Repost of my post
       if (post.isRepost && post.repostOf != null) {
