@@ -817,6 +817,21 @@ class CellService {
       onMemberApproved!(req.cellId, req.requesterPseudonym);
       print('[JOIN] Welcome message posted');
     }
+
+    // Broadcast Kind-31005 'joined' to all cell members so their quorum
+    // calculations stay in sync (G2 prerequisite). Unlike the gated
+    // Kind-31004 confirmation above (which only reaches the new member),
+    // this update goes to everyone subscribed to the cell's
+    // member-update stream. Idempotency on the receiver side is provided
+    // by the synchronous any()-check in handleMemberLeft, so the
+    // founder's own echo of this event is harmless.
+    if (onPublishMemberUpdate != null) {
+      onPublishMemberUpdate!(
+          cellId: req.cellId,
+          targetDid: req.requesterDid,
+          action: 'joined');
+      print('[JOIN] Published Kind-31005 member-joined for cell ${req.cellId}');
+    }
   }
 
   /// Rejects a join request silently (no feedback sent to requester).
@@ -996,10 +1011,19 @@ class CellService {
 
   /// Called on ANY device when a Kind-31005 member-update event is received.
   ///
-  /// - If [action] == `'left'`: the member voluntarily left → update member
-  ///   list on the founder's / other members' devices.
-  /// - If [action] == `'removed'` and [targetDid] == my DID: I was kicked →
-  ///   clean up my local state.
+  /// Handles three actions:
+  /// - 'left':    voluntary departure of [targetDid] from [cellId].
+  /// - 'removed': admin/founder removed [targetDid] from [cellId].
+  ///              If [targetDid] equals our own DID, dismisses the cell
+  ///              entirely on this device.
+  /// - 'joined':  Phase 5 — broadcast that [targetDid] was approved into
+  ///              the cell. Inserts a stub member entry so quorum
+  ///              calculations on this device match the founder's view.
+  ///              Pseudonym is unknown at this point; UI fills it in
+  ///              when the new member surfaces in the discussion channel.
+  ///
+  /// Method name retained for backwards compatibility; consider rename
+  /// to handleMemberUpdate in a future cleanup pass.
   Future<void> handleMemberLeft(
       String cellId, String targetDid, String action) async {
     final myDid = IdentityService.instance.currentIdentity?.did;
@@ -1026,8 +1050,54 @@ class CellService {
       return;
     }
 
-    // Someone else left or was removed — update member list if we manage this cell.
+    // Member-update for a cell — only relevant if I'm a member myself.
     if (!_myCells.any((c) => c.id == cellId)) return;
+
+    if (action == 'joined') {
+      // Phase 5: Someone joined a cell I'm a member of. Insert a stub
+      // CellMember so quorum calculations stay in sync with the founder.
+      // AETHER state-locking: synchronous insert + count update before
+      // any DB await. The any()-idempotency check protects against the
+      // founder's own echo of this event (the founder already inserted
+      // the full member record in approveRequest before publishing).
+      final memberList = (_members[cellId] ??= []);
+      if (memberList.any((m) => m.did == targetDid)) {
+        // Already known locally — founder echo or duplicate relay delivery.
+        return;
+      }
+      final stubMember = CellMember(
+        cellId: cellId,
+        did: targetDid,
+        joinedAt: DateTime.now().toUtc(),
+        role: MemberRole.member,
+        confirmedBy: '', // unknown to non-founder devices
+      );
+      memberList.add(stubMember);
+
+      // Update member count on cell (in-memory).
+      final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
+      Cell? updatedCell;
+      if (cellIdx >= 0) {
+        final memberCount = memberList.length;
+        updatedCell = _myCells[cellIdx].copyWith(memberCount: memberCount);
+        _myCells[cellIdx] = updatedCell;
+      }
+
+      _notify();
+
+      // DB persistence after memory lock is established.
+      await PodDatabase.instance.upsertCellMember(
+          cellId, targetDid, stubMember.toJson());
+      if (updatedCell != null) {
+        await PodDatabase.instance.upsertCell(
+            updatedCell.id, updatedCell.toJson());
+      }
+
+      print('[CELL] Member $targetDid joined cell $cellId — stub inserted');
+      return;
+    }
+
+    // Default path: action == 'left' or 'removed' for someone other than me.
     _members[cellId]?.removeWhere((m) => m.did == targetDid);
     await PodDatabase.instance.deleteCellMember(cellId, targetDid);
 
