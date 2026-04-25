@@ -37,13 +37,18 @@ final router = GoRouter(
     // No identity → force onboarding.
     if (!hasIdentity && !isOnboarding) return '/onboarding';
 
-    // Identity just created / restored → check if principles flow is needed.
-    if (hasIdentity && isOnboarding) {
-      return PrinciplesService.instance.hasSeen ? '/home' : '/principles/intro';
-    }
-
     final isBackupSetup = path.startsWith('/backup-setup');
     final isRestoreBackup = path.startsWith('/onboarding/restore-backup');
+
+    // Identity just created / restored → check if principles flow is needed.
+    // Exception: /onboarding/restore-backup is allowed to render so the user
+    // can recover their backup BEFORE the principles flow. The backup itself
+    // contains principles state and other settings; intercepting here would
+    // skip the recovery dialog entirely (Phase 6a fix — Gemini audit
+    // 2026-04-25 confirmed this redirect was swallowing the RestoreBackupScreen).
+    if (hasIdentity && isOnboarding && !isRestoreBackup) {
+      return PrinciplesService.instance.hasSeen ? '/home' : '/principles/intro';
+    }
 
     // Already in the app but principles not yet seen → intercept.
     if (hasIdentity && !isOnboarding && !isPrinciples && !isBackupSetup && !isRestoreBackup) {
