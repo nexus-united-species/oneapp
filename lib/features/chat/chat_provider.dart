@@ -1022,6 +1022,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         _nostrTransport!.currentGeohash =
             geohashEncode(pos.latitude, pos.longitude);
+        notifyListeners();
       }
     } catch (_) {
       // Location unavailable – skip geohash

@@ -133,6 +133,90 @@ class _CellHubScreenState extends State<CellHubScreen> {
       appBar: AppBar(
         title: const Text('Meine Zellen'),
         backgroundColor: AppColors.deepBlue,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            tooltip: 'Geohash-Diagnose',
+            onPressed: () {
+              final geohash = context
+                  .read<ChatProvider>()
+                  .nostrTransport
+                  ?.currentGeohash;
+              final localCells = CellService.instance.allKnownCells
+                  .where((c) => c.cellType == CellType.local)
+                  .toList();
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: AppColors.surface,
+                  title: const Text(
+                    'Geohash-Diagnose',
+                    style: TextStyle(color: AppColors.gold),
+                  ),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Eigener Geohash:',
+                          style: TextStyle(
+                            color: AppColors.onDark.withValues(alpha: 0.6),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          geohash ?? '(kein)',
+                          style: const TextStyle(
+                            color: AppColors.onDark,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Lokale Zellen (${localCells.length}):',
+                          style: TextStyle(
+                            color: AppColors.onDark.withValues(alpha: 0.6),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        if (localCells.isEmpty)
+                          const Text(
+                            '(keine)',
+                            style: TextStyle(color: AppColors.onDark),
+                          )
+                        else
+                          ...localCells.map(
+                            (c) => Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Text(
+                                '${c.name}\n  geohash: ${c.geohash ?? 'null'}',
+                                style: const TextStyle(
+                                  color: AppColors.onDark,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text(
+                        'Schließen',
+                        style: TextStyle(color: AppColors.gold),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
       ),
       backgroundColor: AppColors.deepBlue,
       floatingActionButton: canCreate
@@ -574,13 +658,14 @@ List<Cell> _recommendedCells(List<Cell> discovered) {
 }
 
 /// Returns local cells sorted by geohash proximity.
-/// A common prefix of >= 2 characters (approx. 600-1200 km) is considered nearby (Covers the whole Canary Islands).
+/// A common prefix of >= 1 characters (approx. 2500 km) is considered nearby.
+/// Covers large regions to avoid Geohash grid-line cuts.
 List<Cell> _nearbyCells(List<Cell> all, String? myGeohash) {
   if (myGeohash == null) return [];
   final local = all.where((c) =>
       c.cellType == CellType.local &&
       c.geohash != null &&
-      geohashCommonPrefixLength(c.geohash!, myGeohash) >= 2);
+      geohashCommonPrefixLength(c.geohash!, myGeohash) >= 1);
   final sorted = local.toList()
     ..sort((a, b) {
       final pa = geohashCommonPrefixLength(a.geohash!, myGeohash);
