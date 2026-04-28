@@ -796,25 +796,31 @@ class PodDatabase {
       }
     }
     if (oldVersion < 17) {
-      await db.execute("""
-        DELETE FROM group_channels WHERE nostr_event_id IN (
-          '881751f9dbe748496cfcf98aa8b946fd20244e9aed35aaa7f42b04777a34e561',
-          'baab2017a6719b423fe0870a6943c29399e267c70c0f7797b10e0b127860a694',
-          '384c394158bd323f07678663cd1a9bc2530e928fec7264059cb09769ef268c73',
-          'b1746802a3c1d21603283a9755664f23df91eee9e629563d7f4e1b3f0e9cb61f',
-          '10dbb2d4179e98e21f669831d90a9335cf35a6b60034c0836b45a732fc8b6964',
-          'b5bf5ba81877a71a6a249cf564d1dea2ebf6c870f0cb5161d4568f77043bea47',
-          'cea8748c8e06de3afcdc57593b6da85386f88132d9a78b15c133e1f486b93320',
-          'c1ee3c295667599b1a0b33eeab02418d95e4501f948c3bb9c093ecbdc850ae6f',
-          'c1ef4569a8eba143b05c9fac93349bb4a022824a13bdbd772fd3ccc704931899',
-          '65799550672f24dc51bdedad72f6b6e1b28cafe1ae9c5e0f384858134dd996c6',
-          '003b0f9c4c420302a297c9843f5de8384d4b8e33498e80b6032a81579e410073',
-          'd1e13d92ba157c72373ab3939d241ab3848b10a8b2d71eb977539ea005c9d751',
-          '8ad049519ec4561a9785015179696a405ee9a14334c255947c9639c92c4b9105',
-          '1e05fd1578b44cd203dca1fc0e4d5c138804c65ecda486fbdec253490168df30'
-        )
-      """);
-      print('[DB-MIGRATION-17] Zombie channels purged');
+      final cols = await db.rawQuery('PRAGMA table_info(group_channels)');
+      final hasNostrEventId = cols.any((c) => c['name'] == 'nostr_event_id');
+      if (hasNostrEventId) {
+        await db.execute("""
+          DELETE FROM group_channels WHERE nostr_event_id IN (
+            '881751f9dbe748496cfcf98aa8b946fd20244e9aed35aaa7f42b04777a34e561',
+            'baab2017a6719b423fe0870a6943c29399e267c70c0f7797b10e0b127860a694',
+            '384c394158bd323f07678663cd1a9bc2530e928fec7264059cb09769ef268c73',
+            'b1746802a3c1d21603283a9755664f23df91eee9e629563d7f4e1b3f0e9cb61f',
+            '10dbb2d4179e98e21f669831d90a9335cf35a6b60034c0836b45a732fc8b6964',
+            'b5bf5ba81877a71a6a249cf564d1dea2ebf6c870f0cb5161d4568f77043bea47',
+            'cea8748c8e06de3afcdc57593b6da85386f88132d9a78b15c133e1f486b93320',
+            'c1ee3c295667599b1a0b33eeab02418d95e4501f948c3bb9c093ecbdc850ae6f',
+            'c1ef4569a8eba143b05c9fac93349bb4a022824a13bdbd772fd3ccc704931899',
+            '65799550672f24dc51bdedad72f6b6e1b28cafe1ae9c5e0f384858134dd996c6',
+            '003b0f9c4c420302a297c9843f5de8384d4b8e33498e80b6032a81579e410073',
+            'd1e13d92ba157c72373ab3939d241ab3848b10a8b2d71eb977539ea005c9d751',
+            '8ad049519ec4561a9785015179696a405ee9a14334c255947c9639c92c4b9105',
+            '1e05fd1578b44cd203dca1fc0e4d5c138804c65ecda486fbdec253490168df30'
+          )
+        """);
+        print('[DB-MIGRATION-17] Zombie channels purged');
+      } else {
+        print('[DB-MIGRATION-17] nostr_event_id Spalte fehlt — Migration übersprungen');
+      }
     }
   }
 
