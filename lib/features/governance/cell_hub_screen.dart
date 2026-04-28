@@ -574,13 +574,13 @@ List<Cell> _recommendedCells(List<Cell> discovered) {
 }
 
 /// Returns local cells sorted by geohash proximity.
-/// A common prefix of ≥4 characters (≈40 km) is considered "nearby".
+/// A common prefix of >= 3 characters (approx. 150 km) is considered nearby.
 List<Cell> _nearbyCells(List<Cell> all, String? myGeohash) {
   if (myGeohash == null) return [];
   final local = all.where((c) =>
       c.cellType == CellType.local &&
       c.geohash != null &&
-      geohashCommonPrefixLength(c.geohash!, myGeohash) >= 4);
+      geohashCommonPrefixLength(c.geohash!, myGeohash) >= 3);
   final sorted = local.toList()
     ..sort((a, b) {
       final pa = geohashCommonPrefixLength(a.geohash!, myGeohash);

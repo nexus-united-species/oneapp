@@ -54,3 +54,8 @@ app.*.map.json
 
 # Claude Code auto-memory
 /memory/
+
+# Relay-Tools (Einmal-Skripte)
+query_relay.js
+run_kill.js
+node_modules/

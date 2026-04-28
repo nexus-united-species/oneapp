@@ -366,7 +366,7 @@ class NostrTransport implements MessageTransport {
         DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
     final since = _lastMessageTimestampSeconds != null
         ? _lastMessageTimestampSeconds! - 60
-        : nowSeconds - 86400;
+        : nowSeconds - 86400 * 30;
     final subId = _relayManager.subscribe({
       'kinds': [NostrKind.channelMessage],
       '#t': [nostrTag],
