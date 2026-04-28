@@ -468,6 +468,11 @@ class CellService {
   /// Announcements older than the last wipe are silently ignored so zombie
   /// cells from relays do not re-appear after a debug reset or cleanup.
   Future<void> addDiscoveredCell(Cell cell, {int? nostrCreatedAt, bool ownDevice = false}) async {
+    final lowerName = cell.name.toLowerCase().trim();
+    if (lowerName == 'test' || lowerName == 'test lokal') {
+      print('[ZOMBIE-CELL] Blocked old test cell: ${cell.name}');
+      return;
+    }
     print('[CELL-IMPORT] Incoming Kind-30000: cellId=${cell.id}, name="${cell.name}"');
     print('[CELL-IMPORT] Membership check: isMember=${_myCells.any((c) => c.id == cell.id)},'
         ' wasLeave=${_dismissedCellIds.contains(cell.id)}');

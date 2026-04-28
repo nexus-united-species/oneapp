@@ -69,6 +69,14 @@ class GroupChannelService {
       // Load tombstones FIRST so we can filter _joined against them immediately.
       _deletedChannelIds = await PodDatabase.instance.listDeletedChannelIds();
       _deletedChannelNames = await PodDatabase.instance.listDeletedChannelNames();
+      // Hardcoded Zombie-Purge (gefilterte Liste)
+      final zombies = ['#test-sync-2', '#test-sync-4', '#test-sync-6', '#test-sync-1', '#test-sync--1', '#test-9', '#test--9', '#test-7', '#testkanal-sync', '#test', '#fehler-in-der-oneapp-melden', '#bug-melden', '#test9', '#test7', '#testsnyc-6', '#testsync-6', '#test-snyc-6'];
+      for (final z in zombies) {
+        if (!_deletedChannelNames.contains(z)) {
+          _deletedChannelNames.add(z);
+          await PodDatabase.instance.addDeletedChannelName(z);
+        }
+      }
       debugPrint('[CHANNEL-LOAD] Tombstones geladen: '
           '${_deletedChannelIds.length} IDs, '
           '${_deletedChannelNames.length} Namen');
@@ -114,6 +122,11 @@ class GroupChannelService {
           '${deletedOnes.map((c) => c.name).toList()}');
       for (final ch in _joined) {
         debugPrint('[CHANNEL-LOAD]   • ${ch.name} id=${ch.id}');
+      }
+      // Amnestie für bugs-aenderungen (falls lokal geblockt)
+      if (_deletedChannelNames.contains('#bugs-aenderungen')) {
+        _deletedChannelNames.remove('#bugs-aenderungen');
+        await PodDatabase.instance.testDb.execute("DELETE FROM tombstones WHERE id = '#bugs-aenderungen'");
       }
     } catch (e) {
       debugPrint('[CHANNEL-LOAD] Error: $e');
