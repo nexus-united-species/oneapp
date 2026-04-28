@@ -1,3 +1,6 @@
 {
-  "superadmin_did": "did:key:z6MkmRLeGBZTxoPMu48eXs9GHNPVJa1iNCzH9QCneWmy8TwK"
+  "superadmin_did": "did:key:z6MkmRLeGBZTxoPMu48eXs9GHNPVJa1iNCzH9QCneWmy8TwK",
+  "bootstrap_cell_authors": [
+    "6e814fa74c665755564560473d8e9a70a538c720c0d8dd005aed62359aafdadb"
+  ]
 }

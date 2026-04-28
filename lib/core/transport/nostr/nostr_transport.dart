@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cryptography/cryptography.dart' show AesCbc, MacAlgorithm,
     SecretKey, SecretBox, Mac;
 
+import '../../../core/config/system_config.dart';
 import '../../../core/contacts/contact_service.dart';
 import '../../../core/identity/profile.dart';
 import '../../../core/identity/profile_service.dart';
@@ -81,6 +82,9 @@ class NostrTransport implements MessageTransport {
 
   // nostrTag → subscription ID for joined group channels
   final Map<String, String> _channelSubIds = {};
+
+  // Tombstones für Kind-5 Events, die vor dem Kind-40 ankamen.
+  final Set<String> _pendingChannelTombstones = {};
 
   final _channelAnnouncedController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -1380,6 +1384,16 @@ class NostrTransport implements MessageTransport {
     });
     print('[CELL] Subscribed to cell announcements, subId=$_cellSubId');
 
+    // Bootstrap-authors fallback: some relays don't index custom #t tags.
+    final bootstrapCellAuthors = SystemConfig.instance.bootstrapCellAuthors;
+    if (bootstrapCellAuthors.isNotEmpty) {
+      _relayManager.subscribe({
+        'kinds': [NostrKind.cellAnnounce],
+        'authors': bootstrapCellAuthors,
+      });
+      print('[CELL] Bootstrap authors sub: $bootstrapCellAuthors');
+    }
+
     // Cell join requests (Kind-31003) — founders receive these from non-contacts.
     if (_cellJoinSubId != null) _relayManager.closeSubscription(_cellJoinSubId!);
     _cellJoinSubId = _relayManager.subscribe({
@@ -1706,6 +1720,8 @@ class NostrTransport implements MessageTransport {
             resolvedIds.add(ch.id);
           } else {
             print('[CHANNEL-DELETE-RECV]   → no in-memory channel for eventId=${eventId.substring(0, 8)}…');
+            _pendingChannelTombstones.add(eventId);
+            print('[KIND5-PENDING] Added to pending tombstones: ${eventId.substring(0, 8)}…');
           }
         }
       }
@@ -1953,6 +1969,10 @@ class NostrTransport implements MessageTransport {
       print('[CHANNEL-SYNC] Received Kind-40 event: name=$channelName '
           'id=$channelId from=$shortSender…');
       // Emit so GroupChannelService / ChatProvider can add to discovered list.
+      if (_pendingChannelTombstones.contains(event.id)) {
+        print('[KIND5-BLOCKED] Channel blocked by pending tombstone: ${event.id.substring(0, 8)}…');
+        return;
+      }
       final hasListeners = _channelAnnouncedController.hasListener;
       print('[DISCOVERY-PUSH] Pushing Kind-40 to stream: name=$channelName '
           'id=$channelId hasListener=$hasListeners '

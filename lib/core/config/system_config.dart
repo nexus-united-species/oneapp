@@ -17,10 +17,14 @@ class SystemConfig {
   static const String _placeholder = 'PLACEHOLDER_DID';
 
   String? _superadminDid;
+  List<String> _bootstrapCellAuthors = [];
   bool _loaded = false;
 
   /// The current superadmin DID, or null if none is configured.
   String? get superadminDid => _loaded ? _superadminDid : null;
+
+  /// Pubkeys to subscribe by author for Cell discovery (relay-tag-index fallback).
+  List<String> get bootstrapCellAuthors => _bootstrapCellAuthors;
 
   /// Loads the superadmin DID. Must be called before any role checks.
   Future<void> load() async {
@@ -44,6 +48,10 @@ class SystemConfig {
       final did = json['superadmin_did'] as String?;
       if (did != null && did.isNotEmpty && did != _placeholder) {
         _superadminDid = did;
+      }
+      final authors = json['bootstrap_cell_authors'];
+      if (authors is List) {
+        _bootstrapCellAuthors = authors.whereType<String>().toList();
       }
     } catch (_) {
       // asset missing or malformed → no superadmin
