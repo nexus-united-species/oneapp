@@ -736,6 +736,16 @@ class CellService {
     await PodDatabase.instance.upsertCellJoinRequest(
         req.id, req.cellId, req.toJson(), isSent: false);
 
+    // Learn requester's pseudonym into the contact book.
+    final existing = ContactService.instance.findByDid(req.requesterDid);
+    if (existing == null) {
+      await ContactService.instance.addContact(
+          req.requesterDid, req.requesterPseudonym);
+    } else {
+      await ContactService.instance.updatePseudonymIfBetter(
+          req.requesterDid, req.requesterPseudonym);
+    }
+
     // Notify founder/moderators.
     await NotificationService.instance.showGenericNotification(
       title: 'Neue Beitrittsanfrage',

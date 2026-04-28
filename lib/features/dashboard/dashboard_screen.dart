@@ -421,6 +421,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         .where((c) => CellService.instance.isMember(c.id))
         .toList();
     final isInCell = myCells.isNotEmpty;
+    final pendingRequests = CellService.instance.totalPendingRequests;
 
     final String subtitle;
     if (!isInCell) {
@@ -430,7 +431,11 @@ class _DashboardScreenState extends State<DashboardScreen>
         0,
         (sum, c) => sum + CellService.instance.membersOf(c.id).length,
       );
-      subtitle = '${myCells.length} Zelle${myCells.length == 1 ? '' : 'n'} · $totalMembers Mitglied${totalMembers == 1 ? '' : 'er'}';
+      subtitle = [
+        '${myCells.length} Zelle${myCells.length == 1 ? '' : 'n'} · $totalMembers Mitglied${totalMembers == 1 ? '' : 'er'}',
+        if (pendingRequests > 0)
+          '+$pendingRequests Beitrittsanfrage${pendingRequests == 1 ? '' : 'n'}',
+      ].join(' · ');
     }
 
     return _FeatureCard(
@@ -438,6 +443,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       icon: Icons.groups_outlined,
       title: 'Meine Zellen',
       subtitle: subtitle,
+      badgeCount: pendingRequests > 0 ? pendingRequests : null,
       onTap: () => Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute<void>(builder: (_) => const CellHubScreen()),
       ),
@@ -459,20 +465,16 @@ class _DashboardScreenState extends State<DashboardScreen>
         : [
             if (activeProposals > 0)
               '$activeProposals ${activeProposals == 1 ? 'aktiver Antrag' : 'aktive Anträge'}',
-            if (pendingRequests > 0)
-              '+$pendingRequests Beitrittsanfrage${pendingRequests == 1 ? '' : 'n'}',
-            if (activeProposals == 0 && pendingRequests == 0)
+            if (activeProposals == 0)
               'Keine aktiven Anträge',
-          ].join(', ');
+          ].join(' · ');
 
     return _FeatureCard(
       key: const Key('governance_card'),
       icon: Icons.how_to_vote_outlined,
       title: 'Agora — Politik & Demokratie',
       subtitle: subtitle,
-      badgeCount: activeProposals + pendingRequests > 0
-          ? activeProposals + pendingRequests
-          : null,
+      badgeCount: activeProposals > 0 ? activeProposals : null,
       onTap: () {
         if (!isInCell) {
           Navigator.of(context, rootNavigator: true).push(
