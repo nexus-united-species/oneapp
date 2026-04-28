@@ -10,7 +10,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(flutter build:*)"
+      "Bash(flutter build:*)",
+      "Bash(/c/Users/joach/AppData/Local/Android/Sdk/platform-tools/sqlite3.exe:*)",
+      "Bash(python3:*)"
     ]
   }
 }
