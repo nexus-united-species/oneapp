@@ -25,6 +25,9 @@ import '../nexus_peer.dart';
 import 'nostr_event.dart';
 import 'nostr_keys.dart';
 import 'nostr_relay_manager.dart';
+import 'publish_result.dart';
+import 'publish_result_dao.dart';
+import 'publish_result_status.dart';
 
 /// Internet fallback transport via Nostr protocol (NIP-01, NIP-04, NIP-78).
 ///
@@ -435,7 +438,7 @@ class NostrTransport implements MessageTransport {
     print('[CHANNEL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CHANNEL-CREATE] Tags: t=$nostrTag t=nexus-channel access=${isPublic ? 'public' : 'private'} discoverable=$isDiscoverable');
     print('[CHANNEL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     return event.id;
   }
 
@@ -496,7 +499,7 @@ class NostrTransport implements MessageTransport {
       print('[CHANNEL-DEL-PUB]   $tag');
     }
     print('[CHANNEL-DEL-PUB] Targeting $connectedRelays relay(s)');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
   }
 
   /// Publishes a NIP-28 Kind-41 channel metadata update.
@@ -519,7 +522,7 @@ class NostrTransport implements MessageTransport {
         ['discoverable', isDiscoverable ? 'true' : 'false'],
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[NOSTR] Published Kind-41 channel metadata: ${channelData['name']}');
   }
 
@@ -542,7 +545,7 @@ class NostrTransport implements MessageTransport {
     print('[MSG-DELETE] Publishing kind=5: msgId=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
     print('[MSG-DELETE] e-tag: $messageId');
     print('[MSG-DELETE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
   }
 
   /// Publishes a Kind-30000 cell announcement so other nodes can discover the cell.
@@ -568,7 +571,7 @@ class NostrTransport implements MessageTransport {
     print('[CELL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CELL-CREATE] Tags: [d,$cellId] [t,nexus-cell]');
     print('[CELL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[CELL-RENAME] Kind-30000 published: accepted=${connectedRelays > 0}');
   }
 
@@ -590,7 +593,7 @@ class NostrTransport implements MessageTransport {
         ['t', 'nexus-cell'], // keep for backward-compat with older clients
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[CELL-DEL] Publishing Kind-5 delete for cell: $cellId');
   }
 
@@ -613,7 +616,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[JOIN] Request sent to cell: $cellId (requestId: ${requestId.substring(0, 8)}…)');
   }
 
@@ -637,7 +640,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[JOIN] Confirmation sent to ${requesterNostrPubkeyHex.substring(0, 8)}… for cell: $cellId');
   }
 
@@ -660,7 +663,7 @@ class NostrTransport implements MessageTransport {
         ['deleted', 'true'], // explicit tag so receivers can filter without parsing JSON
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[CELL-DEL] Publishing deleted-flag Kind-30000: $cellId ($cellName)');
   }
 
@@ -692,7 +695,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[CELL] Published Kind-31005 member-$action event for cell: $cellId '
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
@@ -713,7 +716,7 @@ class NostrTransport implements MessageTransport {
     print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
     print('[REACTION-SEND] Tags: e=$messageId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
   }
 
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
@@ -743,15 +746,15 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Feed Kind-$kind published: ${event.id.substring(0, 8)}… '
           '→ $connectedRelays relay(s)');
     }
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     return event.id;
   }
 
   // ── G2 Governance publishing ──────────────────────────────────────────────
 
   /// Publishes a Kind-31010 proposal lifecycle event (NIP-33 parameterized
-  /// replaceable). Returns true on success, false if keys are not ready.
-  Future<bool> publishProposalEvent({
+  /// replaceable). Returns a [PublishResult] tracking relay ACK state.
+  Future<PublishResult> publishProposalEvent({
     required String proposalId,
     required String cellId,
     required String type,
@@ -766,69 +769,124 @@ class NostrTransport implements MessageTransport {
     DateTime? votingEndsAt,
     String? editReason,
   }) async {
-    if (_keys == null) {
-      print('[PROPOSAL-PUB] Keys not ready — cannot publish');
-      return false;
-    }
     print('[PROPOSAL-PUB] === START === proposalId=$proposalId v=$version '
         'status=$status');
-    try {
-      final tags = <List<String>>[
-        ['d', proposalId],
-        ['t', 'nexus-proposal'],
-        ['t', 'nexus-cell-$cellId'],
-        ['type', type.toLowerCase()],
-        ['status', status.toLowerCase()],
-        ['version', version.toString()],
-      ];
-      if (votingEndsAt != null) {
-        tags.add([
-          'voting_ends_at',
-          (votingEndsAt.millisecondsSinceEpoch ~/ 1000).toString(),
-        ]);
-      }
-      if (category != null && category.isNotEmpty) {
-        tags.add(['category', category]);
-      }
-      final content = <String, dynamic>{
-        'title': title,
-        'description': description,
-        'creatorDid': creatorDid,
-        'creatorPseudonym': creatorPseudonym,
-        'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
-        'version': version,
-        if (editReason != null) 'editReason': editReason,
-      };
-      final event = NostrEvent.create(
-        keys: _keys!,
-        kind: NostrKind.proposalEvent,
-        content: jsonEncode(content),
-        tags: tags,
-      );
-      print('[PROPOSAL-PUB] Event built: id=${event.id.substring(0, 16)}… '
-          'kind=${event.kind} tags=${event.tags.length}');
-
-      final relayCount = _relayManager.connectedRelayCount;
-      if (relayCount == 0) {
-        print('[PROPOSAL-PUB] No relays connected — event NOT sent, retry queued');
-        return false;
-      }
-      _relayManager.publish(event);
-      print('[PROPOSAL-PUB] === SUCCESS === Published to $relayCount relay(s): '
-          '${event.id.substring(0, 16)}…');
-      return true;
-    } catch (e, stack) {
-      print('[PROPOSAL-PUB] === EXCEPTION === $e');
-      print('[PROPOSAL-PUB] Stack: $stack');
-      return false;
+    final tags = <List<String>>[
+      ['d', proposalId],
+      ['t', 'nexus-proposal'],
+      ['t', 'nexus-cell-$cellId'],
+      ['type', type.toLowerCase()],
+      ['status', status.toLowerCase()],
+      ['version', version.toString()],
+    ];
+    if (votingEndsAt != null) {
+      tags.add([
+        'voting_ends_at',
+        (votingEndsAt.millisecondsSinceEpoch ~/ 1000).toString(),
+      ]);
     }
+    if (category != null && category.isNotEmpty) {
+      tags.add(['category', category]);
+    }
+    final content = <String, dynamic>{
+      'title': title,
+      'description': description,
+      'creatorDid': creatorDid,
+      'creatorPseudonym': creatorPseudonym,
+      'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
+      'version': version,
+      if (editReason != null) 'editReason': editReason,
+    };
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.proposalEvent,
+      content: jsonEncode(content),
+      tags: tags,
+    );
+    print('[PROPOSAL-PUB] Event built: id=${event.id.substring(0, 16)}… '
+        'kind=${event.kind} tags=${event.tags.length}');
+
+    // Persist PENDING record before hitting the network (sync RAM lock).
+    final attemptedAt = DateTime.now().millisecondsSinceEpoch;
+    final shortEventId = event.id.length >= 8
+        ? event.id.substring(0, 8)
+        : event.id;
+    final pending = PublishResult(
+      publishResultId: 'publish_${event.id}',
+      localEventId: event.id,
+      nostrEventId: event.id,
+      eventKind: event.kind,
+      proposalId: proposalId,
+      cellId: cellId,
+      status: PublishResultStatus.pending,
+      attemptedAt: attemptedAt,
+      retryCount: 0,
+      requiredAckCount: 2,
+      acceptedRelayCount: 0,
+      failedRelayCount: 0,
+      createdAt: attemptedAt,
+      updatedAt: attemptedAt,
+    );
+    await PublishResultDao.instance.insert(pending);
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId status=PENDING attempted');
+
+    final outcome = await _relayManager.publish(event);
+
+    const requiredAckCount = 2;
+    final completedAt = DateTime.now().millisecondsSinceEpoch;
+    String newStatus;
+    String? finalStatus;
+    int? nextRetryAt;
+    if (outcome.acceptedCount >= requiredAckCount) {
+      newStatus = PublishResultStatus.accepted;
+      finalStatus = PublishResultStatus.accepted;
+    } else if (outcome.acceptedCount > 0) {
+      // At least one relay accepted, but quorum was not reached.
+      newStatus = PublishResultStatus.partial;
+      nextRetryAt = completedAt + 60 * 1000;
+    } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
+      // All addressed relays responded negatively.
+      newStatus = PublishResultStatus.rejected;
+      finalStatus = PublishResultStatus.rejected;
+    } else {
+      // No ACK quorum and either timeout or no clear rejection-only result.
+      newStatus = PublishResultStatus.retrying;
+      nextRetryAt = completedAt + 60 * 1000;
+    }
+
+    final firstRejection = outcome.rejections.entries.isEmpty
+        ? null
+        : outcome.rejections.entries.first.value;
+
+    final updated = pending.copyWith(
+      status: newStatus,
+      finalStatus: finalStatus,
+      nextRetryAt: nextRetryAt,
+      acceptedRelayCount: outcome.acceptedCount,
+      failedRelayCount: outcome.rejectedCount,
+      ackReceivedAt: outcome.acceptedCount > 0 ? completedAt : null,
+      errorMessage: firstRejection,
+      updatedAt: completedAt,
+    );
+    await PublishResultDao.instance.update(updated);
+
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId '
+        'status=$newStatus '
+        'sent=${outcome.sentToRelays.length} '
+        'accepted=${outcome.acceptedCount} '
+        'rejected=${outcome.rejectedCount} '
+        'timedOut=${outcome.timedOut}');
+    print('[PROPOSAL-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    return updated;
   }
 
   /// Publishes a Kind-31011 vote event (NIP-33 parameterized replaceable).
   /// The d-tag is "vote-${proposalId}-${voterPubkeyHex}" to ensure at-most-one
   /// vote per voter per proposal on compliant relays (dash avoids colon issues).
-  /// Returns true on success, false if keys are not ready.
-  Future<bool> publishVoteEvent({
+  /// Returns a [PublishResult] tracking relay ACK state.
+  Future<PublishResult> publishVoteEvent({
     required String proposalId,
     required String cellId,
     required String voteId,
@@ -838,55 +896,112 @@ class NostrTransport implements MessageTransport {
     required DateTime createdAt,
     String? reasoning,
   }) async {
-    if (_keys == null) return false;
     final voterPubkey = _keys!.publicKeyHex;
     // Use dash separator instead of colon: some relays mishandle ':' in d-tags.
     final dTag = 'vote-$proposalId-$voterPubkey';
     print('[VOTE-PUB] === START === voteId=$voteId proposalId=$proposalId '
         'choice=$choiceName');
-    try {
-      final tags = <List<String>>[
-        ['d', dTag],
-        ['t', 'nexus-vote'],
-        ['t', 'nexus-cell-$cellId'],
-        ['proposal_id', proposalId],
-        ['choice', choiceName.toLowerCase()],
-        ['weight', '1'],
-      ];
-      final content = <String, dynamic>{
-        'voteId': voteId,
-        'voterDid': voterDid,
-        'voterPseudonym': voterPseudonym,
-        'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
-        if (reasoning != null) 'reasoning': reasoning,
-      };
-      final event = NostrEvent.create(
-        keys: _keys!,
-        kind: NostrKind.voteEvent,
-        content: jsonEncode(content),
-        tags: tags,
-      );
-      print('[VOTE-PUB] Tags: ${event.tags}');
-      final relayCount = _relayManager.connectedRelayCount;
-      if (relayCount == 0) {
-        print('[VOTE-PUB] No relays connected — event NOT sent, retry queued');
-        return false;
-      }
-      _relayManager.publish(event);
-      print('[VOTE-PUB] === SUCCESS === Published to $relayCount relay(s): '
-          '${event.id.substring(0, 16)}…');
-      return true;
-    } catch (e, stack) {
-      print('[VOTE-PUB] === EXCEPTION === $e');
-      print('[VOTE-PUB] Stack: $stack');
-      return false;
+    final tags = <List<String>>[
+      ['d', dTag],
+      ['t', 'nexus-vote'],
+      ['t', 'nexus-cell-$cellId'],
+      ['proposal_id', proposalId],
+      ['choice', choiceName.toLowerCase()],
+      ['weight', '1'],
+    ];
+    final content = <String, dynamic>{
+      'voteId': voteId,
+      'voterDid': voterDid,
+      'voterPseudonym': voterPseudonym,
+      'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
+      if (reasoning != null) 'reasoning': reasoning,
+    };
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.voteEvent,
+      content: jsonEncode(content),
+      tags: tags,
+    );
+    print('[VOTE-PUB] Tags: ${event.tags}');
+
+    // Persist PENDING record before hitting the network (sync RAM lock).
+    final attemptedAt = DateTime.now().millisecondsSinceEpoch;
+    final shortEventId = event.id.length >= 8
+        ? event.id.substring(0, 8)
+        : event.id;
+    final pending = PublishResult(
+      publishResultId: 'publish_${event.id}',
+      localEventId: event.id,
+      nostrEventId: event.id,
+      eventKind: event.kind,
+      proposalId: proposalId,
+      cellId: cellId,
+      voteId: voteId,
+      status: PublishResultStatus.pending,
+      attemptedAt: attemptedAt,
+      retryCount: 0,
+      requiredAckCount: 2,
+      acceptedRelayCount: 0,
+      failedRelayCount: 0,
+      createdAt: attemptedAt,
+      updatedAt: attemptedAt,
+    );
+    await PublishResultDao.instance.insert(pending);
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId status=PENDING attempted');
+
+    final outcome = await _relayManager.publish(event);
+
+    const requiredAckCount = 2;
+    final completedAt = DateTime.now().millisecondsSinceEpoch;
+    String newStatus;
+    String? finalStatus;
+    int? nextRetryAt;
+    if (outcome.acceptedCount >= requiredAckCount) {
+      newStatus = PublishResultStatus.accepted;
+      finalStatus = PublishResultStatus.accepted;
+    } else if (outcome.acceptedCount > 0) {
+      newStatus = PublishResultStatus.partial;
+      nextRetryAt = completedAt + 60 * 1000;
+    } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
+      newStatus = PublishResultStatus.rejected;
+      finalStatus = PublishResultStatus.rejected;
+    } else {
+      newStatus = PublishResultStatus.retrying;
+      nextRetryAt = completedAt + 60 * 1000;
     }
+
+    final firstRejection = outcome.rejections.entries.isEmpty
+        ? null
+        : outcome.rejections.entries.first.value;
+
+    final updated = pending.copyWith(
+      status: newStatus,
+      finalStatus: finalStatus,
+      nextRetryAt: nextRetryAt,
+      acceptedRelayCount: outcome.acceptedCount,
+      failedRelayCount: outcome.rejectedCount,
+      ackReceivedAt: outcome.acceptedCount > 0 ? completedAt : null,
+      errorMessage: firstRejection,
+      updatedAt: completedAt,
+    );
+    await PublishResultDao.instance.update(updated);
+
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId '
+        'status=$newStatus '
+        'sent=${outcome.sentToRelays.length} '
+        'accepted=${outcome.acceptedCount} '
+        'rejected=${outcome.rejectedCount} '
+        'timedOut=${outcome.timedOut}');
+    print('[VOTE-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    return updated;
   }
 
   /// Publishes a Kind-31013 decision record (NIP-33 parameterized replaceable).
   /// The d-tag is the proposalId to ensure at-most-one record per proposal.
-  /// Returns true on success, false if keys are not ready.
-  Future<bool> publishDecisionRecord({
+  /// Returns a [PublishResult] tracking relay ACK state.
+  Future<PublishResult> publishDecisionRecord({
     required String proposalId,
     required String cellId,
     required Map<String, dynamic> recordContent,
@@ -894,40 +1009,96 @@ class NostrTransport implements MessageTransport {
     required String contentHash,
     String? previousDecisionHash,
   }) async {
-    if (_keys == null) return false;
     print('[DECISION-PUB] === START === proposalId=$proposalId result=$result '
-        'hash=${contentHash.substring(0, 8)}…');
-    try {
-      final tags = <List<String>>[
-        ['d', proposalId],
-        ['t', 'nexus-decision'],
-        ['t', 'nexus-cell-$cellId'],
-        ['proposal_id', proposalId],
-        ['result', result],
-        ['prev_hash', previousDecisionHash ?? ''],
-        ['content_hash', contentHash],
-      ];
-      final event = NostrEvent.create(
-        keys: _keys!,
-        kind: NostrKind.decisionRecord,
-        content: jsonEncode(recordContent),
-        tags: tags,
-      );
-      print('[DECISION-PUB] Tags: ${event.tags}');
-      final relayCount = _relayManager.connectedRelayCount;
-      if (relayCount == 0) {
-        print('[DECISION-PUB] No relays connected — event NOT sent, retry queued');
-        return false;
-      }
-      _relayManager.publish(event);
-      print('[DECISION-PUB] === SUCCESS === Published to $relayCount relay(s): '
-          '${event.id.substring(0, 16)}…');
-      return true;
-    } catch (e, stack) {
-      print('[DECISION-PUB] === EXCEPTION === $e');
-      print('[DECISION-PUB] Stack: $stack');
-      return false;
+        'hash=${contentHash.length >= 8 ? contentHash.substring(0, 8) : contentHash}…');
+    final tags = <List<String>>[
+      ['d', proposalId],
+      ['t', 'nexus-decision'],
+      ['t', 'nexus-cell-$cellId'],
+      ['proposal_id', proposalId],
+      ['result', result],
+      ['prev_hash', previousDecisionHash ?? ''],
+      ['content_hash', contentHash],
+    ];
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.decisionRecord,
+      content: jsonEncode(recordContent),
+      tags: tags,
+    );
+    print('[DECISION-PUB] Tags: ${event.tags}');
+
+    // Persist PENDING record before hitting the network (sync RAM lock).
+    final attemptedAt = DateTime.now().millisecondsSinceEpoch;
+    final shortEventId = event.id.length >= 8
+        ? event.id.substring(0, 8)
+        : event.id;
+    final pending = PublishResult(
+      publishResultId: 'publish_${event.id}',
+      localEventId: event.id,
+      nostrEventId: event.id,
+      eventKind: event.kind,
+      proposalId: proposalId,
+      cellId: cellId,
+      status: PublishResultStatus.pending,
+      attemptedAt: attemptedAt,
+      retryCount: 0,
+      requiredAckCount: 2,
+      acceptedRelayCount: 0,
+      failedRelayCount: 0,
+      createdAt: attemptedAt,
+      updatedAt: attemptedAt,
+    );
+    await PublishResultDao.instance.insert(pending);
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId status=PENDING attempted');
+
+    final outcome = await _relayManager.publish(event);
+
+    const requiredAckCount = 2;
+    final completedAt = DateTime.now().millisecondsSinceEpoch;
+    String newStatus;
+    String? finalStatus;
+    int? nextRetryAt;
+    if (outcome.acceptedCount >= requiredAckCount) {
+      newStatus = PublishResultStatus.accepted;
+      finalStatus = PublishResultStatus.accepted;
+    } else if (outcome.acceptedCount > 0) {
+      newStatus = PublishResultStatus.partial;
+      nextRetryAt = completedAt + 60 * 1000;
+    } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
+      newStatus = PublishResultStatus.rejected;
+      finalStatus = PublishResultStatus.rejected;
+    } else {
+      newStatus = PublishResultStatus.retrying;
+      nextRetryAt = completedAt + 60 * 1000;
     }
+
+    final firstRejection = outcome.rejections.entries.isEmpty
+        ? null
+        : outcome.rejections.entries.first.value;
+
+    final updated = pending.copyWith(
+      status: newStatus,
+      finalStatus: finalStatus,
+      nextRetryAt: nextRetryAt,
+      acceptedRelayCount: outcome.acceptedCount,
+      failedRelayCount: outcome.rejectedCount,
+      ackReceivedAt: outcome.acceptedCount > 0 ? completedAt : null,
+      errorMessage: firstRejection,
+      updatedAt: completedAt,
+    );
+    await PublishResultDao.instance.update(updated);
+
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId '
+        'status=$newStatus '
+        'sent=${outcome.sentToRelays.length} '
+        'accepted=${outcome.acceptedCount} '
+        'rejected=${outcome.rejectedCount} '
+        'timedOut=${outcome.timedOut}');
+    print('[DECISION-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    return updated;
   }
 
   // ── Cell Founding Permits (Kind-31006) ───────────────────────────────────
@@ -1028,7 +1199,7 @@ class NostrTransport implements MessageTransport {
           ['status', permit.status.name],
         ],
       );
-      _relayManager.publish(event);
+      _relayManager.publishFireAndForget(event);
       print('[PERMIT-PUBLISH] action=$action '
           'id=${permit.id.substring(0, 8)}… '
           '→ ${recipient.substring(0, 8)}…');
@@ -1150,7 +1321,7 @@ class NostrTransport implements MessageTransport {
       );
       print('[NOSTR] Publishing Kind-42 channel=$channel '
           'id=${event.id.substring(0, 8)}…');
-      _relayManager.publish(event);
+      _relayManager.publishFireAndForget(event);
       return;
     }
 
@@ -1169,7 +1340,7 @@ class NostrTransport implements MessageTransport {
     );
     print('[NOSTR] Publishing broadcast kind=1 '
         'id=${event.id.substring(0, 8)}… tags=${event.tags.map((t) => t.join('=')).join(',')}');
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
   }
 
   Future<void> _sendDm(NexusMessage message) async {
@@ -1204,7 +1375,7 @@ class NostrTransport implements MessageTransport {
         ['p', recipientNostrPubkey],
       ],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     print('[NOSTR] DM published, event id: ${event.id.substring(0, 8)}…');
   }
 
@@ -1281,7 +1452,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(content),
       tags: [],
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
     debugPrint('[Nostr] Kind-0 event published: ${event.id}');
   }
 
@@ -1310,7 +1481,7 @@ class NostrTransport implements MessageTransport {
       }),
       tags: tags,
     );
-    _relayManager.publish(event);
+    _relayManager.publishFireAndForget(event);
   }
 
   /// Actively fetches the latest Kind-0 metadata for a single contact's
