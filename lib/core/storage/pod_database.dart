@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 18,
+      version: 19,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -445,6 +445,36 @@ class PodDatabase {
         created_at INTEGER NOT NULL
       )
     ''');
+
+    // v19: publish_results — tracks Nostr publish attempts and relay ACKs.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS publish_results (
+        publish_result_id     TEXT PRIMARY KEY,
+        local_event_id        TEXT NOT NULL,
+        nostr_event_id        TEXT,
+        event_kind            INTEGER NOT NULL,
+        proposal_id           TEXT,
+        cell_id               TEXT,
+        vote_id               TEXT,
+        status                TEXT NOT NULL DEFAULT 'PENDING',
+        attempted_at          INTEGER NOT NULL,
+        ack_received_at       INTEGER,
+        error_code            TEXT,
+        error_message         TEXT,
+        retry_count           INTEGER NOT NULL DEFAULT 0,
+        next_retry_at         INTEGER,
+        required_ack_count    INTEGER NOT NULL DEFAULT 2,
+        accepted_relay_count  INTEGER NOT NULL DEFAULT 0,
+        failed_relay_count    INTEGER NOT NULL DEFAULT 0,
+        final_status          TEXT,
+        created_at            INTEGER NOT NULL,
+        updated_at            INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_proposal ON publish_results(proposal_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_status ON publish_results(status)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_next_retry ON publish_results(next_retry_at)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_local_event ON publish_results(local_event_id)');
   }
 
   /// Returns true if [table] exists in the database.
@@ -843,6 +873,39 @@ class PodDatabase {
         )
       """);
       print('[DB-MIGRATION-18] cell_founding_permits table created');
+    }
+
+    if (oldVersion < 19) {
+      print('[DB-MIG-V18] Starting migration v18→v19: publish_results table');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS publish_results (
+          publish_result_id     TEXT PRIMARY KEY,
+          local_event_id        TEXT NOT NULL,
+          nostr_event_id        TEXT,
+          event_kind            INTEGER NOT NULL,
+          proposal_id           TEXT,
+          cell_id               TEXT,
+          vote_id               TEXT,
+          status                TEXT NOT NULL DEFAULT 'PENDING',
+          attempted_at          INTEGER NOT NULL,
+          ack_received_at       INTEGER,
+          error_code            TEXT,
+          error_message         TEXT,
+          retry_count           INTEGER NOT NULL DEFAULT 0,
+          next_retry_at         INTEGER,
+          required_ack_count    INTEGER NOT NULL DEFAULT 2,
+          accepted_relay_count  INTEGER NOT NULL DEFAULT 0,
+          failed_relay_count    INTEGER NOT NULL DEFAULT 0,
+          final_status          TEXT,
+          created_at            INTEGER NOT NULL,
+          updated_at            INTEGER NOT NULL
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_proposal ON publish_results(proposal_id)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_status ON publish_results(status)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_next_retry ON publish_results(next_retry_at)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_local_event ON publish_results(local_event_id)');
+      print('[DB-MIG-V18] publish_results table + 4 indexes created');
     }
   }
 
