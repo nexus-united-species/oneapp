@@ -9,6 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/nostr/nostr_event.dart';
+import '../../core/transport/nostr/publish_result.dart';
+import '../../core/transport/nostr/publish_result_dao.dart';
+import '../../core/transport/nostr/publish_result_status.dart';
 import '../../services/notification_service.dart';
 import 'audit_log_entry.dart';
 import 'cell_member.dart';
@@ -117,16 +120,16 @@ class ProposalService {
   // ── Nostr publish callbacks (set by ChatProvider) ─────────────────────────
 
   /// Called to publish a Kind-31010 proposal event.
-  /// Returns true on success, false on failure.
-  Future<bool> Function(Map<String, dynamic>)? onPublishProposalToNostr;
+  /// Returns a [PublishResult] tracking relay ACKs.
+  Future<PublishResult> Function(Map<String, dynamic>)? onPublishProposalToNostr;
 
   /// Called to publish a Kind-31011 vote event.
-  /// Returns true on success, false on failure.
-  Future<bool> Function(Map<String, dynamic>)? onPublishVoteToNostr;
+  /// Returns a [PublishResult] tracking relay ACKs.
+  Future<PublishResult> Function(Map<String, dynamic>)? onPublishVoteToNostr;
 
   /// Called to publish a Kind-31013 decision record.
-  /// Returns true on success, false on failure.
-  Future<bool> Function(Map<String, dynamic>)? onPublishDecisionToNostr;
+  /// Returns a [PublishResult] tracking relay ACKs.
+  Future<PublishResult> Function(Map<String, dynamic>)? onPublishDecisionToNostr;
 
   /// Called to send a proposal discussion message via the transport layer.
   Future<void> Function(Map<String, dynamic>)? onSendDiscussionMessage;
@@ -135,9 +138,8 @@ class ProposalService {
   /// Set by ChatProvider after transport is initialised.
   String? Function()? getMyNostrPubkeyHex;
 
-  // ── Retry queue for failed Nostr publishes ────────────────────────────────
+  // ── Retry timer for DB-based Nostr publish retry ─────────────────────────
 
-  final List<Map<String, dynamic>> _retryQueue = [];
   Timer? _retryTimer;
 
   // ── Scheduler accessor ────────────────────────────────────────────────────
@@ -173,6 +175,9 @@ class ProposalService {
       _advanceStatuses();
       debugPrint('[PROPOSAL] Loaded ${_proposals.length} proposals from DB');
       _notify();
+      // Load any pending retries from the previous session.
+      unawaited(_processRetryQueue());
+      _startRetryTimer();
     } catch (e) {
       debugPrint('[PROPOSAL] load error: $e');
     }
@@ -372,10 +377,11 @@ class ProposalService {
     p.discussionStartedAt = DateTime.now().toUtc();
     await _saveProposalToDb(p);
 
-    final published = await _publishProposalToNostr(p);
+    final publishResult = await _publishProposalToNostr(p);
+    final published = publishResult.status == PublishResultStatus.accepted ||
+        publishResult.status == PublishResultStatus.partial;
     if (!published) {
-      print('[PROPOSAL] Publish failed, queuing retry');
-      await _queueProposalRetry(p);
+      print('[PUBLISH-RESULT] Proposal queued for retry: ${publishResult.status}');
     }
 
     await addAuditEntry(AuditLogEntry(
@@ -435,8 +441,12 @@ class ProposalService {
     p.version++;
     await _saveProposalToDb(p);
 
-    final published = await _publishProposalToNostr(p, editReason: reason);
-    if (!published) await _queueProposalRetry(p);
+    final editResult = await _publishProposalToNostr(p, editReason: reason);
+    final published = editResult.status == PublishResultStatus.accepted ||
+        editResult.status == PublishResultStatus.partial;
+    if (!published) {
+      print('[PUBLISH-RESULT] Proposal edit queued for retry: ${editResult.status}');
+    }
 
     await addAuditEntry(AuditLogEntry(
       entryId: AuditLogEntry.generateId(),
@@ -561,8 +571,12 @@ class ProposalService {
 
     print('[PROPOSAL] startVoting: $proposalId, ends ${p.votingEndsAt}');
 
-    final published = await _publishProposalToNostr(p);
-    if (!published) await _queueProposalRetry(p);
+    final votingResult = await _publishProposalToNostr(p);
+    final published = votingResult.status == PublishResultStatus.accepted ||
+        votingResult.status == PublishResultStatus.partial;
+    if (!published) {
+      print('[PUBLISH-RESULT] Voting start queued for retry: ${votingResult.status}');
+    }
 
     await addAuditEntry(AuditLogEntry(
       entryId: AuditLogEntry.generateId(),
@@ -714,7 +728,7 @@ class ProposalService {
     await _saveDecisionRecordToDb(record);
 
     final recordMap = SplayTreeMap<String, dynamic>.from(recordContent);
-    final published = await _publishDecisionRecord(
+    final decisionResult = await _publishDecisionRecord(
       proposalId: p.id,
       cellId: p.cellId,
       recordContent: Map<String, dynamic>.from(recordMap),
@@ -722,16 +736,12 @@ class ProposalService {
       contentHash: contentHash,
       previousDecisionHash: previousHash,
     );
-    if (!published) {
-      print('[PROPOSAL] Decision record publish failed, queuing retry');
-      await _queueDecisionRetry(
-        proposalId: p.id,
-        cellId: p.cellId,
-        recordContent: Map<String, dynamic>.from(recordMap),
-        result: result,
-        contentHash: contentHash,
-        previousDecisionHash: previousHash,
-      );
+    // Set local status to DECIDED regardless of publish result.
+    // Decision Records are authoritative per G2 spec.
+    // The retry queue will eventually distribute the record.
+    if (decisionResult.status != PublishResultStatus.accepted) {
+      print('[PROPOSAL] Decision finalized locally, '
+          'sync pending: status=${decisionResult.status}');
     } else {
       print('[PROPOSAL] Decision record published: ${record.recordId}');
     }
@@ -843,12 +853,16 @@ class ProposalService {
     updated.add(vote);
     _votes[proposalId] = updated;
 
-    final published = await _publishVoteToNostr(
+    final voteResult = await _publishVoteToNostr(
       proposalId: proposalId,
       cellId: p.cellId,
       vote: vote,
     );
-    if (!published) await _queueVoteRetry(vote, p.cellId);
+    final published = voteResult.status == PublishResultStatus.accepted ||
+        voteResult.status == PublishResultStatus.partial;
+    if (!published) {
+      print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
+    }
 
     await addAuditEntry(AuditLogEntry(
       entryId: AuditLogEntry.generateId(),
@@ -1539,47 +1553,7 @@ class ProposalService {
     }
   }
 
-  // ── Retry queue ────────────────────────────────────────────────────────────
-
-  Future<void> _queueProposalRetry(Proposal p) async {
-    print('[PROPOSAL] Queuing retry for ${p.id}');
-    _retryQueue.add({'type': 'proposal', 'proposalId': p.id, 'attempts': 0});
-    _startRetryTimer();
-  }
-
-  Future<void> _queueVoteRetry(Vote vote, String cellId) async {
-    print('[VOTE] Queuing retry for ${vote.voteId}');
-    _retryQueue.add({
-      'type': 'vote',
-      'voteId': vote.voteId,
-      'proposalId': vote.proposalId,
-      'cellId': cellId,
-      'attempts': 0,
-    });
-    _startRetryTimer();
-  }
-
-  Future<void> _queueDecisionRetry({
-    required String proposalId,
-    required String cellId,
-    required Map<String, dynamic> recordContent,
-    required String result,
-    required String contentHash,
-    String? previousDecisionHash,
-  }) async {
-    print('[PROPOSAL] Queuing retry for decision record $proposalId');
-    _retryQueue.add({
-      'type': 'decision',
-      'proposalId': proposalId,
-      'cellId': cellId,
-      'recordContent': recordContent,
-      'result': result,
-      'contentHash': contentHash,
-      'previousDecisionHash': previousDecisionHash,
-      'attempts': 0,
-    });
-    _startRetryTimer();
-  }
+  // ── Retry queue (DB-based) ─────────────────────────────────────────────────
 
   void _startRetryTimer() {
     if (_retryTimer != null && _retryTimer!.isActive) return;
@@ -1589,70 +1563,158 @@ class ProposalService {
   }
 
   Future<void> _processRetryQueue() async {
-    if (_retryQueue.isEmpty) {
-      _retryTimer?.cancel();
-      _retryTimer = null;
-      return;
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final dueRetries = await PublishResultDao.instance.findRetryDue(now);
 
-    print('[PROPOSAL] Processing retry queue: ${_retryQueue.length} items');
+    if (dueRetries.isEmpty) return;
 
-    final processed = <Map<String, dynamic>>[];
-    for (final item in List.from(_retryQueue)) {
-      item['attempts'] = (item['attempts'] as int) + 1;
-      bool success = false;
+    print('[RETRY] Processing ${dueRetries.length} due retries');
+
+    for (final pendingResult in dueRetries) {
+      PublishResult? newResult;
 
       try {
-        if (item['type'] == 'proposal') {
-          final p = _proposals[item['proposalId'] as String];
-          if (p != null) success = await _publishProposalToNostr(p);
-        } else if (item['type'] == 'vote') {
-          final proposalId = item['proposalId'] as String;
-          final voteId = item['voteId'] as String;
-          final cellId = item['cellId'] as String;
-          final votes = _votes[proposalId] ?? [];
-          final vote =
-              votes.where((v) => v.voteId == voteId).firstOrNull;
+        if (pendingResult.voteId != null) {
+          // Vote retry
+          final votes = _votes[pendingResult.proposalId] ?? [];
+          final vote = votes
+              .where((v) => v.voteId == pendingResult.voteId)
+              .firstOrNull;
           if (vote != null) {
-            success = await _publishVoteToNostr(
-                proposalId: proposalId, cellId: cellId, vote: vote);
-          } else {
-            success = true; // vote no longer relevant
+            newResult = await _publishVoteToNostr(
+              proposalId: pendingResult.proposalId!,
+              cellId: pendingResult.cellId!,
+              vote: vote,
+            );
           }
-        } else if (item['type'] == 'decision') {
-          success = await _publishDecisionRecord(
-            proposalId: item['proposalId'] as String,
-            cellId: item['cellId'] as String,
-            recordContent:
-                Map<String, dynamic>.from(item['recordContent'] as Map),
-            result: item['result'] as String,
-            contentHash: item['contentHash'] as String,
-            previousDecisionHash: item['previousDecisionHash'] as String?,
-          );
+        } else if (pendingResult.eventKind == 31013) {
+          // Decision Record retry — reload from DB
+          final record =
+              await _getDecisionRecordByProposal(pendingResult.proposalId!);
+          if (record != null) {
+            final retryContent = SplayTreeMap<String, dynamic>.from({
+              'proposalId': record.proposalId,
+              'finalTitle': record.finalTitle,
+              'finalDescription': record.finalDescription,
+              'result': record.result,
+              'yesVotes': record.yesVotes,
+              'noVotes': record.noVotes,
+              'abstainVotes': record.abstainVotes,
+              'participation': record.participation,
+              'decidedAt': record.decidedAt.millisecondsSinceEpoch,
+              'allVotes': record.allVotes
+                  .map((v) => {
+                        'voterPseudonym': v.voterPseudonym,
+                        'choice': v.choice.name,
+                        'reasoning': v.reasoning,
+                        'createdAt': v.createdAt.millisecondsSinceEpoch,
+                      })
+                  .toList(),
+            });
+            newResult = await _publishDecisionRecord(
+              proposalId: record.proposalId,
+              cellId: record.cellId,
+              recordContent: Map<String, dynamic>.from(retryContent),
+              result: record.result,
+              contentHash: record.contentHash,
+              previousDecisionHash: record.previousDecisionHash,
+            );
+          }
+        } else {
+          // Proposal retry
+          final p = _proposals[pendingResult.proposalId];
+          if (p != null) {
+            newResult = await _publishProposalToNostr(p);
+          }
         }
       } catch (e) {
-        print('[PROPOSAL] Retry error: $e');
+        print('[RETRY] Error during retry: $e');
       }
 
-      if (success || (item['attempts'] as int) >= 10) {
-        if ((item['attempts'] as int) >= 10 && !success) {
-          print('[PROPOSAL] Retry abandoned after 10 attempts: ${item['type']}');
-        }
-        processed.add(item);
+      final retryCount = pendingResult.retryCount + 1;
+      final shortId = pendingResult.localEventId.length >= 8
+          ? pendingResult.localEventId.substring(0, 8)
+          : pendingResult.localEventId;
+
+      String nextStatus;
+      int? nextRetryAt;
+      String? finalStatus;
+
+      if (newResult != null &&
+          newResult.status == PublishResultStatus.accepted) {
+        nextStatus = PublishResultStatus.accepted;
+        finalStatus = PublishResultStatus.accepted;
+        print('[RETRY] SUCCESS after $retryCount attempts: eventId=$shortId');
+      } else if (retryCount >= 6) {
+        nextStatus = PublishResultStatus.failed;
+        finalStatus = PublishResultStatus.failed;
+        print('[RETRY] FAILED after $retryCount attempts: eventId=$shortId');
+      } else {
+        nextStatus = PublishResultStatus.retrying;
+        nextRetryAt = now + _backoffMs(retryCount);
+        print('[RETRY] Scheduled attempt ${retryCount + 1} in '
+            '${_backoffMs(retryCount) / 1000}s for eventId=$shortId');
       }
+
+      final updated = pendingResult.copyWith(
+        status: nextStatus,
+        finalStatus: finalStatus,
+        retryCount: retryCount,
+        nextRetryAt: nextRetryAt,
+        updatedAt: now,
+      );
+      await PublishResultDao.instance.update(updated);
     }
+  }
 
-    for (final item in processed) {
-      _retryQueue.remove(item);
+  /// Returns backoff delay in milliseconds for the given retry attempt.
+  /// Schedule per G2 spec §21.4:
+  ///   attempt 1 → 60s
+  ///   attempt 2 → 5min
+  ///   attempt 3 → 15min
+  ///   attempt 4 → 1h
+  ///   attempt 5 → 6h
+  ///   attempt >=6 → not retried (FAILED)
+  int _backoffMs(int retryCount) {
+    switch (retryCount) {
+      case 1:
+        return 60 * 1000;
+      case 2:
+        return 5 * 60 * 1000;
+      case 3:
+        return 15 * 60 * 1000;
+      case 4:
+        return 60 * 60 * 1000;
+      case 5:
+        return 6 * 60 * 60 * 1000;
+      default:
+        return 6 * 60 * 60 * 1000;
     }
   }
 
   // ── Private Nostr publish wrappers ─────────────────────────────────────────
 
-  Future<bool> _publishProposalToNostr(Proposal p,
+  Future<PublishResult> _publishProposalToNostr(Proposal p,
       {String? editReason}) async {
     final fn = onPublishProposalToNostr;
-    if (fn == null) return false;
+    if (fn == null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      return PublishResult(
+        publishResultId: 'publish_no_callback_$now',
+        localEventId: '',
+        eventKind: 0,
+        status: PublishResultStatus.failed,
+        finalStatus: PublishResultStatus.failed,
+        attemptedAt: now,
+        retryCount: 0,
+        requiredAckCount: 2,
+        acceptedRelayCount: 0,
+        failedRelayCount: 0,
+        errorMessage: 'No transport callback registered',
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
     return fn({
       'proposalId': p.id,
       'cellId': p.cellId,
@@ -1671,13 +1733,30 @@ class ProposalService {
     });
   }
 
-  Future<bool> _publishVoteToNostr({
+  Future<PublishResult> _publishVoteToNostr({
     required String proposalId,
     required String cellId,
     required Vote vote,
   }) async {
     final fn = onPublishVoteToNostr;
-    if (fn == null) return false;
+    if (fn == null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      return PublishResult(
+        publishResultId: 'publish_no_callback_$now',
+        localEventId: '',
+        eventKind: 0,
+        status: PublishResultStatus.failed,
+        finalStatus: PublishResultStatus.failed,
+        attemptedAt: now,
+        retryCount: 0,
+        requiredAckCount: 2,
+        acceptedRelayCount: 0,
+        failedRelayCount: 0,
+        errorMessage: 'No transport callback registered',
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
     return fn({
       'proposalId': proposalId,
       'cellId': cellId,
@@ -1690,7 +1769,7 @@ class ProposalService {
     });
   }
 
-  Future<bool> _publishDecisionRecord({
+  Future<PublishResult> _publishDecisionRecord({
     required String proposalId,
     required String cellId,
     required Map<String, dynamic> recordContent,
@@ -1699,7 +1778,24 @@ class ProposalService {
     String? previousDecisionHash,
   }) async {
     final fn = onPublishDecisionToNostr;
-    if (fn == null) return false;
+    if (fn == null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      return PublishResult(
+        publishResultId: 'publish_no_callback_$now',
+        localEventId: '',
+        eventKind: 0,
+        status: PublishResultStatus.failed,
+        finalStatus: PublishResultStatus.failed,
+        attemptedAt: now,
+        retryCount: 0,
+        requiredAckCount: 2,
+        acceptedRelayCount: 0,
+        failedRelayCount: 0,
+        errorMessage: 'No transport callback registered',
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
     return fn({
       'proposalId': proposalId,
       'cellId': cellId,
