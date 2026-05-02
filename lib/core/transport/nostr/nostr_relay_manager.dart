@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'nostr_event.dart';
+import 'publish_result.dart';
 
 /// Default public Nostr relays.
 const defaultRelays = [
@@ -25,6 +26,31 @@ class RelayStatus {
   int? latencyMs;
 
   RelayStatus(this.url) : state = RelayState.disconnected;
+}
+
+/// Tracks an in-flight publish across all relays.
+/// Resolves when all addressed relays have responded or
+/// when the timeout elapses.
+class _PendingPublish {
+  final String eventId;
+  final Set<String> sentToRelays;
+  final Set<String> acceptedRelays;
+  final Set<String> rejectedRelays;
+  final Map<String, String> rejectMessages;
+  final DateTime startedAt;
+  final Completer<RelayPublishOutcome> completer;
+  Timer? timeoutTimer;
+  bool resolved;
+
+  _PendingPublish({
+    required this.eventId,
+    required this.startedAt,
+    required this.completer,
+  })  : sentToRelays = {},
+        acceptedRelays = {},
+        rejectedRelays = {},
+        rejectMessages = {},
+        resolved = false;
 }
 
 /// Manages WebSocket connections to a pool of Nostr relays.
@@ -55,6 +81,9 @@ class NostrRelayManager {
 
   // Active subscriptions: subId → filter JSON
   final Map<String, Map<String, dynamic>> _subscriptions = {};
+
+  // eventId → pending publish state
+  final Map<String, _PendingPublish> _pendingPublishes = {};
 
   final _eventController = StreamController<NostrEvent>.broadcast();
 
@@ -89,6 +118,22 @@ class NostrRelayManager {
   /// Closes all relay connections and cancels timers.
   Future<void> stop() async {
     _running = false;
+    // Cancel all pending publish timers and resolve them as timed out.
+    // Otherwise their futures would hang forever.
+    for (final pending in _pendingPublishes.values) {
+      pending.timeoutTimer?.cancel();
+      if (!pending.resolved) {
+        pending.resolved = true;
+        pending.completer.complete(RelayPublishOutcome(
+          eventId: pending.eventId,
+          sentToRelays: pending.sentToRelays.toList(),
+          acceptedRelays: pending.acceptedRelays.toList(),
+          rejections: Map<String, String>.from(pending.rejectMessages),
+          timedOut: true,
+        ));
+      }
+    }
+    _pendingPublishes.clear();
     for (final timer in _reconnectTimers.values) {
       timer.cancel();
     }
@@ -125,8 +170,24 @@ class NostrRelayManager {
 
   // ── Publish ───────────────────────────────────────────────────────────────
 
-  /// Publishes [event] to all connected relays.
-  void publish(NostrEvent event) {
+  /// Publishes [event] to all connected relays and waits for OK responses.
+  ///
+  /// Returns a [RelayPublishOutcome] once all addressed relays have responded
+  /// or [timeout] has elapsed. Use [publishFireAndForget] for non-governance
+  /// events where ACK tracking is not needed.
+  Future<RelayPublishOutcome> publish(
+    NostrEvent event, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final completer = Completer<RelayPublishOutcome>();
+    final pending = _PendingPublish(
+      eventId: event.id,
+      startedAt: DateTime.now(),
+      completer: completer,
+    );
+    // Synchronous state lock before first await (CLAUDE.md rule).
+    _pendingPublishes[event.id] = pending;
+
     final msg = jsonEncode(['EVENT', event.toJson()]);
     final connected = _channels.entries
         .where((e) => _statuses[e.key]?.state == RelayState.connected)
@@ -138,10 +199,45 @@ class NostrRelayManager {
       print('[PUBLISH]   → ${_shortUrl(url)}');
       try {
         entry.value.sink.add(msg);
+        pending.sentToRelays.add(url);
       } catch (e) {
         print('[PUBLISH]   ✗ ${_shortUrl(url)}: $e');
+        pending.rejectMessages[url] = 'send_failed: $e';
       }
     }
+
+    if (pending.sentToRelays.isEmpty) {
+      // No relay reached — resolve immediately via the timeout path.
+      _resolvePendingPublish(event.id, timedOut: true);
+    } else {
+      pending.timeoutTimer = Timer(timeout, () {
+        _resolvePendingPublish(event.id, timedOut: true);
+      });
+    }
+
+    return completer.future;
+  }
+
+  /// Fire-and-forget variant of [publish] for non-governance
+  /// events (DMs, channel events, mesh events, etc.) where
+  /// ACK tracking is not needed.
+  ///
+  /// Internally calls [publish] and discards the future.
+  /// The publish still tracks state in [_pendingPublishes]
+  /// and resolves on timeout, so memory does not leak.
+  void publishFireAndForget(NostrEvent event) {
+    // Schedule but do not await. Errors are caught and logged
+    // so they cannot become unhandled async exceptions.
+    publish(event).catchError((Object e) {
+      print('[PUBLISH] fire-and-forget error: $e');
+      return RelayPublishOutcome(
+        eventId: event.id,
+        sentToRelays: const [],
+        acceptedRelays: const [],
+        rejections: const {},
+        timedOut: true,
+      );
+    });
   }
 
   // ── Subscriptions ─────────────────────────────────────────────────────────
@@ -284,6 +380,35 @@ class NostrRelayManager {
   static String _shortUrl(String url) =>
       url.replaceAll('wss://', '').replaceAll('ws://', '');
 
+  /// Idempotent resolution of a pending publish.
+  /// Safe to call multiple times — only the first call resolves.
+  void _resolvePendingPublish(String eventId, {required bool timedOut}) {
+    final pending = _pendingPublishes[eventId];
+    if (pending == null) return;
+    if (pending.resolved) return;
+    pending.resolved = true;
+    pending.timeoutTimer?.cancel();
+
+    final outcome = RelayPublishOutcome(
+      eventId: eventId,
+      sentToRelays: pending.sentToRelays.toList(),
+      acceptedRelays: pending.acceptedRelays.toList(),
+      rejections: Map<String, String>.from(pending.rejectMessages),
+      timedOut: timedOut,
+    );
+
+    final shortId =
+        eventId.length >= 8 ? eventId.substring(0, 8) : eventId;
+    print('[RELAY-ACK] eventId=$shortId '
+        'sent=${pending.sentToRelays.length} '
+        'accepted=${pending.acceptedRelays.length} '
+        'rejected=${pending.rejectedRelays.length} '
+        'timedOut=$timedOut');
+
+    pending.completer.complete(outcome);
+    _pendingPublishes.remove(eventId);
+  }
+
   void _handleMessage(String url, String data) {
     // Raw-Logging für Diagnose: alle relay-Antworten die vote/31011/OK/Kind-5 betreffen
     if (data.contains('31011') ||
@@ -330,6 +455,23 @@ class NostrRelayManager {
           final message = msg.length > 3 ? msg[3].toString() : '';
           final short = eventId.length >= 8 ? eventId.substring(0, 8) : eventId;
           print('[RELAY-OK] ${_shortUrl(url)}: id=$short accepted=$accepted msg="$message"');
+
+          final pending = _pendingPublishes[eventId];
+          if (pending != null && !pending.resolved) {
+            if (accepted) {
+              pending.acceptedRelays.add(url);
+            } else {
+              pending.rejectedRelays.add(url);
+              pending.rejectMessages[url] = message;
+            }
+            // All relays we sent to have now responded?
+            final allResponded = pending.sentToRelays.every((u) =>
+                pending.acceptedRelays.contains(u) ||
+                pending.rejectedRelays.contains(u));
+            if (allResponded) {
+              _resolvePendingPublish(eventId, timedOut: false);
+            }
+          }
 
         case 'NOTICE':
           print('[NOSTR] NOTICE from ${_shortUrl(url)}: ${msg.length > 1 ? msg[1] : ""}');

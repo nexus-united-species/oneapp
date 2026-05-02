@@ -1,3 +1,39 @@
+/// Outcome of publishing a single Nostr event to the relay pool.
+///
+/// Returned by NostrRelayManager.publish() after relays have
+/// responded with OK frames or the timeout has elapsed.
+///
+/// Used by governance event publishers to determine whether the
+/// required ACK quorum was reached (default: 2 relays).
+class RelayPublishOutcome {
+  final String eventId;
+  final List<String> sentToRelays;
+  final List<String> acceptedRelays;
+  final Map<String, String> rejections; // relayUrl → reason
+  final bool timedOut;
+
+  int get acceptedCount => acceptedRelays.length;
+  int get rejectedCount => rejections.length;
+  int get pendingCount =>
+      sentToRelays.length - acceptedRelays.length - rejections.length;
+
+  RelayPublishOutcome({
+    required this.eventId,
+    required this.sentToRelays,
+    required this.acceptedRelays,
+    required this.rejections,
+    required this.timedOut,
+  });
+
+  @override
+  String toString() =>
+      'RelayPublishOutcome(eventId: ${eventId.length >= 8 ? eventId.substring(0, 8) : eventId}, '
+      'sent: ${sentToRelays.length}, '
+      'accepted: $acceptedCount, '
+      'rejected: $rejectedCount, '
+      'timedOut: $timedOut)';
+}
+
 /// Tracks the publish lifecycle of a Nostr event across relays.
 ///
 /// Created when a governance event is published, updated as
