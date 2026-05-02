@@ -12,6 +12,15 @@ import 'publish_result.dart';
 ///
 /// DB access goes through [PodDatabase.instance.testDb], which is
 /// the public getter for the underlying sqflite [Database] instance.
+// Strip 'publish_' prefix, then return first 8 chars of the remaining hash.
+// Falls back to the full stripped string if shorter than 8 chars.
+String _shortIdForLog(String publishResultId) {
+  final stripped = publishResultId.startsWith('publish_')
+      ? publishResultId.substring(8)
+      : publishResultId;
+  return stripped.length >= 8 ? stripped.substring(0, 8) : stripped;
+}
+
 class PublishResultDao {
   PublishResultDao._();
   static final PublishResultDao instance = PublishResultDao._();
@@ -23,10 +32,7 @@ class PublishResultDao {
   /// On PRIMARY KEY conflict: logs the error, does not throw.
   Future<void> insert(PublishResult result) async {
     try {
-      final id = result.publishResultId.substring(
-        0,
-        result.publishResultId.length > 8 ? 8 : result.publishResultId.length,
-      );
+      final id = _shortIdForLog(result.publishResultId);
       await _db.insert(
         'publish_results',
         result.toMap(),
@@ -45,10 +51,7 @@ class PublishResultDao {
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
       final updated = result.copyWith(updatedAt: now);
-      final id = result.publishResultId.substring(
-        0,
-        result.publishResultId.length > 8 ? 8 : result.publishResultId.length,
-      );
+      final id = _shortIdForLog(result.publishResultId);
       await _db.update(
         'publish_results',
         updated.toMap(),
