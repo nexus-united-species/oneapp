@@ -68,3 +68,28 @@ nuget.exe
 
 # Temporary upload folders
 .tmp.driveupload/
+
+# ── Local development artifacts ─────────────────────────────
+# IDE configuration
+.vscode/
+.idea/
+*.iml
+
+# Local backups (CLAUDE.md, notes)
+*_backup.md
+*_backup*.md
+CLAUDE_backup*.md
+
+# Test outputs and run logs
+test_phase*.txt
+test_phase*_*.txt
+
+# Local planning and discovery notes
+phase*-windows.txt
+phase*-handy.txt
+*-discovery.txt
+NEXUS_OneApp_Implementierungsplan*.md
+
+# Codebase audit/dump artifacts (large, regenerable)
+nexus_codebase_audit*.txt
+codebase_dump*.txt
