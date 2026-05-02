@@ -11,10 +11,14 @@ import 'package:cryptography/cryptography.dart' show AesCbc, MacAlgorithm,
 
 import '../../../core/config/system_config.dart';
 import '../../../core/contacts/contact_service.dart';
+import '../../../core/identity/identity_service.dart';
 import '../../../core/identity/profile.dart';
 import '../../../core/identity/profile_service.dart';
 import '../../../features/chat/group_channel_service.dart';
+import '../../../features/governance/cell_founding_permit.dart';
+import '../../../features/governance/cell_founding_permit_service.dart';
 import '../../../features/profile/profile_image_service.dart';
+import '../../../services/role_service.dart';
 import '../message_transport.dart';
 import '../nexus_message.dart';
 import '../nexus_peer.dart';
@@ -79,6 +83,10 @@ class NostrTransport implements MessageTransport {
   String? _metadataSubId;
   String? _channelDiscoverySubId;
   String? _channelDeleteSubId;
+  String? _permitSubId;
+
+  // Dedup set for incoming Kind-31006 permit events (synchronous check, no await).
+  final Set<String> _seenPermitEventIds = {};
 
   // nostrTag → subscription ID for joined group channels
   final Map<String, String> _channelSubIds = {};
@@ -347,9 +355,11 @@ class NostrTransport implements MessageTransport {
     if (_proposalSubId != null) _relayManager.closeSubscription(_proposalSubId!);
     if (_voteSubId != null) _relayManager.closeSubscription(_voteSubId!);
     if (_decisionSubId != null) _relayManager.closeSubscription(_decisionSubId!);
+    if (_permitSubId != null) _relayManager.closeSubscription(_permitSubId!);
     _proposalSubId = null;
     _voteSubId = null;
     _decisionSubId = null;
+    _permitSubId = null;
     for (final subId in _channelSubIds.values) {
       _relayManager.closeSubscription(subId);
     }
@@ -920,6 +930,115 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  // ── Cell Founding Permits (Kind-31006) ───────────────────────────────────
+
+  /// Returns true if [value] is a valid 64-character hex Nostr pubkey.
+  bool _isValidNostrPubkey(String? value) {
+    if (value == null) return false;
+    return RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(value);
+  }
+
+  /// Resolves the recipient Nostr pubkey for a given permit action.
+  ///
+  /// Routing:
+  ///   'request' | 'used'         → admin pubkey (permit.adminNostrPubkey
+  ///                                 or bootstrapCellAuthors.first as MVP fallback)
+  ///   'approve' | 'reject' | 'revoke' → permit.requesterNostrPubkey
+  ///
+  /// Returns null when no valid recipient can be determined.
+  // TODO(G2): Replace bootstrapCellAuthors fallback with explicit
+  //           admin_nostr_pubkeys config.
+  String? _resolvePermitRecipientPubkey(CellFoundingPermit permit, String action) {
+    final adminPubkey = permit.adminNostrPubkey ??
+        SystemConfig.instance.bootstrapCellAuthors.firstOrNull;
+    switch (action) {
+      case 'request':
+      case 'used':
+        return adminPubkey;
+      case 'approve':
+      case 'reject':
+      case 'revoke':
+        return permit.requesterNostrPubkey;
+      default:
+        return null;
+    }
+  }
+
+  /// Exposed for unit tests only — do not call from production code.
+  @visibleForTesting
+  String? resolvePermitRecipientPubkeyForTest(
+          CellFoundingPermit permit, String action) =>
+      _resolvePermitRecipientPubkey(permit, action);
+
+  /// Publishes a Kind-31006 cell founding permit event.
+  ///
+  /// Returns true if the event was successfully handed to the relay manager.
+  /// This does NOT confirm relay acceptance yet.
+  /// TODO(G2): Replace bool with PublishResult once relay ACK tracking exists.
+  Future<bool> publishCellFoundingPermit(
+    CellFoundingPermit permit, {
+    required String action, // 'request'|'approve'|'reject'|'used'|'revoke'
+  }) async {
+    final recipientPubkey = _resolvePermitRecipientPubkey(permit, action);
+
+    if (!_isValidNostrPubkey(recipientPubkey)) {
+      print('[PERMIT-PUBLISH] ERROR: no valid recipient pubkey '
+          'for action=$action permitId=${permit.id.substring(0, 8)}…');
+      return false;
+    }
+
+    if (_keys == null) {
+      print('[PERMIT-PUBLISH] ERROR: keys not initialized');
+      return false;
+    }
+
+    // Encrypt content via existing NIP-04 path (AES-CBC).
+    // TODO(G2): Migrate permit events to NIP-44 v2 / X25519-AES-GCM
+    //           before production governance.
+    // recipientPubkey is non-null here (validated by _isValidNostrPubkey above).
+    final recipient = recipientPubkey!;
+
+    // Encrypt content via existing NIP-04 path (AES-CBC).
+    // TODO(G2): Migrate permit events to NIP-44 v2 / X25519-AES-GCM
+    //           before production governance.
+    final String encryptedContent;
+    try {
+      final recipientPubBytes =
+          Uint8List.fromList(_hexToBytes(recipient));
+      encryptedContent = await _nip04Encrypt(
+        jsonEncode(permit.toJson()),
+        recipientPubBytes,
+      );
+    } catch (e) {
+      print('[PERMIT-PUBLISH] ERROR: encryption failed for action=$action: $e');
+      return false;
+    }
+
+    try {
+      final event = NostrEvent.create(
+        keys: _keys!,
+        kind: NostrKind.cellFoundingPermit,
+        content: encryptedContent,
+        tags: [
+          ['d', permit.id],
+          ['t', 'nexus-permit'],
+          ['action', action],
+          ['cell_type', permit.cellType.name],
+          ['p', recipient],
+          ['status', permit.status.name],
+        ],
+      );
+      _relayManager.publish(event);
+      print('[PERMIT-PUBLISH] action=$action '
+          'id=${permit.id.substring(0, 8)}… '
+          '→ ${recipient.substring(0, 8)}…');
+      return true;
+    } catch (e) {
+      print('[PERMIT-PUBLISH] ERROR: publish failed: $e');
+      return false;
+    }
+  }
+
   /// Refreshes governance (proposal/vote/decision) subscriptions for the
   /// given cell IDs.  Call this after joining or leaving a cell.
   void refreshGovernanceSubscriptions(List<String> cellIds) {
@@ -1485,6 +1604,15 @@ class NostrTransport implements MessageTransport {
     // G2 governance — proposals, votes, decision records for all joined cells.
     // Import is deferred to avoid circular dependency; access via late import.
     _setupGovernanceSubscriptions();
+
+    // Cell founding permits (Kind-31006, NIP-33) — addressed to this node.
+    if (_permitSubId != null) _relayManager.closeSubscription(_permitSubId!);
+    _permitSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.cellFoundingPermit],
+      '#t': ['nexus-permit'],
+      '#p': [myPubkey],
+    });
+    print('[PERMIT] Subscribed to founding permit events, subId=$_permitSubId');
   }
 
   /// Sets up proposal/vote/decision subscriptions for all cells the local user
@@ -1606,8 +1734,114 @@ class NostrTransport implements MessageTransport {
         _handleVoteEvent(event);
       case NostrKind.decisionRecord:
         _handleDecisionRecordEvent(event);
+      case NostrKind.cellFoundingPermit:
+        _handleIncomingPermitEvent(event);
     }
   }
+
+  Future<void> _handleIncomingPermitEvent(NostrEvent event) async {
+    // AETHER-RULES: synchronous dedup BEFORE first await.
+    if (!_seenPermitEventIds.add(event.id)) return;
+
+    final action = event.tagValue('action');
+    final permitId = event.tagValue('d');
+    if (action == null || permitId == null) return;
+
+    if (_keys == null) return;
+
+    // Decrypt via NIP-04 path (same as Kind-4 DMs).
+    // TODO(G2): Migrate permit events to NIP-44 v2 / X25519-AES-GCM
+    //           before production governance.
+    final String plain;
+    try {
+      final senderPubBytes = Uint8List.fromList(_hexToBytes(event.pubkey));
+      plain = await _nip04Decrypt(event.content, senderPubBytes);
+    } catch (e) {
+      print('[PERMIT-RECV] Decryption failed for '
+          'permitId=${permitId.substring(0, 8)}…: $e');
+      return;
+    }
+
+    CellFoundingPermit permit;
+    try {
+      permit = CellFoundingPermit.fromJson(
+          jsonDecode(plain) as Map<String, dynamic>);
+    } catch (e) {
+      print('[PERMIT-RECV] Parse error: $e');
+      return;
+    }
+
+    // Allowed admin pubkeys (MVP: bootstrapCellAuthors).
+    // TODO(G2): Replace with explicit admin_nostr_pubkeys config.
+    final allowedAdminPubkeys =
+        SystemConfig.instance.bootstrapCellAuthors.toSet();
+
+    switch (action) {
+      case 'approve':
+        // a) sender must be a known admin
+        if (!allowedAdminPubkeys.contains(event.pubkey)) {
+          print('[PERMIT-RECV] REJECTED: event author is not admin');
+          return;
+        }
+        // b) permit must be addressed to local identity
+        final myDid = IdentityService.instance.currentIdentity?.did;
+        if (permit.requesterDid != myDid) return;
+        // c) incoming status must be approved
+        if (permit.status != PermitStatus.approved) {
+          print('[PERMIT-RECV] REJECTED: status mismatch for approve');
+          return;
+        }
+        // d) permit must not be expired
+        if (permit.isExpired) {
+          print('[PERMIT-RECV] REJECTED: permit already expired');
+          return;
+        }
+        // e) local copy must not already be used or revoked
+        final existing =
+            CellFoundingPermitService.instance.findById(permitId);
+        if (existing != null &&
+            (existing.status == PermitStatus.used ||
+                existing.status == PermitStatus.revoked)) {
+          print('[PERMIT-RECV] REJECTED: local permit already used/revoked');
+          return;
+        }
+      case 'reject':
+        if (!allowedAdminPubkeys.contains(event.pubkey)) return;
+        if (permit.status != PermitStatus.rejected) return;
+      case 'revoke':
+        if (!allowedAdminPubkeys.contains(event.pubkey)) return;
+        if (permit.status != PermitStatus.revoked) return;
+      case 'request':
+        // Only admins process incoming requests.
+        final myDid2 = IdentityService.instance.currentIdentity?.did;
+        if (myDid2 == null) return;
+        if (!RoleService.instance.isSystemAdmin(myDid2)) return;
+      case 'used':
+        // Admin receives usage confirmation.
+        if (permit.status != PermitStatus.used) return;
+        if (permit.usedAt == null || permit.createdCellId == null) return;
+        final myDid3 = IdentityService.instance.currentIdentity?.did;
+        if (myDid3 == null ||
+            !RoleService.instance.isSystemAdmin(myDid3)) return;
+      default:
+        print('[PERMIT-RECV] Unknown action: $action');
+        return;
+    }
+
+    // All checks passed — update in-memory state and persist.
+    await CellFoundingPermitService.instance
+        .handleIncomingPermitEvent(permit);
+    print('[PERMIT-RECV] action=$action id=${permitId.substring(0, 8)}…');
+  }
+
+  /// Exposed for unit tests only — do not call from production code.
+  @visibleForTesting
+  Future<void> handleIncomingPermitEventForTest(NostrEvent event) =>
+      _handleIncomingPermitEvent(event);
+
+  /// Exposed for unit tests only — do not call from production code.
+  @visibleForTesting
+  Set<String> get seenPermitEventIdsForTest => _seenPermitEventIds;
 
   void _handleProposalEvent(NostrEvent event) {
     print('[PROPOSAL] Kind-31010 received: ${event.id}');

@@ -1,3 +1,6 @@
+import '../../features/governance/cell.dart';
+import '../../features/governance/cell_founding_permit.dart';
+import '../../features/governance/cell_founding_permit_service.dart';
 import '../roles/role_enums.dart';
 import '../../services/role_service.dart';
 
@@ -37,12 +40,23 @@ class PermissionHelper {
 
   // ── Cell creation ─────────────────────────────────────────────────────────
 
-  /// Whether [did] may found a new cell.
-  ///
-  /// Restricted to system admins and the superadmin to prevent cell spam
-  /// during the early rollout phase.
-  static bool canCreateCell(String did) =>
-      RoleService.instance.isSystemAdmin(did);
+  /// Returns true if [did] may found a cell of [cellType].
+  /// Admins always may. Regular users need a valid active permit
+  /// for exactly this cellType.
+  static bool canCreateCell(String did, {CellType? cellType}) {
+    if (RoleService.instance.isSystemAdmin(did)) return true;
+    if (cellType == null) return false;
+    return CellFoundingPermitService.instance
+        .getActivePermitForType(did, cellType) != null;
+  }
+
+  /// Returns the active permit for [did] and [cellType], or null.
+  /// Admins always return null (they need no permit).
+  static CellFoundingPermit? getActivePermit(String did, CellType cellType) {
+    if (RoleService.instance.isSystemAdmin(did)) return null;
+    return CellFoundingPermitService.instance
+        .getActivePermitForType(did, cellType);
+  }
 
   // ── Message deletion ──────────────────────────────────────────────────────
 

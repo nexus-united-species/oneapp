@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 17,
+      version: 18,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -435,6 +435,16 @@ class PodDatabase {
       )
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_tombstones_type ON tombstones(type)');
+
+    // v18: cell-founding permits (requests + approved permits).
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cell_founding_permits (
+        id         TEXT PRIMARY KEY,
+        is_sent    INTEGER NOT NULL DEFAULT 0,
+        enc        TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
   }
 
   /// Returns true if [table] exists in the database.
@@ -821,6 +831,18 @@ class PodDatabase {
       } else {
         print('[DB-MIGRATION-17] nostr_event_id Spalte fehlt — Migration übersprungen');
       }
+    }
+
+    if (oldVersion < 18) {
+      await db.execute("""
+        CREATE TABLE IF NOT EXISTS cell_founding_permits (
+          id         TEXT PRIMARY KEY,
+          is_sent    INTEGER NOT NULL DEFAULT 0,
+          enc        TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      """);
+      print('[DB-MIGRATION-18] cell_founding_permits table created');
     }
   }
 
@@ -1873,6 +1895,41 @@ class PodDatabase {
     await _database.update(
       'cell_join_requests',
       {'enc': enc},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // ── Governance: Cell-founding permits ────────────────────────────────────
+
+  Future<void> upsertCellFoundingPermit(
+      String id, Map<String, dynamic> data, {required bool isSent}) async {
+    final enc = await PodEncryption.encrypt(jsonEncode(data), _key);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _database.insert(
+      'cell_founding_permits',
+      {'id': id, 'is_sent': isSent ? 1 : 0, 'enc': enc, 'created_at': now},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadAllCellFoundingPermits() async {
+    final rows = await _database.query('cell_founding_permits');
+    final result = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      try {
+        final plain = await PodEncryption.decrypt(row['enc'] as String, _key);
+        final data = jsonDecode(plain) as Map<String, dynamic>;
+        result.add({'is_sent': row['is_sent'], ...data});
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  /// Hard-deletes a permit. Intended for admin cleanup only, not normal flow.
+  Future<void> deleteCellFoundingPermit(String id) async {
+    await _database.delete(
+      'cell_founding_permits',
       where: 'id = ?',
       whereArgs: [id],
     );

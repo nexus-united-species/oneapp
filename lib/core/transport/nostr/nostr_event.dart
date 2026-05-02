@@ -88,6 +88,10 @@ class NostrKind {
   /// Content: JSON { 'cellId', 'targetDid', 'action': 'left'|'removed', 'reason'? }
   static const int cellMemberUpdate = 31005;
 
+  /// Kind-31006: Cell Founding Permit (NIP-33 parameterized replaceable).
+  /// action tag: request | approve | reject | used | revoke
+  static const int cellFoundingPermit = 31006;
+
   /// G2 governance – proposal lifecycle event (Parameterized Replaceable, NIP-33).
   ///
   /// d-tag: proposalId. Replaces the previous event on relays when the

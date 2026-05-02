@@ -10,6 +10,7 @@ import 'package:nexus_oneapp/features/discover/discover_screen.dart';
 import 'package:nexus_oneapp/features/dorfplatz/dorfplatz_screen.dart';
 import 'package:nexus_oneapp/features/governance/cell_hub_screen.dart';
 import 'package:nexus_oneapp/features/governance/governance_screen.dart';
+import 'package:nexus_oneapp/features/governance/request_cell_permit_screen.dart';
 import 'package:nexus_oneapp/features/onboarding/onboarding_screen.dart';
 import 'package:nexus_oneapp/features/invite/invite_screen.dart';
 import 'package:nexus_oneapp/features/invite/redeem_screen.dart';
@@ -103,6 +104,11 @@ final router = GoRouter(
     GoRoute(
       path: '/cell-hub',
       builder: (context, state) => const CellHubScreen(),
+    ),
+    // Request Cell Permit – outside ShellRoute (full-screen, no bottom nav).
+    GoRoute(
+      path: '/request-cell-permit',
+      builder: (context, state) => const RequestCellPermitScreen(),
     ),
     // Settings – outside ShellRoute so it appears as a full-screen page
     // without the bottom navigation bar.

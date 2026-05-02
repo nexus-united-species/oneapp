@@ -19,6 +19,8 @@ import 'create_proposal_screen.dart';
 import 'proposal.dart';
 import 'proposal_detail_screen.dart';
 import 'proposal_service.dart';
+import '../../core/contacts/contact_service.dart';
+import '../contacts/contact_detail_screen.dart';
 
 /// Full tabbed cell screen: Pinnwand · Diskussion · Agora · Mitglieder.
 ///
@@ -1050,11 +1052,19 @@ class _SimpleMemberTile extends StatelessWidget {
       MemberRole.member => 'Mitglied',
       MemberRole.pending => 'Ausstehend',
     };
-    final shortDid = isMe
+    final displayName = isMe
         ? 'Du'
-        : '…${member.did.substring(member.did.length > 12 ? member.did.length - 12 : 0)}';
+        : ContactService.instance.getDisplayName(member.did);
 
-    return Container(
+    return GestureDetector(
+      onTap: isMe
+          ? null
+          : () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ContactDetailScreen(did: member.did),
+              ),
+            ),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -1080,7 +1090,7 @@ class _SimpleMemberTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  shortDid,
+                  displayName,
                   style: TextStyle(
                     color: isMe ? AppColors.gold : AppColors.onDark,
                     fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
@@ -1111,6 +1121,7 @@ class _SimpleMemberTile extends StatelessWidget {
             ),
         ],
       ),
+    ),
     );
   }
 }

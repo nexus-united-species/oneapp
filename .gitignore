@@ -59,3 +59,12 @@ app.*.map.json
 query_relay.js
 run_kill.js
 node_modules/
+
+# N.E.X.U.S. local release/build artifacts
+NexusOneApp_*.apk
+*.aab
+lib.zip
+nuget.exe
+
+# Temporary upload folders
+.tmp.driveupload/

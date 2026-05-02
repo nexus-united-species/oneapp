@@ -6,17 +6,18 @@ import 'package:provider/provider.dart';
 
 import '../../core/contacts/contact_service.dart';
 import '../chat/chat_provider.dart';
-import '../../core/config/system_config.dart';
 import '../../core/identity/identity_service.dart';
-import '../../core/roles/permission_helper.dart';
 import '../../core/utils/geohash.dart';
+import '../../services/role_service.dart';
 import '../../shared/theme/app_theme.dart';
-import '../chat/conversation_screen.dart';
 import 'cell.dart';
+import 'cell_founding_permit.dart';
+import 'cell_founding_permit_service.dart';
 import 'cell_member.dart';
+import 'cell_screen.dart';
 import 'cell_service.dart';
 import 'create_cell_screen.dart';
-import 'cell_screen.dart';
+import 'request_cell_permit_screen.dart';
 
 /// The "Meine Zelle" hub – entry point to the cell system.
 ///
@@ -41,13 +42,19 @@ class _CellHubScreenState extends State<CellHubScreen> {
     _sub = CellService.instance.stream.listen((_) {
       if (mounted) setState(() {});
     });
+    CellFoundingPermitService.instance.addListener(_onPermitChange);
     _fetchMyGeohash();
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    CellFoundingPermitService.instance.removeListener(_onPermitChange);
     super.dispose();
+  }
+
+  void _onPermitChange() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _fetchMyGeohash() async {
@@ -78,9 +85,11 @@ class _CellHubScreenState extends State<CellHubScreen> {
     }
   }
 
-  void _openCreate() {
+  void _openCreate({CellFoundingPermit? permit}) {
     Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute<void>(builder: (_) => const CreateCellScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => CreateCellScreen(foundingPermit: permit),
+      ),
     );
   }
 
@@ -90,32 +99,10 @@ class _CellHubScreenState extends State<CellHubScreen> {
     );
   }
 
-  void _requestCellCreation(BuildContext context) {
-    final superadminDid = SystemConfig.instance.superadminDid;
-    if (superadminDid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Kontaktiere einen Admin über den Chat, um eine Zelle zu gründen.'),
-          backgroundColor: Colors.blueGrey,
-        ),
-      );
-      return;
-    }
-    final myPseudonym =
-        IdentityService.instance.currentIdentity?.pseudonym ?? '';
-    final adminName =
-        ContactService.instance.getDisplayName(superadminDid);
-    final prefill =
-        'Hallo, ich möchte eine Zelle gründen. Kannst du mir dabei helfen? '
-        '(Anfrage von $myPseudonym)';
+  void _openRequestPermit() {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (_) => ConversationScreen(
-          peerDid: superadminDid,
-          peerPseudonym: adminName,
-          initialDraftText: prefill,
-        ),
+        builder: (_) => const RequestCellPermitScreen(),
       ),
     );
   }
@@ -124,7 +111,27 @@ class _CellHubScreenState extends State<CellHubScreen> {
   Widget build(BuildContext context) {
     final myCells = CellService.instance.myCells;
     final myDid = IdentityService.instance.currentIdentity?.did ?? '';
-    final canCreate = PermissionHelper.canCreateCell(myDid);
+    final isAdmin = RoleService.instance.isSystemAdmin(myDid);
+
+    // Compute active permits sorted by earliest expiry (most urgent first).
+    final allActivePermits = CellFoundingPermitService.instance
+        .myApprovedPermits
+        .where((p) => p.isActive)
+        .toList()
+      ..sort((a, b) {
+        if (a.expiresAt == null && b.expiresAt == null) {
+          return a.requestedAt.compareTo(b.requestedAt);
+        }
+        if (a.expiresAt == null) return 1;
+        if (b.expiresAt == null) return -1;
+        return a.expiresAt!.compareTo(b.expiresAt!);
+      });
+    final activePermit =
+        allActivePermits.isNotEmpty ? allActivePermits.first : null;
+    final extraPermitCount =
+        allActivePermits.length > 1 ? allActivePermits.length - 1 : 0;
+    final myPending =
+        CellFoundingPermitService.instance.myPendingRequests;
 
     // All known cells for discovery (joined + nostr-discovered), de-duplicated.
     final allKnown = CellService.instance.allKnownCells;
@@ -219,7 +226,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
         ],
       ),
       backgroundColor: AppColors.deepBlue,
-      floatingActionButton: canCreate
+      floatingActionButton: isAdmin
           ? FloatingActionButton.extended(
               onPressed: _openCreate,
               backgroundColor: AppColors.gold,
@@ -227,18 +234,33 @@ class _CellHubScreenState extends State<CellHubScreen> {
               icon: const Icon(Icons.add),
               label: const Text('Zelle gründen'),
             )
-          : FloatingActionButton.extended(
-              onPressed: () => _requestCellCreation(context),
-              backgroundColor: AppColors.surface,
-              foregroundColor: AppColors.gold,
-              icon: const Icon(Icons.mail_outline),
-              label: const Text('Zellgründung anfragen'),
-            ),
+          : activePermit != null
+              ? FloatingActionButton.extended(
+                  onPressed: () => _openCreate(permit: activePermit),
+                  backgroundColor: AppColors.gold,
+                  foregroundColor: Colors.black,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Jetzt Zelle gründen'),
+                )
+              : FloatingActionButton.extended(
+                  onPressed: _openRequestPermit,
+                  backgroundColor: AppColors.surface,
+                  foregroundColor: AppColors.gold,
+                  icon: const Icon(Icons.send_outlined),
+                  label: const Text('Gründungsantrag stellen'),
+                ),
       body: myCells.isEmpty
           ? _EmptyState(
-              onCreateTap: canCreate ? _openCreate : null,
-              onRequestCreate: () => _requestCellCreation(context),
-              canCreate: canCreate,
+              onCreateTap: isAdmin
+                  ? _openCreate
+                  : activePermit != null
+                      ? () => _openCreate(permit: activePermit)
+                      : null,
+              onRequestPermit: _openRequestPermit,
+              canCreate: isAdmin,
+              activePermit: activePermit,
+              extraPermitCount: extraPermitCount,
+              myPendingRequests: myPending,
               myGeohash: _myGeohash,
               gpsUnavailable: _gpsUnavailable,
               allKnownCells: allKnown,
@@ -253,9 +275,16 @@ class _CellHubScreenState extends State<CellHubScreen> {
               onCategoryChanged: (cat) =>
                   setState(() => _selectedCategory = cat),
               onCellTap: _openCell,
-              onCreateTap: canCreate ? _openCreate : null,
-              onRequestCreate: () => _requestCellCreation(context),
-              canCreate: canCreate,
+              onCreateTap: isAdmin
+                  ? _openCreate
+                  : activePermit != null
+                      ? () => _openCreate(permit: activePermit)
+                      : null,
+              onRequestPermit: _openRequestPermit,
+              canCreate: isAdmin,
+              activePermit: activePermit,
+              extraPermitCount: extraPermitCount,
+              myPendingRequests: myPending,
               myGeohash: _myGeohash,
               gpsUnavailable: _gpsUnavailable,
             ),
@@ -267,8 +296,11 @@ class _CellHubScreenState extends State<CellHubScreen> {
 
 class _EmptyState extends StatelessWidget {
   final VoidCallback? onCreateTap;
-  final VoidCallback onRequestCreate;
+  final VoidCallback onRequestPermit;
   final bool canCreate;
+  final CellFoundingPermit? activePermit;
+  final int extraPermitCount;
+  final List<CellFoundingPermit> myPendingRequests;
   final String? myGeohash;
   final bool gpsUnavailable;
   final List<Cell> allKnownCells;
@@ -277,8 +309,11 @@ class _EmptyState extends StatelessWidget {
 
   const _EmptyState({
     required this.onCreateTap,
-    required this.onRequestCreate,
+    required this.onRequestPermit,
     required this.canCreate,
+    required this.activePermit,
+    required this.extraPermitCount,
+    required this.myPendingRequests,
     required this.myGeohash,
     required this.gpsUnavailable,
     required this.allKnownCells,
@@ -431,6 +466,7 @@ class _EmptyState extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // ZUSTAND 1: Admin
                 if (canCreate)
                   SizedBox(
                     width: double.infinity,
@@ -439,34 +475,141 @@ class _EmptyState extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.gold,
                         foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                       icon: const Icon(Icons.add),
-                      label: const Text('Zelle gründen',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: const Text('Neue Zelle gründen',
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   )
-                else
+                // ZUSTAND 2: Gründungsfreigabe vorhanden
+                else if (activePermit != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: Colors.green.withValues(alpha: 0.5)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.check_circle,
+                            color: Colors.green, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Du hast eine Gründungsfreigabe!',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: onRequestCreate,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.gold,
-                        side: BorderSide(color: AppColors.gold),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: ElevatedButton.icon(
+                      onPressed: onCreateTap,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.gold,
+                        foregroundColor: Colors.black,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      icon: const Icon(Icons.mail_outline),
-                      label: const Text('Zellgründung anfragen',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Jetzt Zelle gründen',
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  if (activePermit!.expiresAt != null)
+                    Text(
+                      'Gültig bis: ${_formatDate(activePermit!.expiresAt!.toLocal())}',
+                      style: const TextStyle(
+                          color: Colors.green, fontSize: 12),
+                    )
+                  else
+                    const Text(
+                      'Unbegrenzt gültig',
+                      style: TextStyle(
+                          color: Colors.green, fontSize: 12),
+                    ),
+                  if (extraPermitCount > 0) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '+ $extraPermitCount weitere Freigabe(n) vorhanden',
+                      style: TextStyle(
+                        color: AppColors.onDark.withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ]
+                // ZUSTAND 3: Kein Permit — Antrag stellen
+                else ...[
+                  Text(
+                    'Du benötigst eine Genehmigung, um eine Zelle zu gründen.',
+                    style: TextStyle(
+                      color: AppColors.onDark.withValues(alpha: 0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onRequestPermit,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.gold,
+                        side: const BorderSide(color: AppColors.gold),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text('Gründungsantrag stellen',
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  if (myPendingRequests.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...myPendingRequests.map(
+                      (r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Chip(
+                          backgroundColor: AppColors.surface,
+                          side: const BorderSide(
+                              color: AppColors.surfaceVariant),
+                          label: Text(
+                            'Antrag vom ${_formatDate(r.requestedAt.toLocal())} — Ausstehend',
+                            style: TextStyle(
+                              color: AppColors.onDark
+                                  .withValues(alpha: 0.8),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ],
             ),
           ),
@@ -486,8 +629,11 @@ class _FilledState extends StatelessWidget {
   final ValueChanged<String> onCategoryChanged;
   final ValueChanged<Cell> onCellTap;
   final VoidCallback? onCreateTap;
-  final VoidCallback onRequestCreate;
+  final VoidCallback onRequestPermit;
   final bool canCreate;
+  final CellFoundingPermit? activePermit;
+  final int extraPermitCount;
+  final List<CellFoundingPermit> myPendingRequests;
   final String? myGeohash;
   final bool gpsUnavailable;
 
@@ -498,8 +644,11 @@ class _FilledState extends StatelessWidget {
     required this.onCategoryChanged,
     required this.onCellTap,
     required this.onCreateTap,
-    required this.onRequestCreate,
+    required this.onRequestPermit,
     required this.canCreate,
+    required this.activePermit,
+    required this.extraPermitCount,
+    required this.myPendingRequests,
     required this.myGeohash,
     required this.gpsUnavailable,
   });
@@ -612,24 +761,169 @@ class _FilledState extends StatelessWidget {
             ),
           ),
 
-        // Non-admin: "Zellgründung anfragen" button
-        if (!canCreate)
+        // Founding button section — 3 states
+        if (canCreate)
+          // ZUSTAND 1: Admin
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: OutlinedButton.icon(
-                onPressed: onRequestCreate,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.gold,
-                  side: BorderSide(color: AppColors.gold),
+              child: ElevatedButton.icon(
+                onPressed: onCreateTap,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.gold,
+                  foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                icon: const Icon(Icons.mail_outline),
-                label: const Text('Neue Zelle gründen (anfragen)',
+                icon: const Icon(Icons.add),
+                label: const Text('Neue Zelle gründen',
                     style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          )
+        else if (activePermit != null)
+          // ZUSTAND 2: Gründungsfreigabe vorhanden
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: Colors.green.withValues(alpha: 0.5)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.check_circle,
+                            color: Colors.green, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Du hast eine Gründungsfreigabe!',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: onCreateTap,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.gold,
+                        foregroundColor: Colors.black,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Jetzt Zelle gründen',
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (activePermit!.expiresAt != null)
+                    Text(
+                      'Gültig bis: ${_formatDate(activePermit!.expiresAt!.toLocal())}',
+                      style: const TextStyle(
+                          color: Colors.green, fontSize: 12),
+                    )
+                  else
+                    const Text(
+                      'Unbegrenzt gültig',
+                      style: TextStyle(
+                          color: Colors.green, fontSize: 12),
+                    ),
+                  if (extraPermitCount > 0) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '+ $extraPermitCount weitere Freigabe(n) vorhanden',
+                      style: TextStyle(
+                        color:
+                            AppColors.onDark.withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          )
+        else
+          // ZUSTAND 3: Kein Permit — Antrag stellen
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Du benötigst eine Genehmigung, um eine Zelle zu gründen.',
+                    style: TextStyle(
+                      color: AppColors.onDark.withValues(alpha: 0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onRequestPermit,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.gold,
+                        side: const BorderSide(color: AppColors.gold),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text('Gründungsantrag stellen',
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  if (myPendingRequests.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...myPendingRequests.map(
+                      (r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Chip(
+                          backgroundColor: AppColors.surface,
+                          side: const BorderSide(
+                              color: AppColors.surfaceVariant),
+                          label: Text(
+                            'Antrag vom ${_formatDate(r.requestedAt.toLocal())} — Ausstehend',
+                            style: TextStyle(
+                              color: AppColors.onDark
+                                  .withValues(alpha: 0.8),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -639,6 +933,14 @@ class _FilledState extends StatelessWidget {
     );
   }
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Formats a [DateTime] as `dd.MM.yyyy`.
+String _formatDate(DateTime dt) =>
+    '${dt.day.toString().padLeft(2, '0')}.'
+    '${dt.month.toString().padLeft(2, '0')}.'
+    '${dt.year}';
 
 // ── Nearby helpers ────────────────────────────────────────────────────────────
 

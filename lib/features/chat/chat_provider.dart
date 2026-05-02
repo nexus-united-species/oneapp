@@ -39,6 +39,8 @@ import 'group_channel.dart';
 import 'group_channel_service.dart';
 import '../dorfplatz/feed_service.dart';
 import '../governance/cell.dart';
+import '../governance/cell_founding_permit.dart';
+import '../governance/cell_founding_permit_service.dart';
 import '../governance/cell_join_request.dart';
 import '../governance/cell_member.dart';
 import '../governance/cell_service.dart';
@@ -629,6 +631,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     };
 
     ProposalService.instance.getMyNostrPubkeyHex = () => transport.localNostrPubkeyHex;
+    CellFoundingPermitService.instance.getMyNostrPubkeyHex =
+        () => transport.localNostrPubkeyHex;
 
     // Discussion messages → broadcast via TransportManager.
     ProposalService.instance.onSendDiscussionMessage = (params) async {
@@ -828,6 +832,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _nostrTransport?.publishCellDissolution(cellJson);
     print('[CELL-DEL] Publishing cell deletion event: ${cellJson['id']}');
   }
+
+  // ── Cell Founding Permits ─────────────────────────────────────────────────
+
+  /// Publishes a Kind-31006 permit request from the local user to the admin.
+  Future<bool> publishPermitRequest(CellFoundingPermit permit) =>
+      _nostrTransport?.publishCellFoundingPermit(permit, action: 'request') ??
+      Future.value(false);
+
+  /// Publishes a Kind-31006 permit decision (approve / reject / revoke)
+  /// from the admin to the requester.
+  Future<bool> publishPermitDecision(
+    CellFoundingPermit permit, {
+    required String action, // 'approve' | 'reject' | 'revoke'
+  }) =>
+      _nostrTransport?.publishCellFoundingPermit(permit, action: action) ??
+      Future.value(false);
+
+  /// Publishes a Kind-31006 permit-used confirmation from the requester
+  /// back to the admin.
+  Future<bool> publishPermitUsed(CellFoundingPermit permit) =>
+      _nostrTransport?.publishCellFoundingPermit(permit, action: 'used') ??
+      Future.value(false);
 
   /// Re-publishes all cells where the local user is FOUNDER so that other
   /// nodes can discover them via the Nostr Kind-30000 subscription.

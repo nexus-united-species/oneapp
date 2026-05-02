@@ -14,6 +14,7 @@ import 'package:nexus_oneapp/features/chat/conversation_service.dart';
 import 'package:nexus_oneapp/features/dashboard/node_counter_service.dart';
 import 'package:nexus_oneapp/services/role_service.dart';
 import 'package:nexus_oneapp/features/dorfplatz/feed_service.dart';
+import 'package:nexus_oneapp/features/governance/cell_founding_permit_service.dart';
 import 'package:nexus_oneapp/features/governance/cell_service.dart';
 import 'package:nexus_oneapp/features/governance/proposal_scheduler.dart';
 import 'package:nexus_oneapp/features/governance/proposal_service.dart';
@@ -199,6 +200,8 @@ Future<void> initServicesAfterIdentity() async {
     await FeedService.instance.load();
     // Load governance: cells and proposals.
     await CellService.instance.load();
+    await CellFoundingPermitService.instance.load();
+    print('[INIT] CellFoundingPermitService loaded');
     await ProposalService.instance.load();
     // Start the proposal scheduler (drives automatic VOTING→DECIDED transitions).
     _proposalScheduler?.stop();

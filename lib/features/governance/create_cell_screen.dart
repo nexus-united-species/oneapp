@@ -5,15 +5,23 @@ import 'package:provider/provider.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/roles/permission_helper.dart';
 import '../../core/utils/geohash.dart';
+import '../../services/role_service.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/help_icon.dart';
 import '../chat/chat_provider.dart';
 import 'cell.dart';
+import 'cell_founding_permit.dart';
+import 'cell_founding_permit_service.dart';
 import 'cell_service.dart';
 
 /// Form to found a new cell.
+///
+/// When [foundingPermit] is provided the form is pre-filled and the cell-type
+/// is locked to the permit's type.  The permit is validated and marked as used
+/// after a successful cell creation.
 class CreateCellScreen extends StatefulWidget {
-  const CreateCellScreen({super.key});
+  final CellFoundingPermit? foundingPermit;
+  const CreateCellScreen({super.key, this.foundingPermit});
 
   @override
   State<CreateCellScreen> createState() => _CreateCellScreenState();
@@ -37,6 +45,22 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
   String? _geohash;
   bool _fetchingLocation = false;
   String? _locationStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-populate fields from the founding permit (if any).
+    final p = widget.foundingPermit;
+    if (p != null) {
+      _cellType = p.cellType;
+      _nameCtrl.text = p.proposedName ?? '';
+      _descCtrl.text = p.proposedDescription ?? '';
+      if (p.proposedCategory != null &&
+          cellCategories.contains(p.proposedCategory)) {
+        _category = p.proposedCategory!;
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -103,10 +127,14 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     final myDid = IdentityService.instance.currentIdentity!.did;
-    if (!PermissionHelper.canCreateCell(myDid)) {
+
+    // Allow non-admins with a valid founding permit to proceed; otherwise
+    // admin rights are required.
+    if (!PermissionHelper.canCreateCell(myDid, cellType: _cellType) &&
+        widget.foundingPermit == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Nur System-Admins können Zellen gründen.'),
+          content: Text('Keine Gründungsfreigabe vorhanden.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -114,6 +142,65 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
     }
 
     setState(() => _isCreating = true);
+
+    // Permit validation for non-admin users — runs before Cell.create().
+    if (!RoleService.instance.isSystemAdmin(myDid)) {
+      if (widget.foundingPermit == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Keine Gründungsfreigabe vorhanden.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCreating = false);
+        return;
+      }
+      if (!widget.foundingPermit!.isActive) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Diese Gründungsfreigabe ist nicht mehr gültig.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCreating = false);
+        return;
+      }
+      if (widget.foundingPermit!.cellType != _cellType) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Die Freigabe gilt nicht für diesen Zelltyp.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCreating = false);
+        return;
+      }
+      if (widget.foundingPermit!.requesterDid != myDid) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Diese Freigabe gehört nicht zu deiner Identität.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCreating = false);
+        return;
+      }
+      if (widget.foundingPermit!.status == PermitStatus.used ||
+          widget.foundingPermit!.status == PermitStatus.revoked) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Diese Gründungsfreigabe wurde bereits verwendet oder widerrufen.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCreating = false);
+        return;
+      }
+    }
 
     try {
       final cell = Cell.create(
@@ -143,12 +230,36 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
 
       // Create internal Pinnwand + Diskussion channels for the new cell.
       if (mounted) {
-        await context.read<ChatProvider>().createCellInternalChannels(cell, myDid);
+        await context
+            .read<ChatProvider>()
+            .createCellInternalChannels(cell, myDid);
       }
 
       // Publish Nostr announcement so other nodes can discover this cell.
       if (mounted) {
         context.read<ChatProvider>().publishNostrCellAnnouncement(cell);
+      }
+
+      // Mark permit as used and notify admin via Nostr (best-effort).
+      if (widget.foundingPermit != null) {
+        await CellFoundingPermitService.instance.markPermitUsed(
+          widget.foundingPermit!.id,
+          cell.id,
+        );
+        if (mounted) {
+          final published =
+              await context.read<ChatProvider>().publishPermitUsed(
+                widget.foundingPermit!.copyWith(
+                  status: PermitStatus.used,
+                  usedAt: DateTime.now().toUtc(),
+                  createdCellId: cell.id,
+                ),
+              );
+          if (!published) {
+            print('[PERMIT] Used confirmation publish failed; '
+                'will require retry later');
+          }
+        }
       }
 
       if (mounted) {
@@ -163,7 +274,8 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Fehler: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Fehler: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -184,6 +296,37 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            // Permit info banner (only when redeeming a founding permit)
+            if (widget.foundingPermit != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: Colors.green.withValues(alpha: 0.6)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.check_circle,
+                        color: Colors.green, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Du verwendest deine Gründungsfreigabe.',
+                        style: TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             // Name
             _SectionLabel('Zellenname *'),
             TextFormField(
@@ -218,12 +361,15 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
                     label: 'Lokale Gemeinschaft',
                     icon: Icons.location_on,
                     selected: _cellType == CellType.local,
-                    onTap: () {
-                      setState(() => _cellType = CellType.local);
-                      if (_geohash == null && !_fetchingLocation) {
-                        _fetchGeohash();
-                      }
-                    },
+                    // Locked when redeeming a permit — type may not change.
+                    onTap: widget.foundingPermit != null
+                        ? null
+                        : () {
+                            setState(() => _cellType = CellType.local);
+                            if (_geohash == null && !_fetchingLocation) {
+                              _fetchGeohash();
+                            }
+                          },
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -232,7 +378,10 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
                     label: 'Thematische Gemeinschaft',
                     icon: Icons.group_work,
                     selected: _cellType == CellType.thematic,
-                    onTap: () => setState(() => _cellType = CellType.thematic),
+                    onTap: widget.foundingPermit != null
+                        ? null
+                        : () =>
+                            setState(() => _cellType = CellType.thematic),
                   ),
                 ),
               ],
@@ -479,13 +628,14 @@ class _TypeChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
-  final VoidCallback onTap;
+  // Null = locked (no interaction allowed, e.g. when redeeming a permit).
+  final VoidCallback? onTap;
 
   const _TypeChip({
     required this.label,
     required this.icon,
     required this.selected,
-    required this.onTap,
+    this.onTap,
   });
 
   @override
