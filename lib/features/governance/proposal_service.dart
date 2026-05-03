@@ -16,6 +16,7 @@ import '../../services/notification_service.dart';
 import 'audit_log_entry.dart';
 import 'cell_member.dart';
 import 'cell_service.dart';
+import 'retry_backoff.dart';
 import 'decision_record.dart';
 import 'proposal.dart';
 import 'proposal_edit.dart';
@@ -214,7 +215,7 @@ class ProposalService {
     for (final id in zombies) {
       _proposals.remove(id);
       _votes.remove(id);
-      await _deleteProposalFromDb(id);
+      await _deleteProposalKeepingAudit(id);
     }
   }
 
@@ -350,7 +351,7 @@ class ProposalService {
     _proposals.remove(proposalId);
     _votes.remove(proposalId);
     _notify(); // live UI update immediately
-    await _deleteProposalFromDb(proposalId);
+    await _deleteProposalKeepingAudit(proposalId);
     debugPrint('[PROPOSAL] Draft deleted: $proposalId');
   }
 
@@ -535,7 +536,7 @@ class ProposalService {
     _votes.remove(proposalId);
     _notify();
     // Async DB cleanup (safe even if already deleted).
-    await _deleteProposalFromDb(proposalId);
+    await _deleteProposalKeepingAudit(proposalId);
     print('[PROPOSAL] tombstoneAndDelete: $proposalId');
   }
 
@@ -1117,7 +1118,7 @@ class ProposalService {
         await _addTombstone(proposalId);
         _proposals.remove(proposalId);
         _votes.remove(proposalId);
-        await _deleteProposalFromDb(proposalId);
+        await _deleteProposalKeepingAudit(proposalId);
         _notify();
         return;
       }
@@ -1651,9 +1652,9 @@ class ProposalService {
         print('[RETRY] FAILED after $retryCount attempts: eventId=$shortId');
       } else {
         nextStatus = PublishResultStatus.retrying;
-        nextRetryAt = now + _backoffMs(retryCount);
+        nextRetryAt = now + backoffMs(retryCount);
         print('[RETRY] Scheduled attempt ${retryCount + 1} in '
-            '${_backoffMs(retryCount) / 1000}s for eventId=$shortId');
+            '${backoffMs(retryCount) / 1000}s for eventId=$shortId');
       }
 
       final updated = pendingResult.copyWith(
@@ -1664,31 +1665,6 @@ class ProposalService {
         updatedAt: now,
       );
       await PublishResultDao.instance.update(updated);
-    }
-  }
-
-  /// Returns backoff delay in milliseconds for the given retry attempt.
-  /// Schedule per G2 spec §21.4:
-  ///   attempt 1 → 60s
-  ///   attempt 2 → 5min
-  ///   attempt 3 → 15min
-  ///   attempt 4 → 1h
-  ///   attempt 5 → 6h
-  ///   attempt >=6 → not retried (FAILED)
-  int _backoffMs(int retryCount) {
-    switch (retryCount) {
-      case 1:
-        return 60 * 1000;
-      case 2:
-        return 5 * 60 * 1000;
-      case 3:
-        return 15 * 60 * 1000;
-      case 4:
-        return 60 * 60 * 1000;
-      case 5:
-        return 6 * 60 * 60 * 1000;
-      default:
-        return 6 * 60 * 60 * 1000;
     }
   }
 
@@ -1957,12 +1933,32 @@ class ProposalService {
     );
   }
 
-  Future<void> _deleteProposalFromDb(String proposalId) async {
-    debugPrint('[PROPOSAL] Deleting from DB: $proposalId');
+  /// Deletes a proposal AND its audit log from the local DB.
+  ///
+  /// This is destructive for the audit trail. Per G2 spec §18,
+  /// audit logs are append-only and must not be deleted.
+  ///
+  /// USE ONLY in the local cell-teardown path: when the entire
+  /// enclosing cell is being removed from THIS device (cell
+  /// dissolution applied locally, user leaves the cell completely).
+  /// In all other cases — including withdraw, decision finalization,
+  /// receive-WITHDRAWN, debug cleanup, and per-proposal removal —
+  /// use _deleteProposalKeepingAudit.
+  Future<void> _deleteProposalIncludingAudit(String proposalId) async {
+    debugPrint('[PROPOSAL] LOCAL TEARDOWN delete (audit cascaded): $proposalId');
     await PodDatabase.instance.deleteProposal(proposalId);
     await PodDatabase.instance.deleteVotesForProposal(proposalId);
     await PodDatabase.instance.deleteEditsForProposal(proposalId);
     await PodDatabase.instance.deleteAuditLogForProposal(proposalId);
+    await PodDatabase.instance.deleteDecisionRecord(proposalId);
+  }
+
+  Future<void> _deleteProposalKeepingAudit(String proposalId) async {
+    debugPrint('[PROPOSAL] Deleting from DB (keeping audit log): $proposalId');
+    await PodDatabase.instance.deleteProposal(proposalId);
+    await PodDatabase.instance.deleteVotesForProposal(proposalId);
+    await PodDatabase.instance.deleteEditsForProposal(proposalId);
+    // NOTE: deleteAuditLogForProposal nicht aufrufen — append-only per G2 §18.
     await PodDatabase.instance.deleteDecisionRecord(proposalId);
   }
 
