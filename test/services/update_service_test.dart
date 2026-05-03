@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -17,16 +19,21 @@ http.Client _mockClient({
   String exeUrl = 'https://example.com/Setup_Nexus.exe',
   int statusCode = 200,
   int minVersionCode = 1,
+  String? sha256Apk,
+  String? sha256Exe,
 }) {
-  final responseBody = jsonEncode({
+  final body = <String, dynamic>{
     'version': version,
     'version_code': versionCode,
     'release_notes': releaseNotes,
     'apk_url': apkUrl,
     'exe_url': exeUrl,
     'min_version_code': minVersionCode,
-  });
-  return MockClient((_) async => http.Response(responseBody, statusCode));
+  };
+  if (sha256Apk != null) body['sha256_apk'] = sha256Apk;
+  if (sha256Exe != null) body['sha256_exe'] = sha256Exe;
+
+  return MockClient((_) async => http.Response(jsonEncode(body), statusCode));
 }
 
 // ── parseVersion ─────────────────────────────────────────────────────────────
@@ -381,6 +388,187 @@ void main() {
       // Test runner runs on Windows host but passes 'android' override,
       // so this test always exercises the override path reliably.
       expect(selectDownloadUrl(apk, exe, 'android'), apk);
+    });
+  });
+
+  // ── targetFileNameForPlatform ─────────────────────────────────────────────────
+
+  group('targetFileNameForPlatform', () {
+    test('android → NexusOneApp_update.apk', () {
+      expect(targetFileNameForPlatform('android'), 'NexusOneApp_update.apk');
+    });
+
+    test('windows → NexusOneApp_update.exe', () {
+      expect(targetFileNameForPlatform('windows'), 'NexusOneApp_update.exe');
+    });
+
+    test('unknown platform → apk (non-Windows fallback)', () {
+      expect(targetFileNameForPlatform('linux'), 'NexusOneApp_update.apk');
+    });
+  });
+
+  // ── expectedSha256For ─────────────────────────────────────────────────────────
+
+  group('expectedSha256For', () {
+    const apkHash = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222';
+    const exeHash = 'ffff9999eeee8888dddd7777cccc6666bbbb5555aaaa4444ffff9999eeee8888';
+
+    test('android with sha256Apk set → sha256Apk', () {
+      final info = UpdateInfo(
+        version: '1.0.0',
+        releaseNotes: '',
+        downloadUrl: 'https://example.com/nexus.apk',
+        sha256Apk: apkHash,
+        sha256Exe: exeHash,
+      );
+      expect(expectedSha256For(info, 'android'), apkHash);
+    });
+
+    test('windows with sha256Exe set → sha256Exe', () {
+      final info = UpdateInfo(
+        version: '1.0.0',
+        releaseNotes: '',
+        downloadUrl: 'https://example.com/Setup.exe',
+        sha256Apk: apkHash,
+        sha256Exe: exeHash,
+      );
+      expect(expectedSha256For(info, 'windows'), exeHash);
+    });
+
+    test('android with no SHA256 fields → null', () {
+      final info = UpdateInfo(
+        version: '1.0.0',
+        releaseNotes: '',
+        downloadUrl: 'https://example.com/nexus.apk',
+      );
+      expect(expectedSha256For(info, 'android'), isNull);
+    });
+
+    test('windows with no SHA256 fields → null', () {
+      final info = UpdateInfo(
+        version: '1.0.0',
+        releaseNotes: '',
+        downloadUrl: 'https://example.com/Setup.exe',
+      );
+      expect(expectedSha256For(info, 'windows'), isNull);
+    });
+  });
+
+  // ── verifySha256 ──────────────────────────────────────────────────────────────
+
+  group('verifySha256', () {
+    late Directory tmpDir;
+
+    setUp(() async {
+      tmpDir = await Directory.systemTemp.createTemp('nexus_test_');
+    });
+
+    tearDown(() async {
+      if (await tmpDir.exists()) await tmpDir.delete(recursive: true);
+    });
+
+    Future<File> _writeFile(String content) async {
+      final file = File('${tmpDir.path}/test_update.bin');
+      await file.writeAsString(content);
+      return file;
+    }
+
+    test('correct hash → true', () async {
+      const content = 'nexus update payload';
+      final file = await _writeFile(content);
+      final expectedHash =
+          sha256.convert(utf8.encode(content)).toString();
+      expect(await verifySha256(file, expectedHash), isTrue);
+    });
+
+    test('wrong hash → false', () async {
+      final file = await _writeFile('nexus update payload');
+      expect(
+        await verifySha256(file, 'deadbeef' * 8),
+        isFalse,
+      );
+    });
+
+    test('hash with leading/trailing spaces → normalised and accepted', () async {
+      const content = 'whitespace test';
+      final file = await _writeFile(content);
+      final hash = sha256.convert(utf8.encode(content)).toString();
+      // Simulate a copy-paste artefact in version.json.
+      expect(await verifySha256(file, '  $hash  '), isTrue);
+    });
+
+    test('hash with uppercase letters → normalised and accepted', () async {
+      const content = 'uppercase test';
+      final file = await _writeFile(content);
+      final hash =
+          sha256.convert(utf8.encode(content)).toString().toUpperCase();
+      expect(await verifySha256(file, hash), isTrue);
+    });
+
+    test('hash with internal spaces → normalised and accepted', () async {
+      const content = 'spaced hash test';
+      final file = await _writeFile(content);
+      final raw = sha256.convert(utf8.encode(content)).toString();
+      // Insert a space in the middle to simulate a formatting artefact.
+      final spacedHash = '${raw.substring(0, 32)} ${raw.substring(32)}';
+      expect(await verifySha256(file, spacedHash), isTrue);
+    });
+  });
+
+  // ── UpdateInfo SHA256 fields from version.json ────────────────────────────────
+
+  group('UpdateInfo SHA256 fields parsed from version.json', () {
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+    });
+
+    test('sha256_apk and sha256_exe are populated in UpdateInfo', () async {
+      const apkHash = 'abc123';
+      const exeHash = 'def456';
+      final client = _mockClient(
+        version: '1.0.0',
+        versionCode: 100,
+        sha256Apk: apkHash,
+        sha256Exe: exeHash,
+      );
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        platformOverride: 'android',
+      );
+      expect(info, isNotNull);
+      expect(info!.sha256Apk, apkHash);
+      expect(info.sha256Exe, exeHash);
+    });
+
+    test('missing sha256 fields → null in UpdateInfo', () async {
+      final client = _mockClient(version: '1.0.0', versionCode: 100);
+      final info = await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 9,
+        platformOverride: 'android',
+      );
+      expect(info, isNotNull);
+      expect(info!.sha256Apk, isNull);
+      expect(info.sha256Exe, isNull);
+    });
+  });
+
+  // ── downloadAndInstall — empty URL guard ─────────────────────────────────────
+
+  group('downloadAndInstall', () {
+    test('empty downloadUrl → returns false without exception', () async {
+      final info = UpdateInfo(
+        version: '1.0.0',
+        releaseNotes: '',
+        downloadUrl: '', // deliberately empty
+      );
+      final result = await UpdateService.instance.downloadAndInstall(
+        info,
+        onProgress: (_) {},
+        platformOverride: 'android',
+      );
+      expect(result, isFalse);
     });
   });
 }

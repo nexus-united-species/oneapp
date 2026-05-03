@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths for in-app APK download.
+    cache-path maps to getCacheDir() — no storage permission required.
+    The subdirectory "nexus_update/" is where downloaded APKs are placed before handing
+    them to the Android system installer via a content:// URI.
+-->
+<paths>
+    <cache-path name="nexus_update" path="nexus_update/"/>
+</paths>

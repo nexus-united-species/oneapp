@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Holds information about an available update.
@@ -13,10 +16,20 @@ class UpdateInfo {
   final String releaseNotes;
   final String downloadUrl;
 
+  /// Optional SHA-256 hex digest for the Android APK.
+  /// If present, the downloaded file is verified before opening the installer.
+  final String? sha256Apk;
+
+  /// Optional SHA-256 hex digest for the Windows installer.
+  /// If present, the downloaded file is verified before opening the installer.
+  final String? sha256Exe;
+
   const UpdateInfo({
     required this.version,
     required this.releaseNotes,
     required this.downloadUrl,
+    this.sha256Apk,
+    this.sha256Exe,
   });
 }
 
@@ -93,6 +106,89 @@ class UpdateService {
     _controller.add(null);
   }
 
+  /// Downloads the update file for [info], optionally verifies its SHA-256
+  /// checksum, and hands it off to the OS installer (Android: system package
+  /// installer, Windows: UAC-guarded setup wizard).
+  ///
+  /// Returns true when the installer was successfully launched.
+  /// Returns false on any error (network, hash mismatch, unsupported platform)
+  /// without throwing — all errors are logged with [debugPrint].
+  ///
+  /// Progress is reported via [onProgress] as a value in [0.0, 1.0].
+  /// When the total response size is unknown, [onProgress] is not called.
+  ///
+  /// [platformOverride] is used in tests only (`'android'` or `'windows'`).
+  Future<bool> downloadAndInstall(
+    UpdateInfo info, {
+    required void Function(double progress) onProgress,
+    String? platformOverride,
+  }) async {
+    if (info.downloadUrl.isEmpty) {
+      debugPrint('[UPDATE] No download URL available — aborting');
+      return false;
+    }
+
+    try {
+      // Resolve target directory: <tmp>/nexus_update/
+      final tmp = await getTemporaryDirectory();
+      final updateDir = Directory('${tmp.path}/nexus_update');
+      await updateDir.create(recursive: true);
+
+      final fileName = _targetFileNameForPlatform(platformOverride);
+      final file = File('${updateDir.path}/$fileName');
+
+      // Stream-download the update file and track progress.
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', Uri.parse(info.downloadUrl));
+        final response = await client
+            .send(request)
+            .timeout(const Duration(minutes: 10));
+
+        if (response.statusCode != 200) {
+          debugPrint('[UPDATE] Download failed (HTTP ${response.statusCode})');
+          return false;
+        }
+
+        final total = response.contentLength ?? -1;
+        var received = 0;
+        final sink = file.openWrite();
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          if (total > 0) onProgress(received / total);
+        }
+        await sink.close();
+      } finally {
+        client.close();
+      }
+
+      debugPrint('[UPDATE] Download complete: ${file.path}');
+
+      // SHA-256 verification: skip silently when no hash is provided (alpha builds).
+      final expectedHash = _expectedSha256For(info, platformOverride);
+      if (expectedHash != null) {
+        final verified = await _verifySha256(file, expectedHash);
+        if (!verified) {
+          // _verifySha256 already logs the mismatch detail.
+          await file.delete();
+          debugPrint('[UPDATE] Corrupt download deleted — aborting installation');
+          return false;
+        }
+        debugPrint('[UPDATE] SHA256 verified OK');
+      } else {
+        debugPrint(
+            '[UPDATE] No SHA256 provided; skipping verification for alpha build');
+      }
+
+      // Hand the file off to the OS installer — no silent installs.
+      return await _launchInstaller(file, platformOverride);
+    } catch (e) {
+      debugPrint('[UPDATE] downloadAndInstall error: $e');
+      return false;
+    }
+  }
+
   // ── Internal ───────────────────────────────────────────────────────────────
 
   Future<void> _checkWithRateLimit() async {
@@ -147,6 +243,10 @@ class UpdateService {
       final apkUrl = data['apk_url'] as String? ?? '';
       final exeUrl = data['exe_url'] as String? ?? '';
 
+      // Optional SHA-256 fields — absent in older version.json releases.
+      final sha256Apk = data['sha256_apk'] as String?;
+      final sha256Exe = data['sha256_exe'] as String?;
+
       // Select the download URL for the current platform.
       final downloadUrl = _selectDownloadUrl(apkUrl, exeUrl, platformOverride);
 
@@ -155,7 +255,8 @@ class UpdateService {
           int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ??
           0;
 
-      debugPrint('[UPDATE-CHECK] Current: $ownVersionCode, Remote: $remoteVersionCode');
+      debugPrint(
+          '[UPDATE-CHECK] Current: $ownVersionCode, Remote: $remoteVersionCode');
 
       if (remoteVersionCode <= ownVersionCode) {
         debugPrint('[UPDATE-CHECK] Up to date');
@@ -182,12 +283,15 @@ class UpdateService {
       }
 
       await prefs.setString(_kLastDialogKey, DateTime.now().toIso8601String());
-      debugPrint('[UPDATE-CHECK] Update available: v$remoteVersion — showing dialog');
+      debugPrint(
+          '[UPDATE-CHECK] Update available: v$remoteVersion — showing dialog');
 
       final info = UpdateInfo(
         version: remoteVersion,
         releaseNotes: releaseNotes,
         downloadUrl: downloadUrl,
+        sha256Apk: sha256Apk,
+        sha256Exe: sha256Exe,
       );
       _current = info;
       _controller.add(info);
@@ -198,6 +302,44 @@ class UpdateService {
     } finally {
       if (ownClient) client.close();
     }
+  }
+
+  /// Opens the downloaded installer via the appropriate OS mechanism.
+  ///
+  /// Android → system package installer (via open_file).
+  /// Windows → UAC-guarded setup wizard (via Process.start, no shell).
+  /// Other platforms → not supported in this sprint; returns false.
+  Future<bool> _launchInstaller(File file, String? platformOverride) async {
+    final isWindows = platformOverride != null
+        ? platformOverride == 'windows'
+        : (!kIsWeb && Platform.isWindows);
+    final isAndroid = platformOverride != null
+        ? platformOverride == 'android'
+        : (!kIsWeb && Platform.isAndroid);
+
+    if (isWindows) {
+      debugPrint('[UPDATE] Launching Windows installer: ${file.path}');
+      // runInShell: false prevents command injection; the path is controlled
+      // (written to our own temp directory moments earlier).
+      await Process.start(file.path, [], runInShell: false);
+      debugPrint('[UPDATE] Windows installer started — awaiting user confirmation');
+      return true;
+    }
+
+    if (isAndroid) {
+      debugPrint('[UPDATE] Opening APK installer: ${file.path}');
+      final result = await OpenFile.open(file.path);
+      if (result.type != ResultType.done) {
+        debugPrint('[UPDATE] open_file failed: ${result.message}');
+        return false;
+      }
+      return true;
+    }
+
+    // iOS, Linux, macOS, web — not in scope for this sprint.
+    final platform = platformOverride ?? Platform.operatingSystem;
+    debugPrint('[UPDATE] In-app install not supported on platform: $platform');
+    return false;
   }
 
   // ── Test helpers ───────────────────────────────────────────────────────────
@@ -223,6 +365,63 @@ class UpdateService {
       );
 }
 
+// ── Download helpers (testable) ───────────────────────────────────────────────
+
+/// Returns the platform-appropriate filename for the downloaded update.
+///
+/// Windows → `'NexusOneApp_update.exe'`
+/// Android / others → `'NexusOneApp_update.apk'`
+///
+/// [platformOverride] is used in tests only (`'android'` or `'windows'`).
+@visibleForTesting
+String targetFileNameForPlatform([String? platformOverride]) =>
+    _targetFileNameForPlatform(platformOverride);
+
+String _targetFileNameForPlatform([String? platformOverride]) {
+  final isWin = platformOverride != null
+      ? platformOverride == 'windows'
+      : (!kIsWeb && Platform.isWindows);
+  return isWin ? 'NexusOneApp_update.exe' : 'NexusOneApp_update.apk';
+}
+
+/// Returns the expected SHA-256 hash for the current platform's artifact,
+/// or null if no hash was provided (alpha / legacy version.json).
+///
+/// [platformOverride] is used in tests only (`'android'` or `'windows'`).
+@visibleForTesting
+String? expectedSha256For(UpdateInfo info, [String? platformOverride]) =>
+    _expectedSha256For(info, platformOverride);
+
+String? _expectedSha256For(UpdateInfo info, [String? platformOverride]) {
+  final isWin = platformOverride != null
+      ? platformOverride == 'windows'
+      : (!kIsWeb && Platform.isWindows);
+  return isWin ? info.sha256Exe : info.sha256Apk;
+}
+
+/// Hashes [file] with SHA-256 and compares the result to [expectedHash].
+///
+/// [expectedHash] is normalised (trimmed, lowercased, spaces removed) before
+/// comparison so that copy-paste artefacts in version.json don't cause false
+/// negatives.
+///
+/// Returns true when the digests match.
+@visibleForTesting
+Future<bool> verifySha256(File file, String expectedHash) =>
+    _verifySha256(file, expectedHash);
+
+Future<bool> _verifySha256(File file, String expectedHash) async {
+  final bytes = await file.readAsBytes();
+  final actual = sha256.convert(bytes).toString(); // always lowercase hex
+  final normalised =
+      expectedHash.trim().toLowerCase().replaceAll(' ', '');
+  if (actual != normalised) {
+    debugPrint('[UPDATE] SHA256 mismatch: expected $normalised, got $actual');
+    return false;
+  }
+  return true;
+}
+
 // ── Platform helper ───────────────────────────────────────────────────────────
 
 /// Returns the appropriate download URL for the current platform.
@@ -233,7 +432,7 @@ class UpdateService {
 /// [platformOverride] is used in tests only (`'android'` or `'windows'`).
 @visibleForTesting
 String selectDownloadUrl(String apkUrl, String exeUrl,
-    [String? platformOverride]) =>
+        [String? platformOverride]) =>
     _selectDownloadUrl(apkUrl, exeUrl, platformOverride);
 
 String _selectDownloadUrl(

@@ -82,6 +82,8 @@ dependencies:
   package_info_plus: ^8.0.0
   url_launcher: ^6.3.0
   share_plus: ^10.0.0
+  # In-app update: download APK/EXE and hand off to OS installer
+  open_file: ^3.3.2
 
 dev_dependencies:
   flutter_test:
