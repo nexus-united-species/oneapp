@@ -12,8 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   // ── Contact mute field ─────────────────────────────────────────────────────
 
-  group('Contact.muted field', () {
-    test('default muted is false', () {
+  group('Contact.mutedUntil field', () {
+    test('default mutedUntil is null', () {
       final c = Contact(
         did: 'did:test:1',
         pseudonym: 'Alice',
@@ -21,35 +21,38 @@ void main() {
         addedAt: DateTime(2025),
         lastSeen: DateTime(2025),
       );
-      expect(c.muted, isFalse);
+      expect(c.mutedUntil, isNull);
     });
 
-    test('can be set to true in constructor', () {
+    test('can be set to a future DateTime in constructor', () {
+      final mutedUntil = DateTime(2026, 6, 1);
       final c = Contact(
         did: 'did:test:2',
         pseudonym: 'Bob',
         trustLevel: TrustLevel.trusted,
         addedAt: DateTime(2025),
         lastSeen: DateTime(2025),
-        muted: true,
+        mutedUntil: mutedUntil,
       );
-      expect(c.muted, isTrue);
+      expect(c.mutedUntil, equals(mutedUntil));
     });
 
-    test('toJson includes muted field', () {
+    test('toJson includes mutedUntil as ISO string', () {
+      final mutedUntil = DateTime(2026, 6, 1);
       final c = Contact(
         did: 'did:test:3',
         pseudonym: 'Carol',
         trustLevel: TrustLevel.contact,
         addedAt: DateTime(2025),
         lastSeen: DateTime(2025),
-        muted: true,
+        mutedUntil: mutedUntil,
       );
       final json = c.toJson();
-      expect(json['muted'], isTrue);
+      expect(json['mutedUntil'], equals(mutedUntil.toIso8601String()));
     });
 
-    test('fromJson restores muted=true', () {
+    test('fromJson restores mutedUntil from serialized value', () {
+      final mutedUntil = DateTime(2026, 6, 1);
       final json = {
         'did': 'did:test:4',
         'pseudonym': 'Dave',
@@ -57,13 +60,13 @@ void main() {
         'addedAt': '2025-01-01T00:00:00.000',
         'lastSeen': '2025-01-01T00:00:00.000',
         'blocked': false,
-        'muted': true,
+        'mutedUntil': mutedUntil.toIso8601String(),
       };
       final c = Contact.fromJson(json);
-      expect(c.muted, isTrue);
+      expect(c.mutedUntil, equals(mutedUntil));
     });
 
-    test('fromJson defaults muted to false when absent', () {
+    test('fromJson defaults mutedUntil to null when absent', () {
       final json = {
         'did': 'did:test:5',
         'pseudonym': 'Eve',
@@ -71,23 +74,24 @@ void main() {
         'addedAt': '2025-01-01T00:00:00.000',
         'lastSeen': '2025-01-01T00:00:00.000',
         'blocked': false,
-        // no 'muted' key
+        // no 'mutedUntil' key
       };
       final c = Contact.fromJson(json);
-      expect(c.muted, isFalse);
+      expect(c.mutedUntil, isNull);
     });
 
-    test('round-trip serialization preserves muted', () {
+    test('round-trip serialization preserves mutedUntil', () {
+      final mutedUntil = DateTime(2026, 6, 1);
       final original = Contact(
         did: 'did:test:6',
         pseudonym: 'Frank',
         trustLevel: TrustLevel.guardian,
         addedAt: DateTime(2025),
         lastSeen: DateTime(2025),
-        muted: true,
+        mutedUntil: mutedUntil,
       );
       final restored = Contact.fromJson(original.toJson());
-      expect(restored.muted, isTrue);
+      expect(restored.mutedUntil, equals(mutedUntil));
       expect(restored.did, original.did);
       expect(restored.pseudonym, original.pseudonym);
     });
