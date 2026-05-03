@@ -208,8 +208,26 @@ class ProposalService {
   /// Handles the race-window where a Nostr event landed between the last
   /// tombstone write and the current app start.
   Future<void> _cleanupZombiesOnStart() async {
-    final zombies =
-        _proposals.keys.where((id) => _proposalTombstones.contains(id)).toList();
+    // WITHDRAWN proposals are tombstoned by design (to prevent re-import
+    // of the original pre-withdraw event), but they are legitimately
+    // visible per G2 spec §8.2. Skip them in zombie cleanup.
+    final zombies = _proposals.entries
+        .where((entry) =>
+            _proposalTombstones.contains(entry.key) &&
+            entry.value.status != ProposalStatus.WITHDRAWN)
+        .map((entry) => entry.key)
+        .toList();
+
+    final skippedWithdrawn = _proposals.entries
+        .where((entry) =>
+            _proposalTombstones.contains(entry.key) &&
+            entry.value.status == ProposalStatus.WITHDRAWN)
+        .length;
+    if (skippedWithdrawn > 0) {
+      print('[PROPOSAL] Skipping $skippedWithdrawn tombstoned WITHDRAWN '
+          'proposals during zombie cleanup');
+    }
+
     if (zombies.isEmpty) return;
     print('[PROPOSAL] Cleanup zombies on start: ${zombies.length} removed');
     for (final id in zombies) {
@@ -1111,14 +1129,50 @@ class ProposalService {
         orElse: () => ProposalStatus.DRAFT,
       );
 
-      // WITHDRAWN from another device: tombstone + delete locally so it never
-      // comes back via relay replay on this device either.
+      // WITHDRAWN from another device: status-update, keep proposal visible
+      // (symmetric to local withdrawProposal at L470-504). Tombstone still
+      // set first to prevent re-import via late relay replay of the original
+      // pre-withdraw event.
       if (newStatus == ProposalStatus.WITHDRAWN) {
-        print('[PROPOSAL] Withdraw received, tombstoning: $proposalId');
+        print('[PROPOSAL] Withdraw received, applying status update: $proposalId');
         await _addTombstone(proposalId);
-        _proposals.remove(proposalId);
-        _votes.remove(proposalId);
-        await _deleteProposalKeepingAudit(proposalId);
+
+        final existingWithdrawn = _proposals[proposalId];
+        if (existingWithdrawn == null) {
+          // Proposal was never seen on this device. Skip — nothing to update.
+          // The tombstone above prevents future re-import.
+          print('[PROPOSAL] Withdraw for unknown proposal, tombstone only: $proposalId');
+          _notify();
+          return;
+        }
+
+        // Skip if already WITHDRAWN locally (idempotency).
+        if (existingWithdrawn.status == ProposalStatus.WITHDRAWN) {
+          print('[PROPOSAL] Withdraw already applied locally: $proposalId');
+          return;
+        }
+
+        // Apply status transition.
+        existingWithdrawn.status = ProposalStatus.WITHDRAWN;
+        existingWithdrawn.withdrawnAt = DateTime.now().toUtc();
+        await _saveProposalToDb(existingWithdrawn);
+
+        // Mirror the audit entry from the local withdrawProposal path
+        // for a complete audit trail on this device.
+        // NOTE: actorDid uses existingWithdrawn.creatorDid as a stand-in.
+        // Deriving the actor from the Nostr event signer is tech-debt for
+        // a later refinement.
+        await addAuditEntry(AuditLogEntry(
+          entryId: AuditLogEntry.generateId(),
+          proposalId: existingWithdrawn.id,
+          cellId: existingWithdrawn.cellId,
+          eventType: AuditEventType.PROPOSAL_WITHDRAWN,
+          actorDid: existingWithdrawn.creatorDid,
+          actorPseudonym: existingWithdrawn.creatorPseudonym,
+          timestamp: DateTime.now().toUtc(),
+          payload: {'reason': 'remote_withdrawal_received'},
+        ));
+
         _notify();
         return;
       }
