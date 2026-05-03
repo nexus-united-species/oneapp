@@ -109,6 +109,7 @@ class ProposalService {
   final Set<String> _seenDecisionEventIds = <String>{};
 
   static const _tombstonesKey = 'proposal_tombstones';
+  static const _tombstoneMigrationKey = 'proposal_tombstones_migrated_to_sqlite';
 
   final _streamCtrl = StreamController<void>.broadcast();
   final _auditCtrl = StreamController<AuditLogEntry>.broadcast();
@@ -169,6 +170,14 @@ class ProposalService {
     debugPrint('[PROPOSAL] Service initializing');
     try {
       // Load tombstones FIRST so they are active before any DB or Nostr data arrives.
+      // Step 1: One-time migration from SharedPreferences to SQLite (idempotent).
+      final prefs = await SharedPreferences.getInstance();
+      await _migrateSharedPrefsTombstonesToSqlite(prefs);
+      // Step 2: Load from SQLite (primary) into in-memory set.
+      await _loadTombstonesFromSqlite();
+      // Step 3: Also load from SharedPreferences as a fallback merge.
+      // This catches any race conditions where SharedPrefs has more recent
+      // data than SQLite (rare, but defensive).
       await _loadTombstones();
       await _migrateLegacyProposals();
       await _loadFromDatabase();
@@ -192,15 +201,66 @@ class ProposalService {
     print('[PROPOSAL] Loaded ${_proposalTombstones.length} tombstones');
   }
 
-  /// Adds [proposalId] to the tombstone set and immediately persists it.
-  ///
-  /// The in-memory add is synchronous — callers can check [_proposalTombstones]
-  /// right after this call without awaiting the SharedPreferences write.
-  Future<void> _addTombstone(String proposalId) async {
-    _proposalTombstones.add(proposalId); // synchronous, no await needed
+  /// One-time migration: copies SharedPreferences proposal-tombstone list
+  /// into the SQLite tombstones table (type='proposal').
+  /// Idempotent — runs once per install via the _tombstoneMigrationKey flag.
+  Future<void> _migrateSharedPrefsTombstonesToSqlite(SharedPreferences prefs) async {
+    if (prefs.getBool(_tombstoneMigrationKey) == true) {
+      print('[PROPOSAL-TOMBSTONE-MIGRATION] Already done, skipping');
+      return;
+    }
+
+    print('[PROPOSAL-TOMBSTONE-MIGRATION] === Starting one-time migration ===');
+    int migrated = 0;
+
+    final list = prefs.getStringList(_tombstonesKey) ?? [];
+    print('[PROPOSAL-TOMBSTONE-MIGRATION] Found ${list.length} proposal tombstones in SharedPrefs');
+
+    for (final id in list) {
+      await PodDatabase.instance.addTombstone(
+        id: id,
+        type: 'proposal',
+        reason: 'migrated from SharedPreferences',
+      );
+      migrated++;
+    }
+
+    await prefs.setBool(_tombstoneMigrationKey, true);
+    print('[PROPOSAL-TOMBSTONE-MIGRATION] === Done: $migrated tombstones migrated ===');
+  }
+
+  /// Loads proposal tombstones from SQLite into the in-memory set.
+  /// Called on every app start after migration.
+  Future<void> _loadTombstonesFromSqlite() async {
+    final fromSqlite = await PodDatabase.instance.listTombstones('proposal');
+    _proposalTombstones.addAll(fromSqlite);
+    print('[PROPOSAL-TOMBSTONE] Loaded ${fromSqlite.length} from SQLite');
+  }
+
+  /// Adds [proposalId] to the in-memory tombstone set and writes to both
+  /// SQLite (primary) and SharedPreferences (fallback). The optional
+  /// [reason] enables semantic auditability — defaults to 'tombstoned'
+  /// for backwards compatibility with existing callers.
+  Future<void> _addTombstone(
+    String proposalId, {
+    String reason = 'tombstoned',
+  }) async {
+    // In-memory first (synchronous), so callers can check immediately.
+    _proposalTombstones.add(proposalId);
+
+    // SQLite (primary persistent storage).
+    await PodDatabase.instance.addTombstone(
+      id: proposalId,
+      type: 'proposal',
+      reason: reason,
+    );
+
+    // SharedPreferences (fallback / backwards compat). Kept in sync so a
+    // failed SQLite read on app start can still recover from prefs.
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_tombstonesKey, _proposalTombstones.toList());
-    print('[PROPOSAL] Tombstone added: $proposalId');
+
+    print('[PROPOSAL] Tombstone added: $proposalId (reason=$reason)');
   }
 
   /// Removes any proposals from the DB/cache that are already tombstoned.
@@ -508,7 +568,7 @@ class ProposalService {
 
     final wasInDiscussion = p.discussionStartedAt != null;
     // Tombstone synchronously BEFORE DB write (race-condition guard).
-    await _addTombstone(proposalId);
+    await _addTombstone(proposalId, reason: 'withdrawn');
     p.status = ProposalStatus.WITHDRAWN;
     p.withdrawnAt = DateTime.now().toUtc();
     await _saveProposalToDb(p);
@@ -1135,7 +1195,7 @@ class ProposalService {
       // pre-withdraw event.
       if (newStatus == ProposalStatus.WITHDRAWN) {
         print('[PROPOSAL] Withdraw received, applying status update: $proposalId');
-        await _addTombstone(proposalId);
+        await _addTombstone(proposalId, reason: 'remote_withdrawn');
 
         final existingWithdrawn = _proposals[proposalId];
         if (existingWithdrawn == null) {
