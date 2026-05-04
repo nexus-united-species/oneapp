@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 19,
+      version: 21,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -906,6 +906,93 @@ class PodDatabase {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_next_retry ON publish_results(next_retry_at)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_local_event ON publish_results(local_event_id)');
       print('[DB-MIG-V18] publish_results table + 4 indexes created');
+    }
+
+    if (oldVersion < 20) {
+      // Phase 3.1: G2 voting modes (YES_NO_ABSTAIN / SINGLE_CHOICE /
+      // CANDIDATE_CHOICE) per spec v1.3.
+      // All changes are additive; existing data is unaffected.
+
+      // 1) proposals.voting_mode (default for legacy proposals)
+      if (!await _hasColumn(db, 'proposals', 'voting_mode')) {
+        await db.execute(
+          "ALTER TABLE proposals ADD COLUMN voting_mode TEXT NOT NULL "
+          "DEFAULT 'YES_NO_ABSTAIN'",
+        );
+      }
+
+      // 2) proposal_votes.selected_option_id (nullable for legacy votes)
+      if (!await _hasColumn(db, 'proposal_votes', 'selected_option_id')) {
+        await db.execute(
+          'ALTER TABLE proposal_votes ADD COLUMN selected_option_id TEXT',
+        );
+      }
+
+      // 3) decision_records: 4 new nullable columns for v1.3 spec
+      if (!await _hasColumn(db, 'decision_records', 'result_relation')) {
+        await db.execute(
+          'ALTER TABLE decision_records ADD COLUMN result_relation TEXT',
+        );
+      }
+      if (!await _hasColumn(db, 'decision_records', 'previous_proposal_id')) {
+        await db.execute(
+          'ALTER TABLE decision_records ADD COLUMN previous_proposal_id TEXT',
+        );
+      }
+      if (!await _hasColumn(db, 'decision_records', 'option_results_json')) {
+        await db.execute(
+          'ALTER TABLE decision_records ADD COLUMN option_results_json TEXT',
+        );
+      }
+      if (!await _hasColumn(db, 'decision_records', 'tie_option_ids_json')) {
+        await db.execute(
+          'ALTER TABLE decision_records ADD COLUMN tie_option_ids_json TEXT',
+        );
+      }
+
+      // 4) New table: proposal_options (for SINGLE_CHOICE and
+      // CANDIDATE_CHOICE voting modes)
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS proposal_options (
+          option_id              TEXT PRIMARY KEY,
+          proposal_id            TEXT NOT NULL,
+          label                  TEXT NOT NULL,
+          description            TEXT,
+          candidate_did          TEXT,
+          candidate_pseudonym    TEXT,
+          candidate_accepted_at  INTEGER,
+          candidate_withdrawn_at INTEGER,
+          status                 TEXT NOT NULL DEFAULT 'ACTIVE',
+          position               INTEGER NOT NULL DEFAULT 0,
+          created_at             INTEGER NOT NULL,
+          updated_at             INTEGER NOT NULL
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_proposal_options_proposal '
+        'ON proposal_options(proposal_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_proposal_options_status '
+        'ON proposal_options(status)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_proposal_options_position '
+        'ON proposal_options(position)',
+      );
+
+      print('[DB-MIGRATION-20] Voting modes schema added');
+    }
+
+    if (oldVersion < 21) {
+      // Phase 3.5: result_reason for decision records (G2 spec v1.3 §20.8).
+      // Additive; existing decision_records remain functional.
+      if (!await _hasColumn(db, 'decision_records', 'result_reason')) {
+        await db.execute(
+          'ALTER TABLE decision_records ADD COLUMN result_reason TEXT',
+        );
+      }
+      print('[DB-MIGRATION-21] decision_records.result_reason added');
     }
   }
 
@@ -2038,6 +2125,7 @@ class PodDatabase {
         'result_participation': data['result_participation'] ?? data['resultParticipation'],
         'scope': data['scope'] ?? 'cell',
         'domain': data['domain'] ?? data['category'] ?? 'Sonstiges',
+        'voting_mode': data['voting_mode'] ?? 'YES_NO_ABSTAIN',
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -2223,6 +2311,47 @@ class PodDatabase {
     );
   }
 
+  // ── Proposal options ──────────────────────────────────────────────────────
+
+  Future<void> upsertProposalOption(Map<String, dynamic> data) async {
+    await _database.insert(
+      'proposal_options',
+      {
+        'option_id': data['option_id'],
+        'proposal_id': data['proposal_id'],
+        'label': data['label'],
+        'description': data['description'],
+        'candidate_did': data['candidate_did'],
+        'candidate_pseudonym': data['candidate_pseudonym'],
+        'candidate_accepted_at': data['candidate_accepted_at'],
+        'candidate_withdrawn_at': data['candidate_withdrawn_at'],
+        'status': data['status'] ?? 'ACTIVE',
+        'position': data['position'] ?? 0,
+        'created_at': data['created_at'],
+        'updated_at': data['updated_at'],
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> listProposalOptions(
+      String proposalId) async {
+    return await _database.query(
+      'proposal_options',
+      where: 'proposal_id = ?',
+      whereArgs: [proposalId],
+      orderBy: 'position ASC, created_at ASC',
+    );
+  }
+
+  Future<void> deleteOptionsForProposal(String proposalId) async {
+    await _database.delete(
+      'proposal_options',
+      where: 'proposal_id = ?',
+      whereArgs: [proposalId],
+    );
+  }
+
   /// Deletes all G2 data for a cell (called when leaving/deleting a cell).
   Future<void> deleteAllProposalDataForCell(String cellId) async {
     // Find all proposal IDs for this cell first.
@@ -2239,6 +2368,7 @@ class PodDatabase {
       await deleteAuditLogForProposal(id);
       await deleteDecisionRecord(id);
       await deleteDiscussionsForProposal(id);
+      await deleteOptionsForProposal(id);
     }
     // Audit log may have entries beyond the proposals list (shouldn't, but safe).
     await _database.delete(

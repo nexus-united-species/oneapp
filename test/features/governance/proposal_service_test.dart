@@ -1,441 +1,726 @@
-// TODO: Tests neu schreiben mit G2 Datenmodell (Prompt 1B/1C).
-//
-// Diese Datei verwendete das G1-Proposal-Modell (ProposalStatus.draft lowercase,
-// createdBy-Parameter, Proposal.fromJson) welches in G2 (Prompt 1A) auf das neue
-// Flat-Column-Format umgestellt wurde. Die Tests müssen komplett neu geschrieben
-// werden sobald das UI in Prompt 1C fertig ist und End-to-End getestet werden kann.
-//
-// Vorläufig deaktiviert damit der CI-Build nicht fehlschlägt.
+import 'dart:convert';
 
-// ignore_for_file: unused_import
 import 'package:flutter_test/flutter_test.dart';
-// import 'package:nexus_oneapp/features/governance/cell.dart';
-// import 'package:nexus_oneapp/features/governance/cell_member.dart';
-// import 'package:nexus_oneapp/features/governance/proposal.dart';
-
-// ── Old helpers (G1 model) – disabled ─────────────────────────────────────────
-// Proposal _makeProposal({ ... }) { ... }
-
-// ── Tests (G1 model – disabled, rewrite with G2 model in Prompt 1C) ───────────
+import 'package:nexus_oneapp/features/governance/decision_record.dart';
+import 'package:nexus_oneapp/features/governance/proposal.dart';
+import 'package:nexus_oneapp/features/governance/vote.dart';
+import 'package:nexus_oneapp/features/governance/voting_mode.dart';
 
 void main() {
-  // All tests in this file are temporarily disabled because they reference
-  // the G1 Proposal model (ProposalStatus.draft lowercase, createdBy parameter,
-  // Proposal.fromJson) which was replaced by the G2 flat-column model in
-  // Prompt 1A. New tests covering the G2 lifecycle (publishToDiscussion,
-  // castVote, finalizeProposal, DecisionRecord hash chain, etc.) will be
-  // written in Prompt 1C after the UI layer is complete.
-  //
-  // The CellMember / Cell / proposalDomains tests that do NOT depend on the
-  // old Proposal constructor are still valid – they live in cell_service_test.dart.
-}
+  // ── Proposal.toMap / fromMap round-trip ──────────────────────────────────
 
-/* ── G1 test body archived below – rewrite with G2 model in Prompt 1C ──────────
+  group('Proposal serialization', () {
+    test('round-trip preserves all required fields', () {
+      final original = Proposal(
+        id: 'prop_test_1',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:test:alice',
+        creatorPseudonym: 'Alice',
+        title: 'Test Proposal',
+        description: 'A test description',
+        proposalType: ProposalType.SACHFRAGE,
+        category: 'Soziales',
+        status: ProposalStatus.DRAFT,
+        createdAt: DateTime.utc(2026, 1, 15, 10, 30),
+      );
 
-  group('Proposal.create', () {
-    test('assigns unique id', () {
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.id, equals(original.id));
+      expect(restored.cellId, equals(original.cellId));
+      expect(restored.creatorDid, equals(original.creatorDid));
+      expect(restored.creatorPseudonym, equals(original.creatorPseudonym));
+      expect(restored.title, equals(original.title));
+      expect(restored.description, equals(original.description));
+      expect(restored.proposalType, equals(original.proposalType));
+      expect(restored.category, equals(original.category));
+      expect(restored.status, equals(original.status));
+      expect(restored.createdAt, equals(original.createdAt));
+    });
+
+    test('round-trip preserves all optional DateTime fields', () {
+      final discussionStart = DateTime.utc(2026, 1, 16, 8, 0);
+      final votingStart = DateTime.utc(2026, 1, 18, 8, 0);
+      final votingEnds = DateTime.utc(2026, 1, 25, 8, 0);
+      final decided = DateTime.utc(2026, 1, 25, 9, 0);
+      final archived = DateTime.utc(2026, 2, 25, 8, 0);
+
+      final original = Proposal(
+        id: 'prop_test_2',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:test:bob',
+        creatorPseudonym: 'Bob',
+        title: 'Full Lifecycle Proposal',
+        description: 'Tests all timestamps',
+        createdAt: DateTime.utc(2026, 1, 15),
+        discussionStartedAt: discussionStart,
+        votingStartedAt: votingStart,
+        votingEndsAt: votingEnds,
+        decidedAt: decided,
+        archivedAt: archived,
+        status: ProposalStatus.ARCHIVED,
+      );
+
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.discussionStartedAt, equals(discussionStart));
+      expect(restored.votingStartedAt, equals(votingStart));
+      expect(restored.votingEndsAt, equals(votingEnds));
+      expect(restored.decidedAt, equals(decided));
+      expect(restored.archivedAt, equals(archived));
+      expect(restored.status, equals(ProposalStatus.ARCHIVED));
+    });
+
+    test('round-trip preserves WITHDRAWN status with withdrawnAt', () {
+      final withdrawn = DateTime.utc(2026, 1, 20, 14, 30);
+      final original = Proposal(
+        id: 'prop_test_3',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:test:carol',
+        creatorPseudonym: 'Carol',
+        title: 'Withdrawn Proposal',
+        description: 'Was withdrawn',
+        createdAt: DateTime.utc(2026, 1, 15),
+        status: ProposalStatus.WITHDRAWN,
+        withdrawnAt: withdrawn,
+      );
+
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.status, equals(ProposalStatus.WITHDRAWN));
+      expect(restored.withdrawnAt, equals(withdrawn));
+    });
+
+    test('round-trip preserves voting result fields', () {
+      final original = Proposal(
+        id: 'prop_test_4',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:test:dave',
+        creatorPseudonym: 'Dave',
+        title: 'Decided Proposal',
+        description: 'Has results',
+        createdAt: DateTime.utc(2026, 1, 15),
+        status: ProposalStatus.DECIDED,
+        decidedAt: DateTime.utc(2026, 1, 25),
+        resultSummary: 'YES with 65% participation',
+        resultYes: 13,
+        resultNo: 7,
+        resultAbstain: 2,
+        resultParticipation: 0.65,
+      );
+
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.resultSummary, equals('YES with 65% participation'));
+      expect(restored.resultYes, equals(13));
+      expect(restored.resultNo, equals(7));
+      expect(restored.resultAbstain, equals(2));
+      expect(restored.resultParticipation, closeTo(0.65, 0.001));
+    });
+
+    test('round-trip preserves impulseSupporters list', () {
+      final supporters = ['did:a', 'did:b', 'did:c'];
+      final original = Proposal(
+        id: 'prop_test_5',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        title: 'With Supporters',
+        description: 'Has multiple impulse supporters',
+        createdAt: DateTime.utc(2026, 1, 15),
+        impulseSupporters: supporters,
+      );
+
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.impulseSupporters, equals(supporters));
+    });
+
+    test('round-trip preserves G1 compatibility fields scope and domain', () {
+      final original = Proposal(
+        id: 'prop_test_6',
+        cellId: 'cell_test_1',
+        creatorDid: 'did:test:eve',
+        creatorPseudonym: 'Eve',
+        title: 'G1 Compat',
+        description: 'Tests scope and domain',
+        createdAt: DateTime.utc(2026, 1, 15),
+        scope: ProposalScope.federation,
+        domain: 'Umwelt',
+      );
+
+      final restored = Proposal.fromMap(original.toMap());
+
+      expect(restored.scope, equals(ProposalScope.federation));
+      expect(restored.domain, equals('Umwelt'));
+    });
+
+    test('Proposal.create generates unique IDs', () {
       final p1 = Proposal.create(
-        title: 'Proposal 1',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
+        title: 't1',
+        description: 'd1',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
       );
       final p2 = Proposal.create(
-        title: 'Proposal 2',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
+        title: 't2',
+        description: 'd2',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
       );
-      expect(p1.id, isNotEmpty);
+
       expect(p1.id, isNot(equals(p2.id)));
     });
 
-    test('default status is draft', () {
+    test('Proposal.create defaults to DRAFT status', () {
       final p = Proposal.create(
         title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
       );
-      expect(p.status, ProposalStatus.draft);
-    });
-
-    test('discussion and voting deadlines are set correctly', () {
-      final p = Proposal.create(
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
-        discussionDays: 7,
-        votingDays: 3,
-      );
-      final diffD = p.discussionDeadline.difference(p.createdAt).inDays;
-      final diffV = p.votingDeadline.difference(p.discussionDeadline).inDays;
-      expect(diffD, 7);
-      expect(diffV, 3);
-    });
-
-    test('default quorum is 0.5', () {
-      final p = Proposal.create(
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
-      );
-      expect(p.quorum, 0.5);
-    });
-  });
-
-  // ── Proposal lifecycle states ──────────────────────────────────────────────────
-
-  group('Proposal status', () {
-    test('draft is not active', () {
-      final p = _makeProposal(status: ProposalStatus.draft);
+      expect(p.status, equals(ProposalStatus.DRAFT));
+      expect(p.isDraft, isTrue);
       expect(p.isActive, isFalse);
     });
 
-    test('discussion is active', () {
-      final p = _makeProposal(status: ProposalStatus.discussion);
+    test('isActive is true for DISCUSSION, VOTING, VOTING_ENDED', () {
+      final p = Proposal.create(
+        title: 't',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+      );
+
+      p.status = ProposalStatus.DISCUSSION;
       expect(p.isActive, isTrue);
-    });
 
-    test('voting is active', () {
-      final p = _makeProposal(status: ProposalStatus.voting);
+      p.status = ProposalStatus.VOTING;
       expect(p.isActive, isTrue);
-    });
 
-    test('decided is not active', () {
-      final p = _makeProposal(status: ProposalStatus.decided);
+      p.status = ProposalStatus.VOTING_ENDED;
+      expect(p.isActive, isTrue);
+
+      p.status = ProposalStatus.DECIDED;
       expect(p.isActive, isFalse);
-    });
 
-    test('archived is not active', () {
-      final p = _makeProposal(status: ProposalStatus.archived);
+      p.status = ProposalStatus.ARCHIVED;
       expect(p.isActive, isFalse);
-    });
 
-    test('status mutation works (mutable field)', () {
-      final p = _makeProposal(status: ProposalStatus.draft);
-      p.status = ProposalStatus.discussion;
-      expect(p.status, ProposalStatus.discussion);
+      p.status = ProposalStatus.WITHDRAWN;
+      expect(p.isActive, isFalse);
     });
   });
 
-  // ── Proposal.toJson / fromJson ────────────────────────────────────────────────
+  // ── Vote.toMap / fromMap round-trip ──────────────────────────────────────
 
-  group('Proposal serialisation', () {
-    test('round-trip preserves all fields', () {
-      final p = _makeProposal(
-        scope: ProposalScope.cell,
-        domain: 'Umwelt',
-        quorum: 0.75,
+  group('Vote serialization', () {
+    test('round-trip preserves all required fields', () {
+      final created = DateTime.utc(2026, 1, 20, 12, 0);
+      final original = Vote(
+        voteId: 'vote_test_1',
+        proposalId: 'prop_test_1',
+        voterPubkey: 'pubkey_alice_hex',
+        voterDid: 'did:test:alice',
+        voterPseudonym: 'Alice',
+        choice: VoteChoice.YES,
+        weight: 1,
+        voiceCredits: 1,
+        createdAt: created,
+        nostrEventId: 'nostr_evt_1',
       );
-      final json = p.toJson();
-      final restored = Proposal.fromJson(json);
 
-      expect(restored.id, p.id);
-      expect(restored.title, p.title);
-      expect(restored.description, p.description);
-      expect(restored.createdBy, p.createdBy);
-      expect(restored.cellId, p.cellId);
-      expect(restored.scope, p.scope);
-      expect(restored.domain, p.domain);
-      expect(restored.status, p.status);
-      expect(restored.quorum, p.quorum);
+      final restored = Vote.fromMap(original.toMap());
+
+      expect(restored.voteId, equals(original.voteId));
+      expect(restored.proposalId, equals(original.proposalId));
+      expect(restored.voterPubkey, equals(original.voterPubkey));
+      expect(restored.voterDid, equals(original.voterDid));
+      expect(restored.voterPseudonym, equals(original.voterPseudonym));
+      expect(restored.choice, equals(VoteChoice.YES));
+      expect(restored.weight, equals(1));
+      expect(restored.voiceCredits, equals(1));
+      expect(restored.createdAt, equals(created));
+      expect(restored.nostrEventId, equals(original.nostrEventId));
     });
 
-    test('fromJson handles missing optional fields with defaults', () {
-      final json = {
-        'id': 'p1',
-        'title': 'Test',
-        'createdBy': 'did:test:alice',
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
-        'cellId': 'c1',
-        'discussionDeadline':
-            DateTime.now().add(const Duration(days: 7)).millisecondsSinceEpoch,
-        'votingDeadline':
-            DateTime.now().add(const Duration(days: 10)).millisecondsSinceEpoch,
-      };
-      final p = Proposal.fromJson(json);
-      expect(p.status, ProposalStatus.draft);
-      expect(p.scope, ProposalScope.cell);
-      expect(p.domain, 'Sonstiges');
-      expect(p.quorum, 0.5);
-    });
-  });
-
-  // ── ProposalScope ─────────────────────────────────────────────────────────────
-
-  group('ProposalScope', () {
-    test('all values serialize and deserialize via name', () {
-      for (final s in ProposalScope.values) {
-        expect(
-          ProposalScope.values.firstWhere((e) => e.name == s.name),
-          equals(s),
+    test('round-trip preserves all VoteChoice values', () {
+      for (final choice in VoteChoice.values) {
+        final v = Vote(
+          voteId: Vote.generateId(),
+          proposalId: 'p1',
+          voterPubkey: 'pk',
+          voterDid: 'did:x',
+          voterPseudonym: 'X',
+          choice: choice,
+          createdAt: DateTime.utc(2026, 1, 20),
+          nostrEventId: 'n1',
         );
+        final restored = Vote.fromMap(v.toMap());
+        expect(restored.choice, equals(choice),
+            reason: 'Choice $choice should round-trip correctly');
       }
     });
 
-    test('cell scope is default', () {
+    test('round-trip preserves optional reasoning field', () {
+      final v = Vote(
+        voteId: 'v1',
+        proposalId: 'p1',
+        voterPubkey: 'pk',
+        voterDid: 'did:x',
+        voterPseudonym: 'X',
+        choice: VoteChoice.NO,
+        reasoning: 'I disagree because of reasons.',
+        createdAt: DateTime.utc(2026, 1, 20),
+        nostrEventId: 'n1',
+      );
+      final restored = Vote.fromMap(v.toMap());
+      expect(restored.reasoning, equals('I disagree because of reasons.'));
+    });
+
+    test('round-trip preserves null reasoning', () {
+      final v = Vote(
+        voteId: 'v1',
+        proposalId: 'p1',
+        voterPubkey: 'pk',
+        voterDid: 'did:x',
+        voterPseudonym: 'X',
+        choice: VoteChoice.ABSTAIN,
+        createdAt: DateTime.utc(2026, 1, 20),
+        nostrEventId: 'n1',
+      );
+      final restored = Vote.fromMap(v.toMap());
+      expect(restored.reasoning, isNull);
+    });
+
+    test('round-trip preserves delegated vote fields', () {
+      final v = Vote(
+        voteId: 'v1',
+        proposalId: 'p1',
+        voterPubkey: 'pk',
+        voterDid: 'did:delegate',
+        voterPseudonym: 'Delegate',
+        choice: VoteChoice.YES,
+        isDelegated: true,
+        delegatedFrom: 'did:original_voter',
+        createdAt: DateTime.utc(2026, 1, 20),
+        nostrEventId: 'n1',
+      );
+      final restored = Vote.fromMap(v.toMap());
+      expect(restored.isDelegated, isTrue);
+      expect(restored.delegatedFrom, equals('did:original_voter'));
+    });
+
+    test('round-trip preserves weight and voiceCredits for QV', () {
+      final v = Vote(
+        voteId: 'v1',
+        proposalId: 'p1',
+        voterPubkey: 'pk',
+        voterDid: 'did:x',
+        voterPseudonym: 'X',
+        choice: VoteChoice.YES,
+        weight: 3,
+        voiceCredits: 9,
+        createdAt: DateTime.utc(2026, 1, 20),
+        nostrEventId: 'n1',
+      );
+      final restored = Vote.fromMap(v.toMap());
+      expect(restored.weight, equals(3));
+      expect(restored.voiceCredits, equals(9));
+    });
+
+    test('Vote.generateId produces unique IDs', () {
+      final id1 = Vote.generateId();
+      final id2 = Vote.generateId();
+      expect(id1, isNot(equals(id2)));
+    });
+  });
+
+  // ── VotingMode round-trip ────────────────────────────────────────────────
+
+  group('VotingMode roundtrip', () {
+    test('Proposal.create defaults votingMode to YES_NO_ABSTAIN', () {
       final p = Proposal.create(
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellId: 'cell001',
-      );
-      expect(p.scope, ProposalScope.cell);
-    });
-  });
-
-  // ── proposalDomains ───────────────────────────────────────────────────────────
-
-  group('proposalDomains', () {
-    test('contains expected domains', () {
-      expect(proposalDomains, contains('Umwelt'));
-      expect(proposalDomains, contains('Infrastruktur'));
-      expect(proposalDomains, contains('Soziales'));
-      expect(proposalDomains, contains('Wirtschaft'));
-      expect(proposalDomains, contains('Governance'));
-      expect(proposalDomains, contains('Sonstiges'));
-    });
-
-    test('has exactly 6 domains', () {
-      expect(proposalDomains.length, 6);
-    });
-  });
-
-  // ── CellMember – proposal permission checks ───────────────────────────────────
-
-  group('CellMember proposal permissions', () {
-    test('confirmed founder can create proposals', () {
-      final member = CellMember(
+        title: 'VotingMode default',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
         cellId: 'c1',
-        did: 'did:test:alice',
-        joinedAt: DateTime.now().toUtc(),
-        role: MemberRole.founder,
-        confirmedBy: 'did:test:alice',
       );
-      expect(member.isConfirmed, isTrue);
+      expect(p.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
     });
 
-    test('confirmed member can create proposals', () {
-      final member = CellMember(
+    test('Proposal.create accepts SINGLE_CHOICE', () {
+      final p = Proposal.create(
+        title: 'Poll',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
         cellId: 'c1',
-        did: 'did:test:bob',
-        joinedAt: DateTime.now().toUtc(),
-        role: MemberRole.member,
-        confirmedBy: 'did:test:alice',
+        votingMode: VotingMode.SINGLE_CHOICE,
       );
-      expect(member.isConfirmed, isTrue);
+      expect(p.votingMode, equals(VotingMode.SINGLE_CHOICE));
     });
 
-    test('pending member cannot create proposals', () {
-      final member = CellMember(
+    test('Proposal.create accepts CANDIDATE_CHOICE', () {
+      final p = Proposal.create(
+        title: 'Election',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
         cellId: 'c1',
-        did: 'did:test:charlie',
-        joinedAt: DateTime.now().toUtc(),
-        role: MemberRole.pending,
+        votingMode: VotingMode.CANDIDATE_CHOICE,
       );
-      expect(member.isConfirmed, isFalse);
+      expect(p.votingMode, equals(VotingMode.CANDIDATE_CHOICE));
     });
 
-    test('proposalWaitDays: member who just joined is blocked', () {
-      final cell = Cell.create(
-        name: 'Strict',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellType: CellType.thematic,
-        proposalWaitDays: 7,
+    test('toMap includes voting_mode in snake_case', () {
+      final p = Proposal.create(
+        title: 'T',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+        votingMode: VotingMode.SINGLE_CHOICE,
       );
-      final member = CellMember(
-        cellId: cell.id,
-        did: 'did:test:bob',
-        joinedAt: DateTime.now().toUtc(), // just joined
-        role: MemberRole.member,
-        confirmedBy: 'did:test:alice',
-      );
-      // Simulate check: days since joining < proposalWaitDays
-      final waitedDays =
-          DateTime.now().toUtc().difference(member.joinedAt).inDays;
-      expect(waitedDays < cell.proposalWaitDays, isTrue);
+      final map = p.toMap();
+      expect(map.containsKey('voting_mode'), isTrue);
+      expect(map['voting_mode'], equals('SINGLE_CHOICE'));
+      expect(map.containsKey('votingMode'), isFalse);
     });
 
-    test('proposalWaitDays: member who waited enough is allowed', () {
-      final cell = Cell.create(
-        name: 'Strict',
-        description: '',
-        createdBy: 'did:test:alice',
-        cellType: CellType.thematic,
-        proposalWaitDays: 7,
+    test('fromMap parses voting_mode correctly', () {
+      final p = Proposal.create(
+        title: 'T',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+        votingMode: VotingMode.CANDIDATE_CHOICE,
       );
-      final member = CellMember(
-        cellId: cell.id,
-        did: 'did:test:bob',
-        joinedAt: DateTime.now().toUtc().subtract(const Duration(days: 10)),
-        role: MemberRole.member,
-        confirmedBy: 'did:test:alice',
-      );
-      final waitedDays =
-          DateTime.now().toUtc().difference(member.joinedAt).inDays;
-      expect(waitedDays >= cell.proposalWaitDays, isTrue);
-    });
-  });
-
-  // ── Proposal lifecycle management ─────────────────────────────────────────────
-
-  group('Proposal lifecycle', () {
-    test('DRAFT → DISCUSSION transition (simulated)', () {
-      final p = _makeProposal(status: ProposalStatus.draft);
-      // Simulate publishProposal
-      p.status = ProposalStatus.discussion;
-      expect(p.status, ProposalStatus.discussion);
-      expect(p.isActive, isTrue);
+      final restored = Proposal.fromMap(p.toMap());
+      expect(restored.votingMode, equals(VotingMode.CANDIDATE_CHOICE));
     });
 
-    test('DISCUSSION → VOTING after deadline (simulated)', () {
+    test('fromMap defaults votingMode to YES_NO_ABSTAIN when missing', () {
+      final p = Proposal.create(
+        title: 'T',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+      );
+      final map = p.toMap()..remove('voting_mode');
+      final restored = Proposal.fromMap(map);
+      expect(restored.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    test('fromMap defaults votingMode to YES_NO_ABSTAIN for unknown values', () {
+      final p = Proposal.create(
+        title: 'T',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+      );
+      final map = p.toMap();
+      map['voting_mode'] = 'LEGACY_UNKNOWN_MODE';
+      final restored = Proposal.fromMap(map);
+      expect(restored.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    test('round-trip preserves SINGLE_CHOICE', () {
+      final original = Proposal.create(
+        title: 'Poll',
+        description: 'd',
+        creatorDid: 'did:b',
+        creatorPseudonym: 'B',
+        cellId: 'c1',
+        votingMode: VotingMode.SINGLE_CHOICE,
+      );
+      final restored = Proposal.fromMap(original.toMap());
+      expect(restored.votingMode, equals(VotingMode.SINGLE_CHOICE));
+    });
+
+    test('round-trip preserves CANDIDATE_CHOICE', () {
+      final original = Proposal.create(
+        title: 'Election',
+        description: 'd',
+        creatorDid: 'did:c',
+        creatorPseudonym: 'C',
+        cellId: 'c1',
+        votingMode: VotingMode.CANDIDATE_CHOICE,
+      );
+      final restored = Proposal.fromMap(original.toMap());
+      expect(restored.votingMode, equals(VotingMode.CANDIDATE_CHOICE));
+    });
+
+    test('direct Proposal() constructor defaults votingMode to YES_NO_ABSTAIN', () {
       final p = Proposal(
-        id: 'p1',
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 10)),
+        id: 'direct_test',
         cellId: 'c1',
-        scope: ProposalScope.cell,
-        domain: 'Governance',
-        status: ProposalStatus.discussion,
-        discussionDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 2)),
-        votingDeadline:
-            DateTime.now().toUtc().add(const Duration(days: 1)),
-        quorum: 0.5,
+        creatorDid: 'did:x',
+        creatorPseudonym: 'X',
+        title: 'Direct',
+        description: 'd',
+        createdAt: DateTime.utc(2026, 5, 4),
       );
-      // Advance status manually (as _advanceStatuses does)
-      final now = DateTime.now().toUtc();
-      if (now.isAfter(p.discussionDeadline)) {
-        p.status = ProposalStatus.voting;
-      }
-      expect(p.status, ProposalStatus.voting);
-    });
-
-    test('VOTING → DECIDED after deadline (simulated)', () {
-      final p = Proposal(
-        id: 'p2',
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 15)),
-        cellId: 'c1',
-        scope: ProposalScope.cell,
-        domain: 'Governance',
-        status: ProposalStatus.voting,
-        discussionDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 8)),
-        votingDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 1)),
-        quorum: 0.5,
-      );
-      final now = DateTime.now().toUtc();
-      if (now.isAfter(p.votingDeadline)) {
-        p.status = ProposalStatus.decided;
-      }
-      expect(p.status, ProposalStatus.decided);
-    });
-
-    test('DECIDED → ARCHIVED after 30 days (simulated)', () {
-      final p = Proposal(
-        id: 'p3',
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 50)),
-        cellId: 'c1',
-        scope: ProposalScope.cell,
-        domain: 'Governance',
-        status: ProposalStatus.decided,
-        discussionDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 40)),
-        votingDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 35)),
-        quorum: 0.5,
-      );
-      final now = DateTime.now().toUtc();
-      if (now.difference(p.votingDeadline).inDays >= 30) {
-        p.status = ProposalStatus.archived;
-      }
-      expect(p.status, ProposalStatus.archived);
-    });
-
-    test('DECIDED is not archived before 30 days', () {
-      final p = Proposal(
-        id: 'p4',
-        title: 'Test',
-        description: '',
-        createdBy: 'did:test:alice',
-        createdAt: DateTime.now().toUtc().subtract(const Duration(days: 5)),
-        cellId: 'c1',
-        scope: ProposalScope.cell,
-        domain: 'Governance',
-        status: ProposalStatus.decided,
-        discussionDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 3)),
-        votingDeadline:
-            DateTime.now().toUtc().subtract(const Duration(days: 1)),
-        quorum: 0.5,
-      );
-      final now = DateTime.now().toUtc();
-      // Should NOT archive yet
-      if (now.difference(p.votingDeadline).inDays >= 30) {
-        p.status = ProposalStatus.archived;
-      }
-      expect(p.status, ProposalStatus.decided); // unchanged
+      expect(p.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
     });
   });
 
-  // ── Membership in multiple cells ──────────────────────────────────────────────
+  // ── Vote.selectedOptionId ────────────────────────────────────────────────
 
-  group('Multi-cell membership', () {
-    test('Member can belong to multiple cells', () {
-      final memberships = [
-        CellMember(
-          cellId: 'cell001',
-          did: 'did:test:alice',
-          joinedAt: DateTime.now().toUtc(),
-          role: MemberRole.founder,
-        ),
-        CellMember(
-          cellId: 'cell002',
-          did: 'did:test:alice',
-          joinedAt: DateTime.now().toUtc(),
-          role: MemberRole.member,
-        ),
-        CellMember(
-          cellId: 'cell003',
-          did: 'did:test:alice',
-          joinedAt: DateTime.now().toUtc(),
-          role: MemberRole.moderator,
-        ),
-      ];
-      expect(memberships.length, 3);
-      expect(memberships.every((m) => m.did == 'did:test:alice'), isTrue);
+  group('Vote selectedOptionId', () {
+    Vote _baseVote({String? selectedOptionId}) => Vote(
+          voteId: 'v_opt_1',
+          proposalId: 'p_opt_1',
+          voterPubkey: 'pk_opt',
+          voterDid: 'did:test:opt',
+          voterPseudonym: 'Opt',
+          choice: VoteChoice.YES,
+          createdAt: DateTime.utc(2026, 5, 4, 12, 0),
+          nostrEventId: 'nostr_opt_1',
+          selectedOptionId: selectedOptionId,
+        );
+
+    test('Vote constructor defaults selectedOptionId to null', () {
+      final v = Vote(
+        voteId: 'v1',
+        proposalId: 'p1',
+        voterPubkey: 'pk',
+        voterDid: 'did:x',
+        voterPseudonym: 'X',
+        choice: VoteChoice.YES,
+        createdAt: DateTime.utc(2026, 5, 4),
+        nostrEventId: 'n1',
+      );
+      expect(v.selectedOptionId, isNull);
     });
 
-    test('Exit right: any member can leave', () {
-      final founder = CellMember(
-        cellId: 'c1',
-        did: 'did:test:alice',
-        joinedAt: DateTime.now().toUtc(),
-        role: MemberRole.founder,
-      );
-      final member = CellMember(
-        cellId: 'c1',
-        did: 'did:test:bob',
-        joinedAt: DateTime.now().toUtc(),
-        role: MemberRole.member,
-      );
-      // Exit right is unconditional (no canLeave restriction in model)
-      expect(founder.did, isNotEmpty);
-      expect(member.did, isNotEmpty);
+    test('Vote constructor accepts selectedOptionId string', () {
+      final v = _baseVote(selectedOptionId: 'option-abc-123');
+      expect(v.selectedOptionId, equals('option-abc-123'));
+    });
+
+    test('toMap includes selected_option_id with null value', () {
+      final map = _baseVote().toMap();
+      expect(map.containsKey('selected_option_id'), isTrue);
+      expect(map['selected_option_id'], isNull);
+    });
+
+    test('toMap includes selected_option_id with string value', () {
+      final map = _baseVote(selectedOptionId: 'opt-xyz').toMap();
+      expect(map.containsKey('selected_option_id'), isTrue);
+      expect(map['selected_option_id'], equals('opt-xyz'));
+    });
+
+    test('fromMap parses null selected_option_id', () {
+      final map = _baseVote().toMap();
+      map['selected_option_id'] = null;
+      final v = Vote.fromMap(map);
+      expect(v.selectedOptionId, isNull);
+    });
+
+    test('fromMap parses string selected_option_id', () {
+      final map = _baseVote().toMap();
+      map['selected_option_id'] = 'option-from-db';
+      final v = Vote.fromMap(map);
+      expect(v.selectedOptionId, equals('option-from-db'));
+    });
+
+    test('fromMap defaults to null when key missing', () {
+      final map = _baseVote().toMap()..remove('selected_option_id');
+      final v = Vote.fromMap(map);
+      expect(v.selectedOptionId, isNull);
+    });
+
+    test('round-trip preserves null selectedOptionId', () {
+      final original = _baseVote();
+      final restored = Vote.fromMap(original.toMap());
+      expect(restored.selectedOptionId, isNull);
+    });
+
+    test('round-trip preserves string selectedOptionId', () {
+      final original = _baseVote(selectedOptionId: 'option-round-trip');
+      final restored = Vote.fromMap(original.toMap());
+      expect(restored.selectedOptionId, equals('option-round-trip'));
     });
   });
 
-── End G1 archive ─────────────────────────────────────────────────────────── */
+  // ── DecisionRecord v1.3 fields ───────────────────────────────────────────
+
+  group('DecisionRecord v1.3 fields', () {
+    /// Minimal valid Vote for embedding in DecisionRecord.allVotes.
+    Vote _minVote() => Vote(
+          voteId: 'v_dr_1',
+          proposalId: 'p_dr_1',
+          voterPubkey: 'pk_dr',
+          voterDid: 'did:test:dr',
+          voterPseudonym: 'DR',
+          choice: VoteChoice.YES,
+          createdAt: DateTime.utc(2026, 5, 4, 10, 0),
+          nostrEventId: 'nostr_dr_1',
+        );
+
+    /// Constructs a minimal DecisionRecord with all required fields.
+    DecisionRecord _base({
+      String? resultRelation,
+      String? previousProposalId,
+      String? optionResultsJson,
+      String? tieOptionIdsJson,
+      String? resultReason,
+      String? previousDecisionHash,
+    }) =>
+        DecisionRecord(
+          recordId: 'rec_dr_1',
+          proposalId: 'p_dr_1',
+          cellId: 'cell_dr_1',
+          finalTitle: 'Test DR',
+          finalDescription: 'Description',
+          result: 'YES',
+          yesVotes: 5,
+          noVotes: 2,
+          abstainVotes: 1,
+          participation: 0.8,
+          decidedAt: DateTime.utc(2026, 5, 4, 12, 0),
+          allVotes: [_minVote()],
+          contentHash: 'hash_abc',
+          previousDecisionHash: previousDecisionHash,
+          nostrEventId: 'nostr_rec_1',
+          resultRelation: resultRelation,
+          previousProposalId: previousProposalId,
+          optionResultsJson: optionResultsJson,
+          tieOptionIdsJson: tieOptionIdsJson,
+          resultReason: resultReason,
+        );
+
+    test('Konstruktor defaults all 5 new fields to null', () {
+      final dr = _base();
+      expect(dr.resultRelation, isNull);
+      expect(dr.previousProposalId, isNull);
+      expect(dr.optionResultsJson, isNull);
+      expect(dr.tieOptionIdsJson, isNull);
+      expect(dr.resultReason, isNull);
+    });
+
+    test('toMap includes all 5 new fields with null values', () {
+      final map = _base().toMap();
+      expect(map.containsKey('result_relation'), isTrue);
+      expect(map.containsKey('previous_proposal_id'), isTrue);
+      expect(map.containsKey('option_results_json'), isTrue);
+      expect(map.containsKey('tie_option_ids_json'), isTrue);
+      expect(map.containsKey('result_reason'), isTrue);
+      expect(map['result_relation'], isNull);
+      expect(map['previous_proposal_id'], isNull);
+      expect(map['option_results_json'], isNull);
+      expect(map['tie_option_ids_json'], isNull);
+      expect(map['result_reason'], isNull);
+    });
+
+    test('fromMap defaults to null when keys missing', () {
+      final map = _base().toMap();
+      map.remove('result_relation');
+      map.remove('previous_proposal_id');
+      map.remove('option_results_json');
+      map.remove('tie_option_ids_json');
+      map.remove('result_reason');
+      final dr = DecisionRecord.fromMap(map);
+      expect(dr.resultRelation, isNull);
+      expect(dr.previousProposalId, isNull);
+      expect(dr.optionResultsJson, isNull);
+      expect(dr.tieOptionIdsJson, isNull);
+      expect(dr.resultReason, isNull);
+    });
+
+    test('round-trip preserves resultRelation = RUNOFF_OF with previousProposalId', () {
+      final original = _base(
+        resultRelation: 'RUNOFF_OF',
+        previousProposalId: 'prop_predecessor_1',
+      );
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.resultRelation, equals('RUNOFF_OF'));
+      expect(restored.previousProposalId, equals('prop_predecessor_1'));
+    });
+
+    test('round-trip preserves resultRelation = REPLACEMENT_OF', () {
+      final original = _base(
+        resultRelation: 'REPLACEMENT_OF',
+        previousProposalId: 'prop_original_1',
+      );
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.resultRelation, equals('REPLACEMENT_OF'));
+      expect(restored.previousProposalId, equals('prop_original_1'));
+    });
+
+    test('round-trip preserves optionResultsJson raw string', () {
+      final rawJson = jsonEncode({
+        'opt_a': {'votes': 10, 'percentage': 0.5},
+        'opt_b': {'votes': 10, 'percentage': 0.5},
+      });
+      final original = _base(optionResultsJson: rawJson);
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.optionResultsJson, equals(rawJson));
+    });
+
+    test('round-trip preserves tieOptionIdsJson raw string', () {
+      final rawJson = jsonEncode(['opt_a', 'opt_b']);
+      final original = _base(tieOptionIdsJson: rawJson);
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.tieOptionIdsJson, equals(rawJson));
+    });
+
+    test('round-trip preserves resultReason = TIE_REQUIRES_RUNOFF', () {
+      final original = _base(resultReason: 'TIE_REQUIRES_RUNOFF');
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.resultReason, equals('TIE_REQUIRES_RUNOFF'));
+    });
+
+    test('round-trip preserves resultReason = WINNER_WITHDRAWN', () {
+      final original = _base(resultReason: 'WINNER_WITHDRAWN');
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.resultReason, equals('WINNER_WITHDRAWN'));
+    });
+
+    test('round-trip preserves resultReason = QUORUM_NOT_MET', () {
+      final original = _base(resultReason: 'QUORUM_NOT_MET');
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.resultReason, equals('QUORUM_NOT_MET'));
+    });
+
+    test('previousDecisionHash and previousProposalId are independent', () {
+      final dr = _base(
+        previousDecisionHash: 'hash_of_prev_decision_record',
+        previousProposalId: 'prop_runoff_predecessor',
+      );
+      expect(dr.previousDecisionHash, equals('hash_of_prev_decision_record'));
+      expect(dr.previousProposalId, equals('prop_runoff_predecessor'));
+      // Semantically distinct: one is audit-trail (G2 §18), other is runoff chaining (G2 §9.12.1)
+      expect(dr.previousDecisionHash, isNot(equals(dr.previousProposalId)));
+    });
+
+    test('previousDecisionHash null but previousProposalId set works', () {
+      final original = _base(
+        previousDecisionHash: null,
+        previousProposalId: 'prop_runoff_orig',
+      );
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.previousDecisionHash, isNull);
+      expect(restored.previousProposalId, equals('prop_runoff_orig'));
+    });
+
+    test('previousDecisionHash set but previousProposalId null works', () {
+      final original = _base(
+        previousDecisionHash: 'audit_hash_xyz',
+        previousProposalId: null,
+      );
+      final restored = DecisionRecord.fromMap(original.toMap());
+      expect(restored.previousDecisionHash, equals('audit_hash_xyz'));
+      expect(restored.previousProposalId, isNull);
+    });
+  });
+}
