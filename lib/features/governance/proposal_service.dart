@@ -21,6 +21,7 @@ import 'decision_record.dart';
 import 'proposal.dart';
 import 'proposal_edit.dart';
 import 'vote.dart';
+import 'voting_mode.dart';
 
 /// A single discussion message attached to a proposal.
 class ProposalDiscussionMessage {
@@ -715,6 +716,21 @@ class ProposalService {
     final p = _proposals[proposalId];
     if (p == null) return;
     if (p.status != ProposalStatus.VOTING_ENDED) return;
+
+    // ── Phase 4.2a: Modus-Verzweigung ──────────────────────────
+    // YES_NO_ABSTAIN nutzt die bestehende Tally-Logik unten.
+    // SINGLE_CHOICE und CANDIDATE_CHOICE werden in Phase 4.3/4.4
+    // implementiert. Bis dahin: skippen, NICHT als INVALID
+    // entscheiden — sonst würden Options-/Kandidatenwahlen
+    // versehentlich ungültig.
+    if (p.votingMode != VotingMode.YES_NO_ABSTAIN) {
+      print('[TALLY-MODE-NOT-IMPLEMENTED] Proposal $proposalId '
+          'has votingMode=${p.votingMode.name}; tally for non-'
+          'YES_NO_ABSTAIN modes is not implemented yet (Phase '
+          '4.3/4.4). Proposal stays in VOTING_ENDED.');
+      return;
+    }
+    // ── Ende Modus-Verzweigung ────────────────────────────────
 
     // Load votes directly from DB – the in-memory cache may be incomplete if
     // votes arrived on other devices while this device was offline.
