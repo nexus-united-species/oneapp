@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'voting_mode.dart';
+
 /// Type of proposal within the Menschheitsfamilie governance system.
 enum ProposalType {
   /// Standard factual question (Sachfrage).
@@ -84,6 +86,9 @@ class Proposal {
   ProposalScope scope;
   String domain;
 
+  // ── G2 v1.3 voting modes ──
+  VotingMode votingMode;
+
   Proposal({
     required this.id,
     required this.cellId,
@@ -112,6 +117,7 @@ class Proposal {
     this.resultAbstain,
     this.resultParticipation,
     this.scope = ProposalScope.cell,
+    this.votingMode = VotingMode.YES_NO_ABSTAIN,
     String? domain,
   })  : impulseSupporters = impulseSupporters ?? [],
         domain = domain ?? category ?? 'Sonstiges';
@@ -129,6 +135,7 @@ class Proposal {
     String? category,
     ProposalScope scope = ProposalScope.cell,
     String domain = 'Sonstiges',
+    VotingMode votingMode = VotingMode.YES_NO_ABSTAIN,
     double quorumRequired = 0.5,
     int gracePeriodHours = 12,
   }) {
@@ -149,6 +156,7 @@ class Proposal {
       impulseSupporters: [creatorDid],
       scope: scope,
       domain: domain,
+      votingMode: votingMode,
     );
   }
 
@@ -196,6 +204,8 @@ class Proposal {
         // G1 compat
         'scope': scope.name,
         'domain': domain,
+        // G2 v1.3
+        'voting_mode': votingMode.name,
       };
 
   factory Proposal.fromMap(Map<String, dynamic> map) {
@@ -265,6 +275,7 @@ class Proposal {
         orElse: () => ProposalScope.cell,
       ),
       domain: map['domain'] as String? ?? map['category'] as String? ?? 'Sonstiges',
+      votingMode: parseVotingMode(map['voting_mode'] as String?),
     );
   }
 
@@ -344,3 +355,4 @@ class Proposal {
     }
   }
 }
+
