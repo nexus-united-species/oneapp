@@ -19,6 +19,10 @@ class Vote {
   final String? delegatedFrom;
   final String nostrEventId;
 
+  /// Selected option for SINGLE_CHOICE / CANDIDATE_CHOICE votes.
+  /// Null for YES_NO_ABSTAIN votes (per G2 spec v1.3 §20.3).
+  final String? selectedOptionId;
+
   Vote({
     required this.voteId,
     required this.proposalId,
@@ -33,6 +37,7 @@ class Vote {
     this.isDelegated = false,
     this.delegatedFrom,
     required this.nostrEventId,
+    this.selectedOptionId,
   });
 
   static String generateId() {
@@ -55,6 +60,7 @@ class Vote {
         'is_delegated': isDelegated ? 1 : 0,
         'delegated_from': delegatedFrom,
         'nostr_event_id': nostrEventId,
+        'selected_option_id': selectedOptionId,
       };
 
   factory Vote.fromMap(Map<String, dynamic> map) => Vote(
@@ -73,5 +79,6 @@ class Vote {
         isDelegated: (map['is_delegated'] as int? ?? 0) == 1,
         delegatedFrom: map['delegated_from'] as String?,
         nostrEventId: map['nostr_event_id'] as String,
+        selectedOptionId: map['selected_option_id'] as String?,
       );
 }
