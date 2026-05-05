@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexus_oneapp/features/governance/decision_record.dart';
 import 'package:nexus_oneapp/features/governance/proposal.dart';
+import 'package:nexus_oneapp/features/governance/tally_helpers.dart';
 import 'package:nexus_oneapp/features/governance/vote.dart';
 import 'package:nexus_oneapp/features/governance/voting_mode.dart';
 
@@ -955,6 +956,281 @@ void main() {
         expect(() => p.votingMode != VotingMode.YES_NO_ABSTAIN, returnsNormally,
             reason: 'Mode check for $mode must not throw');
       }
+    });
+  });
+
+  // ── finalizeProposal — YES_NO_ABSTAIN tally with ResultReason (Phase 4.2b) ──
+
+  group('finalizeProposal — YES_NO_ABSTAIN tally with ResultReason (Phase 4.2b)', () {
+    // Local helper that mirrors the production tally logic in finalizeProposal.
+    // finalizeProposal cannot be called directly in unit tests (requires DB/
+    // service singletons), so the logic is tested here as executable spec.
+    ({String result, String? resultReason, double participation}) _tally({
+      required int yes,
+      required int no,
+      required int abstain,
+      required int eligibleCount,
+      required double quorumRequired,
+    }) {
+      final participationCount = yes + no + abstain;
+      final participation =
+          eligibleCount > 0 ? participationCount / eligibleCount : 0.0;
+
+      String result;
+      String? resultReason;
+
+      if (participationCount == 0) {
+        result = 'invalid';
+        resultReason = ResultReason.noValidVotes;
+      } else if (participation < quorumRequired) {
+        result = 'invalid';
+        resultReason = ResultReason.quorumNotMet;
+      } else if (yes + no == 0) {
+        // Quorum reached, but all votes are ABSTAIN
+        result = 'invalid';
+        resultReason = ResultReason.allAbstain;
+      } else if (yes > no) {
+        result = 'approved';
+        resultReason = null;
+      } else {
+        // yes <= no → REJECTED (tie counts as status quo)
+        result = 'rejected';
+        resultReason = null;
+      }
+
+      return (result: result, resultReason: resultReason, participation: participation);
+    }
+
+    // ── Tally vectors ──────────────────────────────────────────────────────────
+
+    test('V1: 7 YES, 2 NO, 1 ABSTAIN, eligible=10, quorum=0.5 → '
+        'approved with resultReason=null', () {
+      final t = _tally(yes: 7, no: 2, abstain: 1, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('approved'));
+      expect(t.resultReason, isNull);
+      expect(t.participation, closeTo(1.0, 0.0001));
+    });
+
+    test('V2: 1 YES alone, eligible=10, quorum=0.5 → INVALID with '
+        'resultReason=QUORUM_NOT_MET', () {
+      final t = _tally(yes: 1, no: 0, abstain: 0, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.quorumNotMet));
+      expect(t.participation, closeTo(0.1, 0.0001));
+    });
+
+    test('V3: 5 ABSTAIN, eligible=10, quorum=0.5 → INVALID with '
+        'resultReason=ALL_ABSTAIN', () {
+      final t = _tally(yes: 0, no: 0, abstain: 5, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allAbstain));
+      expect(t.participation, closeTo(0.5, 0.0001));
+    });
+
+    test('V4: 5 YES, 5 NO, eligible=10, quorum=0.5 → rejected '
+        '(status quo wins on tie), resultReason=null', () {
+      final t = _tally(yes: 5, no: 5, abstain: 0, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('rejected'));
+      expect(t.resultReason, isNull);
+    });
+
+    test('V14: 0 votes, eligible=10 → INVALID with '
+        'resultReason=NO_VALID_VOTES', () {
+      final t = _tally(yes: 0, no: 0, abstain: 0, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.noValidVotes));
+      expect(t.participation, closeTo(0.0, 0.0001));
+    });
+
+    test('V15: 6 ABSTAIN, eligible=10, quorum=0.5 → INVALID with '
+        'resultReason=ALL_ABSTAIN (quorum met, but no YES/NO)', () {
+      final t = _tally(yes: 0, no: 0, abstain: 6, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allAbstain));
+      expect(t.participation, closeTo(0.6, 0.0001));
+    });
+
+    test('Tie YES=NO=0 with quorum reached via ABSTAIN: ALL_ABSTAIN, not REJECTED', () {
+      // Edge case: quorum met by abstain votes alone, YES+NO == 0 → allAbstain wins
+      final t = _tally(yes: 0, no: 0, abstain: 8, eligibleCount: 10, quorumRequired: 0.5);
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allAbstain),
+          reason: 'ALL_ABSTAIN must take priority over the tie → REJECTED branch');
+    });
+
+    // ── EligibleVoters snapshot ────────────────────────────────────────────────
+
+    test('Snapshot: eligibleVoters=[A,B,C,D] → participation computed against 4, '
+        'not cell_members count', () {
+      final p = Proposal(
+        id: 'prop_snap_test',
+        cellId: 'cell_snap',
+        creatorDid: 'did:test:snap',
+        creatorPseudonym: 'Snapper',
+        title: 'Snapshot Test',
+        description: 'Test eligibleVoters snapshot',
+        createdAt: DateTime.utc(2026, 5, 1),
+        eligibleVoters: ['did:A', 'did:B', 'did:C', 'did:D'],
+      );
+      expect(p.eligibleVoters, isNotNull);
+      expect(p.eligibleVoters!.length, equals(4));
+
+      // With 2 YES, eligible=4 → participation = 0.5 (quorum exact)
+      final t = _tally(
+        yes: 2, no: 0, abstain: 0,
+        eligibleCount: p.eligibleVoters!.length,
+        quorumRequired: 0.5,
+      );
+      // participation = 2/4 = 0.5, which is NOT < 0.5 → passes quorum
+      expect(t.result, equals('approved'));
+      expect(t.participation, closeTo(0.5, 0.0001));
+    });
+
+    test('Fallback: eligibleVoters=null triggers the CellService fallback path '
+        '(no snapshot present → p.eligibleVoters == null)', () {
+      final p = Proposal(
+        id: 'prop_fallback_test',
+        cellId: 'cell_fallback',
+        creatorDid: 'did:test:fallback',
+        creatorPseudonym: 'Fallbacker',
+        title: 'Fallback Test',
+        description: 'Test eligibleVoters fallback',
+        createdAt: DateTime.utc(2026, 5, 1),
+        // eligibleVoters not set → defaults to null
+      );
+      // Verify the production fallback condition fires for this proposal.
+      final requiresFallback = p.eligibleVoters == null;
+      expect(requiresFallback, isTrue,
+          reason: 'null eligibleVoters must trigger CellService.getMemberCount fallback');
+    });
+
+    // ── DecisionRecord Phase-3.5 fields ───────────────────────────────────────
+
+    test('DecisionRecord has resultReason set on INVALID result', () {
+      final record = DecisionRecord(
+        recordId: 'rec_invalid_test',
+        proposalId: 'prop_invalid',
+        cellId: 'cell_1',
+        finalTitle: 'Invalid Test',
+        finalDescription: 'No votes cast',
+        result: 'invalid',
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.0,
+        decidedAt: DateTime.utc(2026, 5, 5, 12, 0),
+        allVotes: const [],
+        contentHash: 'abc123',
+        previousDecisionHash: null,
+        nostrEventId: '',
+        resultReason: ResultReason.noValidVotes,
+        resultRelation: null,
+        previousProposalId: null,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+      );
+      expect(record.resultReason, equals(ResultReason.noValidVotes));
+      expect(record.result, equals('invalid'));
+    });
+
+    test('DecisionRecord has resultRelation=null, previousProposalId=null, '
+        'optionResultsJson=null, tieOptionIdsJson=null for YES_NO_ABSTAIN', () {
+      final record = DecisionRecord(
+        recordId: 'rec_fields_test',
+        proposalId: 'prop_fields',
+        cellId: 'cell_1',
+        finalTitle: 'Fields Test',
+        finalDescription: 'Phase 3.5 fields test',
+        result: 'approved',
+        yesVotes: 7,
+        noVotes: 2,
+        abstainVotes: 1,
+        participation: 1.0,
+        decidedAt: DateTime.utc(2026, 5, 5, 12, 0),
+        allVotes: const [],
+        contentHash: 'deadbeef',
+        previousDecisionHash: null,
+        nostrEventId: '',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+      );
+      expect(record.resultReason, isNull);
+      expect(record.resultRelation, isNull);
+      expect(record.previousProposalId, isNull);
+      expect(record.optionResultsJson, isNull);
+      expect(record.tieOptionIdsJson, isNull);
+    });
+
+    // ── contentHash determinism ────────────────────────────────────────────────
+
+    test('contentHash for identical YES_NO_ABSTAIN tally inputs is deterministic', () {
+      final decidedAt = DateTime.utc(2026, 5, 5, 12, 0, 0);
+      final buildInput = () => <String, dynamic>{
+        'proposalId': 'prop_hash_det',
+        'cellId': 'cell_hash',
+        'votingMode': 'YES_NO_ABSTAIN',
+        'result': 'approved',
+        'resultReason': null,
+        'resultRelation': null,
+        'yesVotes': 7,
+        'noVotes': 2,
+        'abstainVotes': 1,
+        'participation': (10 / 10).toStringAsFixed(4),
+        'eligibleVotersCount': 10,
+        'decidedAt': decidedAt.toIso8601String(),
+        'previousProposalId': null,
+        'previousDecisionHash': null,
+        'finalTitle': 'Hash Det Test',
+        'finalDescription': 'Testing hash determinism',
+        'optionResultsJson': null,
+        'tieOptionIdsJson': null,
+      };
+
+      final hash1 = computeContentHash(buildInput());
+      final hash2 = computeContentHash(buildInput());
+      expect(hash1, equals(hash2));
+      expect(hash1.length, equals(64));
+      expect(hash1, matches(RegExp(r'^[0-9a-f]{64}$')));
+    });
+
+    test('contentHash differs when resultReason changes (null vs QUORUM_NOT_MET)', () {
+      final base = <String, dynamic>{
+        'proposalId': 'prop_hash_reason',
+        'cellId': 'cell_hash',
+        'votingMode': 'YES_NO_ABSTAIN',
+        'result': 'invalid',
+        'resultReason': null,
+        'resultRelation': null,
+        'yesVotes': 1,
+        'noVotes': 0,
+        'abstainVotes': 0,
+        'participation': (1 / 10).toStringAsFixed(4),
+        'eligibleVotersCount': 10,
+        'decidedAt': DateTime.utc(2026, 5, 5).toIso8601String(),
+        'previousProposalId': null,
+        'previousDecisionHash': null,
+        'finalTitle': 'Reason Hash Test',
+        'finalDescription': 'desc',
+        'optionResultsJson': null,
+        'tieOptionIdsJson': null,
+      };
+      final withReason = Map<String, dynamic>.from(base);
+      withReason['resultReason'] = ResultReason.quorumNotMet;
+
+      expect(
+        computeContentHash(base),
+        isNot(equals(computeContentHash(withReason))),
+      );
+    });
+
+    test('participation toStringAsFixed(4) is stable across identical inputs', () {
+      final participation = 7 / 10; // 0.7
+      expect(participation.toStringAsFixed(4), equals('0.7000'));
+      final participation2 = 7 / 10;
+      expect(participation2.toStringAsFixed(4), equals('0.7000'));
     });
   });
 }

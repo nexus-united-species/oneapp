@@ -20,6 +20,7 @@ import 'retry_backoff.dart';
 import 'decision_record.dart';
 import 'proposal.dart';
 import 'proposal_edit.dart';
+import 'tally_helpers.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
 
@@ -745,23 +746,51 @@ class ProposalService {
     final abstain = votes.where((v) => v.choice == VoteChoice.ABSTAIN).length;
     print('[PROPOSAL] Counted: Y=$yes N=$no A=$abstain');
 
-    // Load member count from DB – the in-memory membersOf() may be stale.
-    final totalMembers = await CellService.instance.getMemberCount(p.cellId);
-    final participation = totalMembers > 0
-        ? (yes + no + abstain) / totalMembers
+    // ── Phase 4.2b: eligibleVoters-Snapshot ───────────────────
+    final int eligibleCount;
+    if (p.eligibleVoters != null) {
+      eligibleCount = p.eligibleVoters!.length;
+    } else {
+      // Fallback: no snapshot present (legacy data before v22).
+      eligibleCount = await CellService.instance.getMemberCount(p.cellId);
+      print('[TALLY-FALLBACK] Proposal $proposalId has no '
+          'eligibleVoters snapshot, using current cell_members count: '
+          '$eligibleCount');
+    }
+    // ──────────────────────────────────────────────────────────
+
+    final participation = eligibleCount > 0
+        ? (yes + no + abstain) / eligibleCount
         : 0.0;
-    print('[PROPOSAL] Participation: ${(participation * 100).toStringAsFixed(1)}% (${yes + no + abstain} of $totalMembers members)');
+    print('[PROPOSAL] Participation: ${(participation * 100).toStringAsFixed(1)}% '
+        '(${yes + no + abstain} of $eligibleCount eligible)');
 
     String result;
-    if (participation < p.quorumRequired) {
+    String? resultReason;
+    final participationCount = yes + no + abstain;
+
+    if (participationCount == 0) {
       result = 'invalid';
+      resultReason = ResultReason.noValidVotes;
+    } else if (participation < p.quorumRequired) {
+      result = 'invalid';
+      resultReason = ResultReason.quorumNotMet;
+    } else if (yes + no == 0) {
+      // Quorum reached, but all votes are ABSTAIN
+      result = 'invalid';
+      resultReason = ResultReason.allAbstain;
     } else if (yes > no) {
       result = 'approved';
+      resultReason = null;
     } else {
-      result = 'rejected'; // Gleichstand → Status quo (Nein)
+      // yes <= no → REJECTED (tie counts as status quo)
+      result = 'rejected';
+      resultReason = null;
     }
 
-    print('[PROPOSAL] Quorum: $yes+$no+$abstain/$totalMembers = '
+    print('[TALLY-RESULT] $proposalId result=$result '
+        'reason=${resultReason ?? "-"}');
+    print('[PROPOSAL] Quorum: $yes+$no+$abstain/$eligibleCount = '
         '${(participation * 100).toStringAsFixed(1)}%');
     print('[PROPOSAL] Result: $result (J:$yes N:$no E:$abstain)');
 
@@ -779,6 +808,8 @@ class ProposalService {
 
     // Build DecisionRecord.
     final previousHash = await _getLastDecisionHashForCell(p.cellId);
+
+    // ── Legacy Nostr publish map (Phase 4.5 will unify) ──────
     final recordContent = SplayTreeMap<String, dynamic>.from({
       'proposalId': p.id,
       'finalTitle': p.title,
@@ -798,10 +829,34 @@ class ProposalService {
               })
           .toList(),
     });
-    final contentHash = _calculateContentHash(recordContent);
+    // ─────────────────────────────────────────────────────────
 
-    print('[PROPOSAL] Content hash: $contentHash');
-    print('[PROPOSAL] Previous hash: $previousHash');
+    // ── Phase 4.2b: Content-Hash via canonicalJsonEncode ──────
+    final hashInput = <String, dynamic>{
+      'proposalId': p.id,
+      'cellId': p.cellId,
+      'votingMode': p.votingMode.name,
+      'result': result,
+      'resultReason': resultReason,
+      'resultRelation': null,
+      'yesVotes': yes,
+      'noVotes': no,
+      'abstainVotes': abstain,
+      // Float serialised as fixed-precision String for cross-device determinism.
+      'participation': participation.toStringAsFixed(4),
+      'eligibleVotersCount': eligibleCount,
+      'decidedAt': p.decidedAt!.toIso8601String(),
+      'previousProposalId': null,
+      'previousDecisionHash': previousHash,
+      'finalTitle': p.title,
+      'finalDescription': p.description,
+      'optionResultsJson': null,
+      'tieOptionIdsJson': null,
+    };
+    final contentHash = computeContentHash(hashInput);
+    print('[TALLY-PERSIST] $proposalId contentHash=$contentHash');
+    print('[TALLY-PERSIST] $proposalId previousHash=$previousHash');
+    // ──────────────────────────────────────────────────────────
 
     final record = DecisionRecord(
       recordId: DecisionRecord.generateId(),
@@ -819,6 +874,12 @@ class ProposalService {
       contentHash: contentHash,
       previousDecisionHash: previousHash,
       nostrEventId: '',
+      // ── Phase 4.2b: Phase-3.5-Felder explizit setzen ─────────
+      resultReason: resultReason,
+      resultRelation: null,
+      previousProposalId: null,
+      optionResultsJson: null,
+      tieOptionIdsJson: null,
     );
     await _saveDecisionRecordToDb(record);
 
@@ -855,7 +916,7 @@ class ProposalService {
         'no': no,
         'abstain': abstain,
         'participation': participation,
-        'totalMembers': totalMembers,
+        'eligibleCount': eligibleCount,
       },
     ));
 
