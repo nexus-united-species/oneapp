@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 21,
+      version: 22,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -993,6 +993,19 @@ class PodDatabase {
         );
       }
       print('[DB-MIGRATION-21] decision_records.result_reason added');
+    }
+
+    if (oldVersion < 22) {
+      // Phase 4.1a: eligible_voters_json snapshot for proposals
+      // (G2 spec v1.3 §17.6 deterministic eligibleVoters set).
+      // Additive; existing proposals keep eligible_voters_json = NULL,
+      // tally falls back to current cell_members for legacy data.
+      if (!await _hasColumn(db, 'proposals', 'eligible_voters_json')) {
+        await db.execute(
+          'ALTER TABLE proposals ADD COLUMN eligible_voters_json TEXT',
+        );
+      }
+      print('[DB-MIGRATION-22] proposals.eligible_voters_json added');
     }
   }
 
@@ -2126,6 +2139,7 @@ class PodDatabase {
         'scope': data['scope'] ?? 'cell',
         'domain': data['domain'] ?? data['category'] ?? 'Sonstiges',
         'voting_mode': data['voting_mode'] ?? 'YES_NO_ABSTAIN',
+        'eligible_voters_json': data['eligible_voters_json'],
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );

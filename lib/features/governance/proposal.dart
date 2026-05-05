@@ -89,6 +89,21 @@ class Proposal {
   // ── G2 v1.3 voting modes ──
   VotingMode votingMode;
 
+  // ── G2 v1.3 eligible voters snapshot (Phase 4.1a) ──────────────────────
+  /// Snapshot der zum Zeitpunkt VOTING-Start stimmberechtigten DIDs.
+  ///
+  /// Semantik:
+  /// - null = kein Snapshot vorhanden (Altbestand vor v22, oder
+  ///   Proposal noch nicht in VOTING). Tally fällt auf cell_members
+  ///   zurück.
+  /// - []   = Snapshot vorhanden, aber keine stimmberechtigten
+  ///   Mitglieder beim VOTING-Start.
+  /// - [DIDs] = Snapshot mit konkreten DIDs.
+  ///
+  /// WICHTIG: null und [] dürfen nicht verwechselt werden.
+  /// Wird in Phase 4.x beim Übergang DISCUSSION → VOTING gesetzt.
+  List<String>? eligibleVoters;
+
   Proposal({
     required this.id,
     required this.cellId,
@@ -118,6 +133,7 @@ class Proposal {
     this.resultParticipation,
     this.scope = ProposalScope.cell,
     this.votingMode = VotingMode.YES_NO_ABSTAIN,
+    this.eligibleVoters,
     String? domain,
   })  : impulseSupporters = impulseSupporters ?? [],
         domain = domain ?? category ?? 'Sonstiges';
@@ -206,6 +222,9 @@ class Proposal {
         'domain': domain,
         // G2 v1.3
         'voting_mode': votingMode.name,
+        // G2 v1.3 eligible voters snapshot (Phase 4.1a)
+        'eligible_voters_json':
+            eligibleVoters == null ? null : jsonEncode(eligibleVoters),
       };
 
   factory Proposal.fromMap(Map<String, dynamic> map) {
@@ -276,7 +295,31 @@ class Proposal {
       ),
       domain: map['domain'] as String? ?? map['category'] as String? ?? 'Sonstiges',
       votingMode: parseVotingMode(map['voting_mode'] as String?),
+      eligibleVoters: _parseEligibleVoters(map['eligible_voters_json']),
     );
+  }
+
+  /// Defensively parses eligible_voters_json from DB/map.
+  ///
+  /// Returns null for null/missing values (legacy data or pre-VOTING).
+  /// Returns [] for "[]" (snapshot taken, no eligible members).
+  /// Returns List<String> for valid JSON arrays.
+  /// Returns null for malformed JSON or unexpected types (safe default).
+  static List<String>? _parseEligibleVoters(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is String) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return List<String>.from(decoded);
+        } else {
+          return null;
+        }
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
   }
 
   /// Reconstructs a Proposal from the G1 legacy enc-blob JSON format.
@@ -355,4 +398,3 @@ class Proposal {
     }
   }
 }
-

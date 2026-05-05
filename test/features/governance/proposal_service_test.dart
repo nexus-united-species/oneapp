@@ -723,4 +723,151 @@ void main() {
       expect(restored.previousProposalId, isNull);
     });
   });
+
+  // ── Proposal eligibleVoters snapshot (Phase 4.1a) ───────────────────────
+
+  group('Proposal eligibleVoters snapshot', () {
+    Proposal _minProposal({List<String>? eligibleVoters}) => Proposal(
+          id: 'ev_prop_1',
+          cellId: 'ev_cell_1',
+          creatorDid: 'did:test:ev',
+          creatorPseudonym: 'EV',
+          title: 'EV Test',
+          description: 'eligible voters test',
+          createdAt: DateTime.utc(2026, 5, 5, 10, 0),
+          eligibleVoters: eligibleVoters,
+        );
+
+    // ── Default-Verhalten ──
+
+    test('Konstruktor defaults eligibleVoters to null', () {
+      final p = _minProposal();
+      expect(p.eligibleVoters, isNull);
+    });
+
+    test('Proposal.create has eligibleVoters = null by default', () {
+      final p = Proposal.create(
+        title: 'EV Create',
+        description: 'd',
+        creatorDid: 'did:a',
+        creatorPseudonym: 'A',
+        cellId: 'c1',
+      );
+      expect(p.eligibleVoters, isNull);
+    });
+
+    // ── Roundtrip null ──
+
+    test('toMap with null eligibleVoters writes null', () {
+      final map = _minProposal(eligibleVoters: null).toMap();
+      expect(map.containsKey('eligible_voters_json'), isTrue);
+      expect(map['eligible_voters_json'], isNull);
+    });
+
+    test('fromMap with missing key returns null', () {
+      final map = _minProposal().toMap()..remove('eligible_voters_json');
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull);
+    });
+
+    test('fromMap with null value returns null', () {
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = null;
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull);
+    });
+
+    test('round-trip preserves null', () {
+      final original = _minProposal(eligibleVoters: null);
+      final restored = Proposal.fromMap(original.toMap());
+      expect(restored.eligibleVoters, isNull);
+    });
+
+    // ── Roundtrip leere Liste ──
+
+    test('toMap with empty list writes "[]"', () {
+      final map = _minProposal(eligibleVoters: []).toMap();
+      expect(map['eligible_voters_json'], equals('[]'));
+    });
+
+    test('fromMap with "[]" returns empty list (not null)', () {
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = '[]';
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNotNull);
+      expect(p.eligibleVoters, isEmpty);
+    });
+
+    test('round-trip preserves empty list distinct from null', () {
+      final original = _minProposal(eligibleVoters: []);
+      final restored = Proposal.fromMap(original.toMap());
+      expect(restored.eligibleVoters, isNotNull);
+      expect(restored.eligibleVoters, isEmpty);
+    });
+
+    // ── Roundtrip mit DIDs ──
+
+    test('toMap with multiple DIDs writes JSON array', () {
+      final dids = [
+        'did:key:zAlice',
+        'did:key:zBob',
+        'did:key:zCarol',
+      ];
+      final map = _minProposal(eligibleVoters: dids).toMap();
+      expect(map['eligible_voters_json'], isA<String>());
+      final decoded = jsonDecode(map['eligible_voters_json'] as String);
+      expect(decoded, equals(dids));
+    });
+
+    test('fromMap with JSON array returns List<String>', () {
+      final dids = ['did:key:zA', 'did:key:zB'];
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = jsonEncode(dids);
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, equals(dids));
+    });
+
+    test('round-trip preserves DID order', () {
+      final dids = ['did:key:z3', 'did:key:z1', 'did:key:z2'];
+      final original = _minProposal(eligibleVoters: dids);
+      final restored = Proposal.fromMap(original.toMap());
+      expect(restored.eligibleVoters, equals(dids));
+    });
+
+    // ── Defensive Parsing ──
+
+    test('fromMap with malformed JSON returns null (defensive)', () {
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = '{not valid json[';
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull);
+    });
+
+    test('fromMap with JSON array containing non-strings returns null (defensive)', () {
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = jsonEncode([1, 2, 3]);
+      // List<String>.from on ints throws → defensive catch → null
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull);
+    });
+
+    test('fromMap with non-array JSON object returns null (defensive)', () {
+      final map = _minProposal().toMap();
+      map['eligible_voters_json'] = jsonEncode({'did': 'did:key:zA'});
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull);
+    });
+
+    // ── Altbestand (kritischer Test) ──
+
+    test('legacy Proposal map without eligible_voters_json key has eligibleVoters = null', () {
+      final map = _minProposal().toMap();
+      // Simulate a pre-v22 row that has no eligible_voters_json column
+      map.remove('eligible_voters_json');
+      final p = Proposal.fromMap(map);
+      expect(p.eligibleVoters, isNull,
+          reason:
+              'Legacy data (pre-v22) must yield null, not [] or any other value');
+    });
+  });
 }
