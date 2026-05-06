@@ -1539,6 +1539,68 @@ class ProposalService {
     final isMember = CellService.instance.isMember(p.cellId);
     if (!isMember) throw StateError('Not a member of this cell');
 
+    // ── Phase 4.7b: Modus-Validierung ───────────────────────────────────────
+    // Stellt sicher dass die (choice, selectedOptionId)-Kombination zur
+    // votingMode des Proposals passt. Verstöße werden als StateError geworfen
+    // bevor ein DB-Write oder Publish stattfindet.
+    switch (p.votingMode) {
+      case VotingMode.YES_NO_ABSTAIN:
+        if (selectedOptionId != null) {
+          throw StateError(
+              'YES_NO_ABSTAIN proposal does not accept '
+              'selectedOptionId (got: $selectedOptionId)');
+        }
+        // choice YES/NO/ABSTAIN: alle erlaubt
+        break;
+
+      case VotingMode.SINGLE_CHOICE:
+        if (choice != VoteChoice.ABSTAIN) {
+          throw StateError(
+              'SINGLE_CHOICE proposal requires choice=ABSTAIN '
+              '(got: ${choice.name}). Use selectedOptionId to '
+              'pick an option, or selectedOptionId=null for abstention.');
+        }
+        if (selectedOptionId != null) {
+          final options =
+              await PodDatabase.instance.listProposalOptions(proposalId);
+          final found = options.any((m) => m['option_id'] == selectedOptionId);
+          if (!found) {
+            throw StateError(
+                'SINGLE_CHOICE selectedOptionId not found: $selectedOptionId');
+          }
+        }
+        break;
+
+      case VotingMode.CANDIDATE_CHOICE:
+        if (choice != VoteChoice.ABSTAIN) {
+          throw StateError(
+              'CANDIDATE_CHOICE proposal requires '
+              'choice=ABSTAIN (got: ${choice.name}). Use '
+              'selectedOptionId to pick a candidate, or '
+              'selectedOptionId=null for abstention.');
+        }
+        if (selectedOptionId != null) {
+          final options =
+              await PodDatabase.instance.listProposalOptions(proposalId);
+          final candidate = options.firstWhere(
+            (m) => m['option_id'] == selectedOptionId,
+            orElse: () => <String, dynamic>{},
+          );
+          if (candidate.isEmpty) {
+            throw StateError(
+                'CANDIDATE_CHOICE selectedOptionId not found: $selectedOptionId');
+          }
+          final statusStr = candidate['status'] as String?;
+          if (statusStr != 'ACTIVE') {
+            throw StateError(
+                'CANDIDATE_CHOICE candidate is not ACTIVE '
+                '(status=$statusStr): $selectedOptionId');
+          }
+        }
+        break;
+    }
+    // ── Ende Phase 4.7b castVote-Validierung ────────────────────────────────
+
     final existingVotes = _votes[proposalId] ?? [];
     final myExisting = existingVotes
         .where((v) => v.voterDid == myDid)
@@ -2149,6 +2211,65 @@ class ProposalService {
             isUtc: true),
         nostrEventId: event.id,
       );
+
+      // ── Phase 4.7b: Modus-Validierung (defensive) ───────────────────────
+      // Invalide Wire-Votes werden ignoriert. Kein DB-Insert, kein Audit,
+      // kein _notify. Der seen-set-Eintrag bleibt — kein Re-Verarbeiten.
+      // Bösartige oder fehlerhafte Sender werden so neutralisiert.
+      String? rejectReason;
+      switch (p.votingMode) {
+        case VotingMode.YES_NO_ABSTAIN:
+          if (vote.selectedOptionId != null) {
+            rejectReason =
+                'YES_NO_ABSTAIN with selectedOptionId=${vote.selectedOptionId}';
+          }
+          break;
+
+        case VotingMode.SINGLE_CHOICE:
+          if (vote.choice != VoteChoice.ABSTAIN) {
+            rejectReason =
+                'SINGLE_CHOICE with choice=${vote.choice.name}';
+          } else if (vote.selectedOptionId != null) {
+            final options =
+                await PodDatabase.instance.listProposalOptions(proposalId);
+            final found =
+                options.any((m) => m['option_id'] == vote.selectedOptionId);
+            if (!found) {
+              rejectReason =
+                  'SINGLE_CHOICE unknown selectedOptionId=${vote.selectedOptionId}';
+            }
+          }
+          break;
+
+        case VotingMode.CANDIDATE_CHOICE:
+          if (vote.choice != VoteChoice.ABSTAIN) {
+            rejectReason =
+                'CANDIDATE_CHOICE with choice=${vote.choice.name}';
+          } else if (vote.selectedOptionId != null) {
+            final options =
+                await PodDatabase.instance.listProposalOptions(proposalId);
+            final candidate = options.firstWhere(
+              (m) => m['option_id'] == vote.selectedOptionId,
+              orElse: () => <String, dynamic>{},
+            );
+            if (candidate.isEmpty) {
+              rejectReason =
+                  'CANDIDATE_CHOICE unknown selectedOptionId=${vote.selectedOptionId}';
+            } else if (candidate['status'] as String? != 'ACTIVE') {
+              rejectReason =
+                  'CANDIDATE_CHOICE candidate not ACTIVE '
+                  '(status=${candidate['status']}) ${vote.selectedOptionId}';
+            }
+          }
+          break;
+      }
+
+      if (rejectReason != null) {
+        print('[VOTE-REJECT] $proposalId reason=$rejectReason '
+            'voterPubkey=${event.pubkey.substring(0, 12)}…');
+        return;
+      }
+      // ── Ende Phase 4.7b handleIncomingVote-Validierung ──────────────────
 
       final existingVotes = _votes[proposalId] ?? [];
       final existing = existingVotes
