@@ -718,6 +718,41 @@ class ProposalService {
     if (p == null) return;
     if (p.status != ProposalStatus.VOTING_ENDED) return;
 
+    // ── Phase 4.6: Idempotenz-Guard ─────────────────────────────────────────
+    // Schützt den Race-Fall: Status ist noch VOTING_ENDED, aber ein
+    // DecisionRecord existiert bereits. Das passiert z.B.:
+    //  - ein anderes Gerät hat finalisiert und wir haben den Record per Nostr
+    //    empfangen, aber unser Status-Update hängt
+    //  - Scheduler-5min-Tick und App-Resume feuern fast gleichzeitig
+    //  - vorheriger Tally-Lauf hat den Record persistiert aber den lokalen
+    //    Status nicht aktualisiert (Crash etc.)
+    //
+    // Wenn Status == DECIDED ist, fängt das schon der vorherige Status-Check
+    // ab — dieser Guard greift nur bei VOTING_ENDED.
+    final existing = await _getDecisionRecordByProposal(proposalId);
+    if (existing != null) {
+      print('[TALLY-SKIP] $proposalId reason=decision already exists');
+      // Defensive Status-Heilung. Bestehender DecisionRecord wird NICHT
+      // verändert. Status war garantiert VOTING_ENDED (sonst wäre Code hier
+      // nicht angekommen), also kein if-Wrap nötig.
+      print('[TALLY-SKIP] $proposalId healing local status '
+          'VOTING_ENDED → DECIDED');
+      p.status = ProposalStatus.DECIDED;
+      p.decidedAt = existing.decidedAt;
+      p.resultSummary = existing.result;
+      p.resultParticipation = existing.participation;
+      // yes/no nur bei YES_NO_ABSTAIN aus DecisionRecord spiegeln
+      // (analog Phase-4.5c-Empfangs-Logik).
+      if (p.votingMode == VotingMode.YES_NO_ABSTAIN) {
+        p.resultYes = existing.yesVotes;
+        p.resultNo = existing.noVotes;
+      }
+      p.resultAbstain = existing.abstainVotes;
+      await _saveProposalToDb(p);
+      return;
+    }
+    // ── Ende Idempotenz-Guard ────────────────────────────────────────────────
+
     // ── Phase 4.3: Modus-Verzweigung ──────────────────────────
     if (p.votingMode == VotingMode.SINGLE_CHOICE) {
       await _finalizeSingleChoice(p);
