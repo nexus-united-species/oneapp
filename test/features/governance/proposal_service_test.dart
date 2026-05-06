@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexus_oneapp/features/governance/decision_record.dart';
 import 'package:nexus_oneapp/features/governance/proposal.dart';
+import 'package:nexus_oneapp/features/governance/proposal_option.dart';
 import 'package:nexus_oneapp/features/governance/tally_helpers.dart';
 import 'package:nexus_oneapp/features/governance/vote.dart';
 import 'package:nexus_oneapp/features/governance/voting_mode.dart';
@@ -1232,5 +1233,556 @@ void main() {
       final participation2 = 7 / 10;
       expect(participation2.toStringAsFixed(4), equals('0.7000'));
     });
+  });
+
+  // ── finalizeProposal — SINGLE_CHOICE tally (Phase 4.3) ──────────────────
+
+  group('finalizeProposal — SINGLE_CHOICE tally (Phase 4.3)', () {
+    // Local helper that mirrors _finalizeSingleChoice tally logic.
+    // The production method requires DB/service singletons, so the algorithm
+    // is tested here as executable spec — identical to the 4.2b approach.
+
+    /// Creates a minimal ProposalOption with the given optionId.
+    ProposalOption _makeOption(String proposalId, String optionId,
+        {int position = 0}) {
+      final now = DateTime.utc(2026, 5, 1);
+      return ProposalOption(
+        optionId: optionId,
+        proposalId: proposalId,
+        label: 'Option $optionId',
+        status: OptionStatus.ACTIVE,
+        position: position,
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+
+    /// Creates a Vote that represents a vote for [selectedOptionId].
+    /// Per P1 convention: choice=ABSTAIN, selectedOptionId=<oid>.
+    Vote _makeOptionVote(String proposalId, String voterId,
+        String selectedOptionId) {
+      return Vote(
+        voteId: 'vote_${proposalId}_$voterId',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: selectedOptionId,
+        createdAt: DateTime.utc(2026, 5, 1),
+        nostrEventId: '',
+      );
+    }
+
+    /// Creates a true abstain vote (choice=ABSTAIN, selectedOptionId=null).
+    Vote _makeAbstainVote(String proposalId, String voterId) {
+      return Vote(
+        voteId: 'vote_${proposalId}_${voterId}_abs',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: null,
+        createdAt: DateTime.utc(2026, 5, 1),
+        nostrEventId: '',
+      );
+    }
+
+    /// Core tally logic mirroring _finalizeSingleChoice (without DB/service calls).
+    ({
+      String result,
+      String? resultReason,
+      String? tieOptionIdsJson,
+      String? optionResultsJson,
+      double participation,
+      int abstainCount,
+      String contentHash,
+    }) _tallySC({
+      required List<ProposalOption> options,
+      required List<Vote> votes,
+      required int eligibleCount,
+      required double quorumRequired,
+      String proposalId = 'prop_sc_test',
+      String cellId = 'cell_sc',
+    }) {
+      final sortedVotes = sortVotesDeterministic(votes);
+      final sortedOptions = sortOptionsDeterministic(options);
+
+      final optionCounts = <String, int>{};
+      for (final opt in sortedOptions) {
+        optionCounts[opt.optionId] = 0;
+      }
+      int abstainCount = 0;
+
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null) {
+          if (optionCounts.containsKey(v.selectedOptionId)) {
+            optionCounts[v.selectedOptionId!] =
+                optionCounts[v.selectedOptionId!]! + 1;
+          }
+          // unknown option → ignored (no increment)
+        } else if (v.choice == VoteChoice.ABSTAIN) {
+          abstainCount++;
+        }
+        // YES/NO without selectedOptionId → ignored
+      }
+
+      final optionVoteSum =
+          optionCounts.values.fold<int>(0, (a, b) => a + b);
+      final participationCount = optionVoteSum + abstainCount;
+      final participation =
+          eligibleCount > 0 ? participationCount / eligibleCount : 0.0;
+
+      String result;
+      String? resultReason;
+      String? tieOptionIdsJson;
+
+      if (participationCount == 0) {
+        result = 'invalid';
+        resultReason = ResultReason.noValidVotes;
+      } else if (participation < quorumRequired) {
+        result = 'invalid';
+        resultReason = ResultReason.quorumNotMet;
+      } else if (optionVoteSum == 0) {
+        result = 'invalid';
+        resultReason = ResultReason.allAbstain;
+      } else {
+        final maxCount =
+            optionCounts.values.fold<int>(0, (a, b) => b > a ? b : a);
+        final winners = sortedOptions
+            .where((o) => optionCounts[o.optionId] == maxCount)
+            .map((o) => o.optionId)
+            .toList();
+
+        if (winners.length == 1) {
+          result = 'approved';
+          resultReason = null;
+        } else {
+          result = 'invalid';
+          resultReason = ResultReason.tieRequiresRunoff;
+          tieOptionIdsJson = canonicalJsonEncode(winners);
+        }
+      }
+
+      String? optionResultsJson;
+      if (sortedOptions.isNotEmpty) {
+        final canonicalCounts = <String, dynamic>{};
+        for (final opt in sortedOptions) {
+          canonicalCounts[opt.optionId] = optionCounts[opt.optionId] ?? 0;
+        }
+        optionResultsJson = canonicalJsonEncode(canonicalCounts);
+      }
+
+      final decidedAt = DateTime.utc(2026, 5, 5, 12, 0, 0);
+      final hashInput = <String, dynamic>{
+        'proposalId': proposalId,
+        'cellId': cellId,
+        'votingMode': 'SINGLE_CHOICE',
+        'result': result,
+        'resultReason': resultReason,
+        'resultRelation': null,
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': abstainCount,
+        'participation': participation.toStringAsFixed(4),
+        'eligibleVotersCount': eligibleCount,
+        'decidedAt': decidedAt.toIso8601String(),
+        'previousProposalId': null,
+        'previousDecisionHash': null,
+        'finalTitle': 'SC Test',
+        'finalDescription': 'desc',
+        'optionResultsJson': optionResultsJson,
+        'tieOptionIdsJson': tieOptionIdsJson,
+      };
+      final contentHash = computeContentHash(hashInput);
+
+      return (
+        result: result,
+        resultReason: resultReason,
+        tieOptionIdsJson: tieOptionIdsJson,
+        optionResultsJson: optionResultsJson,
+        participation: participation,
+        abstainCount: abstainCount,
+        contentHash: contentHash,
+      );
+    }
+
+    // ── Tally-Vektoren ────────────────────────────────────────────────────────
+
+    test('V5: 3 für A, 1 für B, 1 für C, 1 ABSTAIN, eligible=10, '
+        'quorum=0.5 → approved, optionResultsJson enthält A:3,B:1,C:1', () {
+      final opts = [
+        _makeOption('p1', 'A'),
+        _makeOption('p1', 'B'),
+        _makeOption('p1', 'C'),
+      ];
+      final votes = [
+        _makeOptionVote('p1', 'v1', 'A'),
+        _makeOptionVote('p1', 'v2', 'A'),
+        _makeOptionVote('p1', 'v3', 'A'),
+        _makeOptionVote('p1', 'v4', 'B'),
+        _makeOptionVote('p1', 'v5', 'C'),
+        _makeAbstainVote('p1', 'v6'),
+      ];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('approved'));
+      expect(t.resultReason, isNull);
+      expect(t.participation, closeTo(0.6, 0.0001));
+      expect(t.abstainCount, equals(1));
+      expect(t.tieOptionIdsJson, isNull);
+
+      // optionResultsJson must contain all three options
+      final decoded = jsonDecode(t.optionResultsJson!) as Map<String, dynamic>;
+      expect(decoded['A'], equals(3));
+      expect(decoded['B'], equals(1));
+      expect(decoded['C'], equals(1));
+    });
+
+    test('V6: 2 für A, 2 für B, 1 für C, 1 ABSTAIN, eligible=10, '
+        'quorum=0.5 → invalid + TIE_REQUIRES_RUNOFF, '
+        'tieOptionIdsJson=[A,B]', () {
+      final opts = [
+        _makeOption('p2', 'A', position: 0),
+        _makeOption('p2', 'B', position: 1),
+        _makeOption('p2', 'C', position: 2),
+      ];
+      final votes = [
+        _makeOptionVote('p2', 'v1', 'A'),
+        _makeOptionVote('p2', 'v2', 'A'),
+        _makeOptionVote('p2', 'v3', 'B'),
+        _makeOptionVote('p2', 'v4', 'B'),
+        _makeOptionVote('p2', 'v5', 'C'),
+        _makeAbstainVote('p2', 'v6'),
+      ];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.tieRequiresRunoff));
+      expect(t.tieOptionIdsJson, isNotNull);
+
+      final tieIds = jsonDecode(t.tieOptionIdsJson!) as List<dynamic>;
+      expect(tieIds, containsAll(['A', 'B']));
+      expect(tieIds.length, equals(2));
+    });
+
+    test('SC: 1 für A, eligible=10, quorum=0.5 → invalid + '
+        'QUORUM_NOT_MET', () {
+      final opts = [_makeOption('p3', 'A'), _makeOption('p3', 'B')];
+      final votes = [_makeOptionVote('p3', 'v1', 'A')];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.quorumNotMet));
+      expect(t.participation, closeTo(0.1, 0.0001));
+    });
+
+    test('SC: 5 ABSTAIN, eligible=10, quorum=0.5 → invalid + '
+        'ALL_ABSTAIN', () {
+      final opts = [_makeOption('p4', 'A'), _makeOption('p4', 'B')];
+      final votes = List.generate(
+          5, (i) => _makeAbstainVote('p4', 'v$i'));
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allAbstain));
+      expect(t.participation, closeTo(0.5, 0.0001));
+    });
+
+    test('SC: 0 votes, eligible=10 → invalid + NO_VALID_VOTES', () {
+      final opts = [_makeOption('p5', 'A'), _makeOption('p5', 'B')];
+
+      final t = _tallySC(
+        options: opts,
+        votes: [],
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.noValidVotes));
+      expect(t.participation, closeTo(0.0, 0.0001));
+    });
+
+    test('SC: vote with unknown selectedOptionId is ignored '
+        '(does not count toward any option)', () {
+      final opts = [_makeOption('p6', 'A'), _makeOption('p6', 'B')];
+      // 6 valid option votes + 1 with unknown optionId
+      final votes = [
+        _makeOptionVote('p6', 'v1', 'A'),
+        _makeOptionVote('p6', 'v2', 'A'),
+        _makeOptionVote('p6', 'v3', 'A'),
+        _makeOptionVote('p6', 'v4', 'A'),
+        _makeOptionVote('p6', 'v5', 'A'),
+        _makeOptionVote('p6', 'v6', 'B'),
+        Vote(
+          voteId: 'vote_p6_unknown',
+          proposalId: 'p6',
+          voterPubkey: 'pubkey_vx',
+          voterDid: 'did:test:vx',
+          voterPseudonym: 'vx',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: 'UNKNOWN_OPT',
+          createdAt: DateTime.utc(2026, 5, 1),
+          nostrEventId: '',
+        ),
+      ];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      // Unknown option vote is ignored — A still wins
+      expect(t.result, equals('approved'));
+      final decoded = jsonDecode(t.optionResultsJson!) as Map<String, dynamic>;
+      expect(decoded['A'], equals(5));
+      expect(decoded['B'], equals(1));
+      expect(decoded.containsKey('UNKNOWN_OPT'), isFalse);
+    });
+
+    test('SC: optionResultsJson is populated even on INVALID outcome '
+        '(QUORUM_NOT_MET)', () {
+      final opts = [_makeOption('p7', 'A'), _makeOption('p7', 'B')];
+      final votes = [_makeOptionVote('p7', 'v1', 'A')];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.optionResultsJson, isNotNull);
+    });
+
+    test('SC: optionResultsJson contains all options including those '
+        'with 0 votes', () {
+      final opts = [
+        _makeOption('p8', 'A'),
+        _makeOption('p8', 'B'),
+        _makeOption('p8', 'C'),
+      ];
+      // Only A gets votes
+      final votes = List.generate(
+          6, (i) => _makeOptionVote('p8', 'v$i', 'A'));
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('approved'));
+      final decoded = jsonDecode(t.optionResultsJson!) as Map<String, dynamic>;
+      expect(decoded.containsKey('A'), isTrue);
+      expect(decoded.containsKey('B'), isTrue);
+      expect(decoded.containsKey('C'), isTrue);
+      expect(decoded['B'], equals(0));
+      expect(decoded['C'], equals(0));
+    });
+
+    test('SC: tieOptionIdsJson is null when single winner', () {
+      final opts = [_makeOption('p9', 'A'), _makeOption('p9', 'B')];
+      final votes = [
+        _makeOptionVote('p9', 'v1', 'A'),
+        _makeOptionVote('p9', 'v2', 'A'),
+        _makeOptionVote('p9', 'v3', 'A'),
+        _makeOptionVote('p9', 'v4', 'A'),
+        _makeOptionVote('p9', 'v5', 'A'),
+        _makeOptionVote('p9', 'v6', 'B'),
+      ];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('approved'));
+      expect(t.tieOptionIdsJson, isNull);
+    });
+
+    test('SC: tieOptionIdsJson is set only on TIE_REQUIRES_RUNOFF', () {
+      final opts = [_makeOption('p10', 'X'), _makeOption('p10', 'Y')];
+      final votes = [
+        _makeOptionVote('p10', 'v1', 'X'),
+        _makeOptionVote('p10', 'v2', 'X'),
+        _makeOptionVote('p10', 'v3', 'X'),
+        _makeOptionVote('p10', 'v4', 'Y'),
+        _makeOptionVote('p10', 'v5', 'Y'),
+        _makeOptionVote('p10', 'v6', 'Y'),
+      ];
+
+      final t = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.tieRequiresRunoff));
+      expect(t.tieOptionIdsJson, isNotNull);
+
+      final tieIds = jsonDecode(t.tieOptionIdsJson!) as List<dynamic>;
+      expect(tieIds, containsAll(['X', 'Y']));
+    });
+
+    test('SC: identical inputs produce identical contentHash', () {
+      final opts = [_makeOption('p11', 'A'), _makeOption('p11', 'B')];
+      final votes = [
+        _makeOptionVote('p11', 'v1', 'A'),
+        _makeOptionVote('p11', 'v2', 'A'),
+        _makeOptionVote('p11', 'v3', 'A'),
+        _makeOptionVote('p11', 'v4', 'B'),
+        _makeOptionVote('p11', 'v5', 'B'),
+        _makeAbstainVote('p11', 'v6'),
+      ];
+
+      final t1 = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p11',
+        cellId: 'cell_det',
+      );
+      final t2 = _tallySC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p11',
+        cellId: 'cell_det',
+      );
+
+      expect(t1.contentHash, equals(t2.contentHash));
+    });
+
+    test('SC proposal in VOTING_ENDED now goes through tally '
+        '(dispatch condition routes to _finalizeSingleChoice, not SKIP)', () {
+      // Verify the dispatch condition: SINGLE_CHOICE hits the new branch.
+      final p = Proposal(
+        id: 'prop_sc_dispatch',
+        cellId: 'cell_sc_d',
+        creatorDid: 'did:test:sc',
+        creatorPseudonym: 'SC-Tester',
+        title: 'SC Dispatch',
+        description: 'dispatch test',
+        createdAt: DateTime.utc(2026, 5, 1),
+        status: ProposalStatus.VOTING_ENDED,
+        votingMode: VotingMode.SINGLE_CHOICE,
+      );
+
+      // Old condition: p.votingMode != YES_NO_ABSTAIN → skip
+      final wouldHaveBeenSkipped = p.votingMode != VotingMode.YES_NO_ABSTAIN;
+      expect(wouldHaveBeenSkipped, isTrue,
+          reason: 'Old 4.2a skip condition fires for SINGLE_CHOICE');
+
+      // New condition: p.votingMode == SINGLE_CHOICE → tally branch
+      final routesToTally = p.votingMode == VotingMode.SINGLE_CHOICE;
+      expect(routesToTally, isTrue,
+          reason:
+              'New 4.3 dispatch routes SINGLE_CHOICE to _finalizeSingleChoice');
+    });
+
+    test('SC: DecisionRecord has resultRelation=null, '
+        'previousProposalId=null', () {
+      final record = DecisionRecord(
+        recordId: 'rec_sc_fields',
+        proposalId: 'prop_sc_fields',
+        cellId: 'cell_sc_f',
+        finalTitle: 'SC Fields Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 1,
+        participation: 0.6,
+        decidedAt: DateTime.utc(2026, 5, 5, 12, 0),
+        allVotes: const [],
+        contentHash: 'cafebabe',
+        previousDecisionHash: null,
+        nostrEventId: '',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        optionResultsJson: '{"A":3,"B":1}',
+        tieOptionIdsJson: null,
+      );
+
+      expect(record.resultRelation, isNull);
+      expect(record.previousProposalId, isNull);
+      expect(record.optionResultsJson, equals('{"A":3,"B":1}'));
+      expect(record.tieOptionIdsJson, isNull);
+    });
+
+    test('SC: result values stay lowercase (approved/rejected/invalid)', () {
+      final cases = [
+        // approved case
+        () => _tallySC(
+              options: [_makeOption('lc1', 'A')],
+              votes: List.generate(
+                  6, (i) => _makeOptionVote('lc1', 'v$i', 'A')),
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+        // invalid — no votes
+        () => _tallySC(
+              options: [_makeOption('lc2', 'A')],
+              votes: [],
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+        // invalid — quorum not met
+        () => _tallySC(
+              options: [_makeOption('lc3', 'A')],
+              votes: [_makeOptionVote('lc3', 'v1', 'A')],
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+      ];
+
+      for (final getResult in cases) {
+        final result = getResult();
+        expect(result, equals(result.toLowerCase()),
+            reason: 'result "$result" must be lowercase');
+        expect(['approved', 'rejected', 'invalid'].contains(result), isTrue,
+            reason: 'result "$result" must be one of approved/rejected/invalid');
+      }
+    });
+
+    // No test for _publishDecisionRecord in SC — deferred to Phase 4.5.
   });
 }

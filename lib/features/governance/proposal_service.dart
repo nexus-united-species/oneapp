@@ -20,6 +20,7 @@ import 'retry_backoff.dart';
 import 'decision_record.dart';
 import 'proposal.dart';
 import 'proposal_edit.dart';
+import 'proposal_option.dart';
 import 'tally_helpers.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
@@ -718,19 +719,17 @@ class ProposalService {
     if (p == null) return;
     if (p.status != ProposalStatus.VOTING_ENDED) return;
 
-    // ── Phase 4.2a: Modus-Verzweigung ──────────────────────────
-    // YES_NO_ABSTAIN nutzt die bestehende Tally-Logik unten.
-    // SINGLE_CHOICE und CANDIDATE_CHOICE werden in Phase 4.3/4.4
-    // implementiert. Bis dahin: skippen, NICHT als INVALID
-    // entscheiden — sonst würden Options-/Kandidatenwahlen
-    // versehentlich ungültig.
-    if (p.votingMode != VotingMode.YES_NO_ABSTAIN) {
-      print('[TALLY-MODE-NOT-IMPLEMENTED] Proposal $proposalId '
-          'has votingMode=${p.votingMode.name}; tally for non-'
-          'YES_NO_ABSTAIN modes is not implemented yet (Phase '
-          '4.3/4.4). Proposal stays in VOTING_ENDED.');
+    // ── Phase 4.3: Modus-Verzweigung ──────────────────────────
+    if (p.votingMode == VotingMode.SINGLE_CHOICE) {
+      await _finalizeSingleChoice(p);
       return;
     }
+    if (p.votingMode == VotingMode.CANDIDATE_CHOICE) {
+      print('[TALLY-MODE-NOT-IMPLEMENTED] Proposal $proposalId '
+          'CANDIDATE_CHOICE — Phase 4.4');
+      return;
+    }
+    // YES_NO_ABSTAIN fällt durch zur bestehenden Logik unten.
     // ── Ende Modus-Verzweigung ────────────────────────────────
 
     // Load votes directly from DB – the in-memory cache may be incomplete if
@@ -931,6 +930,230 @@ class ProposalService {
       body: '${p.title}: $resultLabel',
       payload: 'proposal:${p.id}',
     );
+
+    _notify();
+  }
+
+  /// SINGLE_CHOICE tally: loads options, aggregates per-option votes,
+  /// determines result, persists DecisionRecord locally. No Nostr publish
+  /// in Phase 4.3 — deferred to Phase 4.5.
+  Future<void> _finalizeSingleChoice(Proposal p) async {
+    print('[TALLY-START] ${p.id} mode=SINGLE_CHOICE');
+
+    // 1) Votes + Options laden
+    final voteRows = await PodDatabase.instance.listVotes(p.id);
+    final votes = voteRows.map(Vote.fromMap).toList();
+    final optionRows =
+        await PodDatabase.instance.listProposalOptions(p.id);
+    final options = optionRows.map(ProposalOption.fromMap).toList();
+    print('[TALLY-INPUT] ${p.id} votes=${votes.length} '
+        'options=${options.length}');
+
+    // Cache sync — analog YES_NO_ABSTAIN-Pfad
+    _votes[p.id] = votes;
+
+    // 2) Deterministisch sortieren
+    final sortedVotes = sortVotesDeterministic(votes);
+    final sortedOptions = sortOptionsDeterministic(options);
+
+    // 3) eligibleVoters-Snapshot
+    final int eligibleCount;
+    if (p.eligibleVoters != null) {
+      eligibleCount = p.eligibleVoters!.length;
+    } else {
+      eligibleCount =
+          await CellService.instance.getMemberCount(p.cellId);
+      print('[TALLY-FALLBACK] ${p.id} eligibleVoters snapshot '
+          'missing, using current cell_members: $eligibleCount');
+    }
+
+    // 4) Aggregation
+    final optionCounts = <String, int>{};
+    for (final opt in sortedOptions) {
+      optionCounts[opt.optionId] = 0;
+    }
+    int abstainCount = 0;
+    int invalidVoteCount = 0;
+
+    for (final v in sortedVotes) {
+      if (v.selectedOptionId != null) {
+        if (optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] =
+              optionCounts[v.selectedOptionId!]! + 1;
+        } else {
+          invalidVoteCount++;
+          print('[TALLY-WARN] ${p.id} vote ${v.voteId} references '
+              'unknown optionId=${v.selectedOptionId}');
+        }
+      } else if (v.choice == VoteChoice.ABSTAIN) {
+        abstainCount++;
+      } else {
+        invalidVoteCount++;
+        print('[TALLY-WARN] ${p.id} vote ${v.voteId} has no '
+            'selectedOptionId in SINGLE_CHOICE mode (choice='
+            '${v.choice.name}), ignoring');
+      }
+    }
+
+    final optionVoteSum =
+        optionCounts.values.fold<int>(0, (a, b) => a + b);
+    final participationCount = optionVoteSum + abstainCount;
+    final participation = eligibleCount > 0
+        ? participationCount / eligibleCount
+        : 0.0;
+
+    print('[TALLY-AGGREGATE] ${p.id} optionVotes=$optionVoteSum '
+        'abstain=$abstainCount invalid=$invalidVoteCount '
+        'eligible=$eligibleCount');
+    print('[TALLY-QUORUM] ${p.id} participation='
+        '${(participation * 100).toStringAsFixed(1)}% '
+        'required=${(p.quorumRequired * 100).toStringAsFixed(1)}%');
+
+    // 5) Result-Bestimmung
+    String result;
+    String? resultReason;
+    String? tieOptionIdsJson;
+
+    if (participationCount == 0) {
+      result = 'invalid';
+      resultReason = ResultReason.noValidVotes;
+    } else if (participation < p.quorumRequired) {
+      result = 'invalid';
+      resultReason = ResultReason.quorumNotMet;
+    } else if (optionVoteSum == 0) {
+      result = 'invalid';
+      resultReason = ResultReason.allAbstain;
+    } else {
+      final maxCount = optionCounts.values
+          .fold<int>(0, (a, b) => b > a ? b : a);
+      final winners = sortedOptions
+          .where((o) => optionCounts[o.optionId] == maxCount)
+          .map((o) => o.optionId)
+          .toList();
+
+      if (winners.length == 1) {
+        result = 'approved';
+        resultReason = null;
+      } else {
+        result = 'invalid';
+        resultReason = ResultReason.tieRequiresRunoff;
+        tieOptionIdsJson = canonicalJsonEncode(winners);
+      }
+    }
+
+    // 6) optionResultsJson — IMMER bei vorhandenen Optionen
+    String? optionResultsJson;
+    if (sortedOptions.isNotEmpty) {
+      final canonicalCounts = <String, dynamic>{};
+      for (final opt in sortedOptions) {
+        canonicalCounts[opt.optionId] = optionCounts[opt.optionId] ?? 0;
+      }
+      optionResultsJson = canonicalJsonEncode(canonicalCounts);
+    }
+
+    print('[TALLY-RESULT] ${p.id} result=$result '
+        'reason=${resultReason ?? "-"}');
+
+    // 7) Proposal-Status-Update + DB
+    p.status = ProposalStatus.DECIDED;
+    p.decidedAt = DateTime.now().toUtc();
+    p.resultSummary = result;
+    p.resultYes = 0;
+    p.resultNo = 0;
+    p.resultAbstain = abstainCount;
+    p.resultParticipation = participation;
+    await _saveProposalToDb(p);
+    await _publishProposalToNostr(p);
+
+    // 8) DecisionRecord lokal bauen
+    final previousHash = await _getLastDecisionHashForCell(p.cellId);
+    final hashInput = <String, dynamic>{
+      'proposalId': p.id,
+      'cellId': p.cellId,
+      'votingMode': p.votingMode.name,
+      'result': result,
+      'resultReason': resultReason,
+      'resultRelation': null,
+      'yesVotes': 0,
+      'noVotes': 0,
+      'abstainVotes': abstainCount,
+      'participation': participation.toStringAsFixed(4),
+      'eligibleVotersCount': eligibleCount,
+      'decidedAt': p.decidedAt!.toIso8601String(),
+      'previousProposalId': null,
+      'previousDecisionHash': previousHash,
+      'finalTitle': p.title,
+      'finalDescription': p.description,
+      'optionResultsJson': optionResultsJson,
+      'tieOptionIdsJson': tieOptionIdsJson,
+    };
+    final contentHash = computeContentHash(hashInput);
+    print('[TALLY-PERSIST] ${p.id} contentHash=$contentHash '
+        'previousHash=$previousHash');
+
+    final record = DecisionRecord(
+      recordId: DecisionRecord.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      finalTitle: p.title,
+      finalDescription: p.description,
+      result: result,
+      yesVotes: 0,
+      noVotes: 0,
+      abstainVotes: abstainCount,
+      participation: participation,
+      decidedAt: p.decidedAt!,
+      allVotes: sortedVotes,
+      contentHash: contentHash,
+      previousDecisionHash: previousHash,
+      nostrEventId: '',
+      resultReason: resultReason,
+      resultRelation: null,
+      previousProposalId: null,
+      optionResultsJson: optionResultsJson,
+      tieOptionIdsJson: tieOptionIdsJson,
+    );
+    await _saveDecisionRecordToDb(record);
+    print('[PROPOSAL] DecisionRecord saved locally: ${record.recordId}');
+
+    // 9) Audit-Eintrag
+    await addAuditEntry(AuditLogEntry(
+      entryId: AuditLogEntry.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      eventType: AuditEventType.RESULT_CALCULATED,
+      actorDid: p.creatorDid,
+      actorPseudonym: p.creatorPseudonym,
+      timestamp: DateTime.now().toUtc(),
+      payload: {
+        'result': result,
+        'resultReason': resultReason,
+        'votingMode': 'SINGLE_CHOICE',
+        'optionVotesSum': optionVoteSum,
+        'abstain': abstainCount,
+        'invalid': invalidVoteCount,
+        'eligibleCount': eligibleCount,
+        'participation': participation,
+      },
+    ));
+
+    // 10) Notification
+    final resultLabel = result == 'approved'
+        ? 'Option gewählt'
+        : result == 'invalid'
+            ? 'Ungültig'
+            : 'Abgelehnt';
+    await _notifyAllMembers(
+      p.cellId,
+      title: 'Abstimmung beendet',
+      body: '${p.title}: $resultLabel',
+      payload: 'proposal:${p.id}',
+    );
+
+    // 11) KEIN _publishDecisionRecord — Phase 4.5
+    // KEIN _queueDecisionRetry — Phase 4.5
+    print('[TALLY-PERSIST] ${p.id} local-only, no Nostr publish '
+        'in Phase 4.3 (deferred to 4.5)');
 
     _notify();
   }
