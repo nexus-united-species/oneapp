@@ -2255,7 +2255,7 @@ class ProposalService {
             if (candidate.isEmpty) {
               rejectReason =
                   'CANDIDATE_CHOICE unknown selectedOptionId=${vote.selectedOptionId}';
-            } else if (candidate['status'] as String? != 'ACTIVE') {
+            } else if ((candidate['status'] as String?) != 'ACTIVE') {
               rejectReason =
                   'CANDIDATE_CHOICE candidate not ACTIVE '
                   '(status=${candidate['status']}) ${vote.selectedOptionId}';
