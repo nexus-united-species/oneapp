@@ -804,10 +804,30 @@ class ProposalService {
     print('[PROPOSAL] Status: VOTING_ENDED → DECIDED for $proposalId');
     await _publishProposalToNostr(p);
 
-    // Build DecisionRecord.
-    final previousHash = await _getLastDecisionHashForCell(p.cellId);
+    // 4.5a: Bau und Persistierung über zentralen Helper.
+    // Der lokale DecisionRecord ist semantisch identisch zum
+    // alten Pfad (gleiche hashInput-Felder).
+    final record = await _buildAndPersistDecisionRecord(
+      proposal: p,
+      result: result,
+      resultReason: resultReason,
+      yesVotes: yes,
+      noVotes: no,
+      abstainVotes: abstain,
+      participation: participation,
+      eligibleVotersCount: eligibleCount,
+      sortedVotes: votes,
+      optionResultsJson: null,
+      tieOptionIdsJson: null,
+    );
 
-    // ── Legacy Nostr publish map (Phase 4.5 will unify) ──────
+    // ── Phase 4.5b/4.5c-Hinweis: ───────────────────────────
+    // Der bestehende _publishDecisionRecord + _queueDecisionRetry
+    // BLEIBT in 4.5a für YES_NO_ABSTAIN unverändert. Format-
+    // Vereinheitlichung kommt in 4.5b. Wir bauen hier weiter
+    // den ALTEN recordContent für den Publish-Pfad — das ist
+    // bewusste Doppelstruktur in 4.5a, wird in 4.5b aufgelöst.
+
     final recordContent = SplayTreeMap<String, dynamic>.from({
       'proposalId': p.id,
       'finalTitle': p.title,
@@ -827,68 +847,14 @@ class ProposalService {
               })
           .toList(),
     });
-    // ─────────────────────────────────────────────────────────
-
-    // ── Phase 4.2b: Content-Hash via canonicalJsonEncode ──────
-    final hashInput = <String, dynamic>{
-      'proposalId': p.id,
-      'cellId': p.cellId,
-      'votingMode': p.votingMode.name,
-      'result': result,
-      'resultReason': resultReason,
-      'resultRelation': null,
-      'yesVotes': yes,
-      'noVotes': no,
-      'abstainVotes': abstain,
-      // Float serialised as fixed-precision String for cross-device determinism.
-      'participation': participation.toStringAsFixed(4),
-      'eligibleVotersCount': eligibleCount,
-      'decidedAt': p.decidedAt!.toIso8601String(),
-      'previousProposalId': null,
-      'previousDecisionHash': previousHash,
-      'finalTitle': p.title,
-      'finalDescription': p.description,
-      'optionResultsJson': null,
-      'tieOptionIdsJson': null,
-    };
-    final contentHash = computeContentHash(hashInput);
-    print('[TALLY-PERSIST] $proposalId contentHash=$contentHash');
-    print('[TALLY-PERSIST] $proposalId previousHash=$previousHash');
-    // ──────────────────────────────────────────────────────────
-
-    final record = DecisionRecord(
-      recordId: DecisionRecord.generateId(),
-      proposalId: p.id,
-      cellId: p.cellId,
-      finalTitle: p.title,
-      finalDescription: p.description,
-      result: result,
-      yesVotes: yes,
-      noVotes: no,
-      abstainVotes: abstain,
-      participation: participation,
-      decidedAt: p.decidedAt!,
-      allVotes: votes,
-      contentHash: contentHash,
-      previousDecisionHash: previousHash,
-      nostrEventId: '',
-      // ── Phase 4.2b: Phase-3.5-Felder explizit setzen ─────────
-      resultReason: resultReason,
-      resultRelation: null,
-      previousProposalId: null,
-      optionResultsJson: null,
-      tieOptionIdsJson: null,
-    );
-    await _saveDecisionRecordToDb(record);
-
     final recordMap = SplayTreeMap<String, dynamic>.from(recordContent);
     final decisionResult = await _publishDecisionRecord(
       proposalId: p.id,
       cellId: p.cellId,
       recordContent: Map<String, dynamic>.from(recordMap),
       result: result,
-      contentHash: contentHash,
-      previousDecisionHash: previousHash,
+      contentHash: record.contentHash,
+      previousDecisionHash: record.previousDecisionHash,
     );
     // Set local status to DECIDED regardless of publish result.
     // Decision Records are authoritative per G2 spec.
@@ -1065,55 +1031,20 @@ class ProposalService {
     await _publishProposalToNostr(p);
 
     // 8) DecisionRecord lokal bauen
-    final previousHash = await _getLastDecisionHashForCell(p.cellId);
-    final hashInput = <String, dynamic>{
-      'proposalId': p.id,
-      'cellId': p.cellId,
-      'votingMode': p.votingMode.name,
-      'result': result,
-      'resultReason': resultReason,
-      'resultRelation': null,
-      'yesVotes': 0,
-      'noVotes': 0,
-      'abstainVotes': abstainCount,
-      'participation': participation.toStringAsFixed(4),
-      'eligibleVotersCount': eligibleCount,
-      'decidedAt': p.decidedAt!.toIso8601String(),
-      'previousProposalId': null,
-      'previousDecisionHash': previousHash,
-      'finalTitle': p.title,
-      'finalDescription': p.description,
-      'optionResultsJson': optionResultsJson,
-      'tieOptionIdsJson': tieOptionIdsJson,
-    };
-    final contentHash = computeContentHash(hashInput);
-    print('[TALLY-PERSIST] ${p.id} contentHash=$contentHash '
-        'previousHash=$previousHash');
-
-    final record = DecisionRecord(
-      recordId: DecisionRecord.generateId(),
-      proposalId: p.id,
-      cellId: p.cellId,
-      finalTitle: p.title,
-      finalDescription: p.description,
+    // 4.5a: Bau und Persistierung über zentralen Helper.
+    final record = await _buildAndPersistDecisionRecord(
+      proposal: p,
       result: result,
+      resultReason: resultReason,
       yesVotes: 0,
       noVotes: 0,
       abstainVotes: abstainCount,
       participation: participation,
-      decidedAt: p.decidedAt!,
-      allVotes: sortedVotes,
-      contentHash: contentHash,
-      previousDecisionHash: previousHash,
-      nostrEventId: '',
-      resultReason: resultReason,
-      resultRelation: null,
-      previousProposalId: null,
+      eligibleVotersCount: eligibleCount,
+      sortedVotes: sortedVotes,
       optionResultsJson: optionResultsJson,
       tieOptionIdsJson: tieOptionIdsJson,
     );
-    await _saveDecisionRecordToDb(record);
-    print('[PROPOSAL] DecisionRecord saved locally: ${record.recordId}');
 
     // 9) Audit-Eintrag
     await addAuditEntry(AuditLogEntry(
@@ -1333,55 +1264,20 @@ class ProposalService {
     await _publishProposalToNostr(p);
 
     // 8) DecisionRecord lokal
-    final previousHash = await _getLastDecisionHashForCell(p.cellId);
-    final hashInput = <String, dynamic>{
-      'proposalId': p.id,
-      'cellId': p.cellId,
-      'votingMode': p.votingMode.name,
-      'result': result,
-      'resultReason': resultReason,
-      'resultRelation': null,
-      'yesVotes': 0,
-      'noVotes': 0,
-      'abstainVotes': abstainCount,
-      'participation': participation.toStringAsFixed(4),
-      'eligibleVotersCount': eligibleCount,
-      'decidedAt': p.decidedAt!.toIso8601String(),
-      'previousProposalId': null,
-      'previousDecisionHash': previousHash,
-      'finalTitle': p.title,
-      'finalDescription': p.description,
-      'optionResultsJson': optionResultsJson,
-      'tieOptionIdsJson': tieOptionIdsJson,
-    };
-    final contentHash = computeContentHash(hashInput);
-    print('[TALLY-PERSIST] ${p.id} contentHash=$contentHash '
-        'previousHash=$previousHash');
-
-    final record = DecisionRecord(
-      recordId: DecisionRecord.generateId(),
-      proposalId: p.id,
-      cellId: p.cellId,
-      finalTitle: p.title,
-      finalDescription: p.description,
+    // 4.5a: Bau und Persistierung über zentralen Helper.
+    final record = await _buildAndPersistDecisionRecord(
+      proposal: p,
       result: result,
+      resultReason: resultReason,
       yesVotes: 0,
       noVotes: 0,
       abstainVotes: abstainCount,
       participation: participation,
-      decidedAt: p.decidedAt!,
-      allVotes: sortedVotes,
-      contentHash: contentHash,
-      previousDecisionHash: previousHash,
-      nostrEventId: '',
-      resultReason: resultReason,
-      resultRelation: null,
-      previousProposalId: null,
+      eligibleVotersCount: eligibleCount,
+      sortedVotes: sortedVotes,
       optionResultsJson: optionResultsJson,
       tieOptionIdsJson: tieOptionIdsJson,
     );
-    await _saveDecisionRecordToDb(record);
-    print('[PROPOSAL] DecisionRecord saved locally: ${record.recordId}');
 
     // 9) Audit
     await addAuditEntry(AuditLogEntry(
@@ -1429,6 +1325,85 @@ class ProposalService {
         'in Phase 4.4 (deferred to 4.5)');
 
     _notify();
+  }
+
+  /// Builds the DecisionRecord canonical hash input, computes
+  /// contentHash via tally_helpers, constructs the DecisionRecord,
+  /// and persists it locally via _saveDecisionRecordToDb.
+  ///
+  /// Returns the persisted record. Callers may use it for logging
+  /// or pass it to publish helpers.
+  ///
+  /// Phase 4.5a: extracted from the three _finalize* methods.
+  /// No behavioral change — produces field-identical
+  /// DecisionRecord objects to the prior inline code.
+  Future<DecisionRecord> _buildAndPersistDecisionRecord({
+    required Proposal proposal,
+    required String result,
+    required String? resultReason,
+    required int yesVotes,
+    required int noVotes,
+    required int abstainVotes,
+    required double participation,
+    required int eligibleVotersCount,
+    required List<Vote> sortedVotes,
+    required String? optionResultsJson,
+    required String? tieOptionIdsJson,
+  }) async {
+    final previousHash =
+        await _getLastDecisionHashForCell(proposal.cellId);
+
+    final hashInput = <String, dynamic>{
+      'proposalId': proposal.id,
+      'cellId': proposal.cellId,
+      'votingMode': proposal.votingMode.name,
+      'result': result,
+      'resultReason': resultReason,
+      'resultRelation': null,
+      'yesVotes': yesVotes,
+      'noVotes': noVotes,
+      'abstainVotes': abstainVotes,
+      'participation': participation.toStringAsFixed(4),
+      'eligibleVotersCount': eligibleVotersCount,
+      'decidedAt': proposal.decidedAt!.toIso8601String(),
+      'previousProposalId': null,
+      'previousDecisionHash': previousHash,
+      'finalTitle': proposal.title,
+      'finalDescription': proposal.description,
+      'optionResultsJson': optionResultsJson,
+      'tieOptionIdsJson': tieOptionIdsJson,
+    };
+    final contentHash = computeContentHash(hashInput);
+    print('[TALLY-PERSIST] ${proposal.id} contentHash=$contentHash '
+        'previousHash=$previousHash');
+
+    final record = DecisionRecord(
+      recordId: DecisionRecord.generateId(),
+      proposalId: proposal.id,
+      cellId: proposal.cellId,
+      finalTitle: proposal.title,
+      finalDescription: proposal.description,
+      result: result,
+      yesVotes: yesVotes,
+      noVotes: noVotes,
+      abstainVotes: abstainVotes,
+      participation: participation,
+      decidedAt: proposal.decidedAt!,
+      allVotes: sortedVotes,
+      contentHash: contentHash,
+      previousDecisionHash: previousHash,
+      nostrEventId: '',
+      resultReason: resultReason,
+      resultRelation: null,
+      previousProposalId: null,
+      optionResultsJson: optionResultsJson,
+      tieOptionIdsJson: tieOptionIdsJson,
+    );
+    await _saveDecisionRecordToDb(record);
+    print('[PROPOSAL] DecisionRecord saved locally: '
+        '${record.recordId}');
+
+    return record;
   }
 
   /// DECIDED → ARCHIVED (manual or auto after 30 days).
