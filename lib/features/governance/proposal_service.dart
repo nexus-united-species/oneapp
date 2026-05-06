@@ -725,8 +725,7 @@ class ProposalService {
       return;
     }
     if (p.votingMode == VotingMode.CANDIDATE_CHOICE) {
-      print('[TALLY-MODE-NOT-IMPLEMENTED] Proposal $proposalId '
-          'CANDIDATE_CHOICE — Phase 4.4');
+      await _finalizeCandidateChoice(p);
       return;
     }
     // YES_NO_ABSTAIN fällt durch zur bestehenden Logik unten.
@@ -1154,6 +1153,280 @@ class ProposalService {
     // KEIN _queueDecisionRetry — Phase 4.5
     print('[TALLY-PERSIST] ${p.id} local-only, no Nostr publish '
         'in Phase 4.3 (deferred to 4.5)');
+
+    _notify();
+  }
+
+  /// CANDIDATE_CHOICE tally: loads options with ACTIVE/WITHDRAWN status,
+  /// aggregates per-option votes, determines result with candidate-specific
+  /// result reasons, persists DecisionRecord locally. No Nostr publish of the
+  /// DecisionRecord in Phase 4.4 — deferred to Phase 4.5.
+  Future<void> _finalizeCandidateChoice(Proposal p) async {
+    print('[TALLY-START] ${p.id} mode=CANDIDATE_CHOICE');
+
+    // 1) Votes + Options laden
+    final voteRows = await PodDatabase.instance.listVotes(p.id);
+    final votes = voteRows.map(Vote.fromMap).toList();
+    final optionRows =
+        await PodDatabase.instance.listProposalOptions(p.id);
+    final options = optionRows.map(ProposalOption.fromMap).toList();
+    print('[TALLY-INPUT] ${p.id} votes=${votes.length} '
+        'options=${options.length}');
+
+    _votes[p.id] = votes;
+
+    // 2) Sortieren
+    final sortedVotes = sortVotesDeterministic(votes);
+    final sortedOptions = sortOptionsDeterministic(options);
+
+    // 3) eligibleVoters-Snapshot
+    final int eligibleCount;
+    if (p.eligibleVoters != null) {
+      eligibleCount = p.eligibleVoters!.length;
+    } else {
+      eligibleCount =
+          await CellService.instance.getMemberCount(p.cellId);
+      print('[TALLY-FALLBACK] ${p.id} eligibleVoters snapshot '
+          'missing, using current cell_members: $eligibleCount');
+    }
+
+    // 4) Aggregation — analog SINGLE_CHOICE
+    final optionCounts = <String, int>{};
+    for (final opt in sortedOptions) {
+      optionCounts[opt.optionId] = 0;
+    }
+    int abstainCount = 0;
+    int invalidVoteCount = 0;
+
+    for (final v in sortedVotes) {
+      if (v.selectedOptionId != null) {
+        if (optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] =
+              optionCounts[v.selectedOptionId!]! + 1;
+        } else {
+          invalidVoteCount++;
+          print('[TALLY-WARN] ${p.id} vote ${v.voteId} unknown '
+              'optionId=${v.selectedOptionId}');
+        }
+      } else if (v.choice == VoteChoice.ABSTAIN) {
+        abstainCount++;
+      } else {
+        invalidVoteCount++;
+        print('[TALLY-WARN] ${p.id} vote ${v.voteId} no '
+            'selectedOptionId in CANDIDATE_CHOICE (choice='
+            '${v.choice.name})');
+      }
+    }
+
+    final optionVoteSum =
+        optionCounts.values.fold<int>(0, (a, b) => a + b);
+    final participationCount = optionVoteSum + abstainCount;
+    final participation = eligibleCount > 0
+        ? participationCount / eligibleCount
+        : 0.0;
+
+    print('[TALLY-AGGREGATE] ${p.id} optionVotes=$optionVoteSum '
+        'abstain=$abstainCount invalid=$invalidVoteCount '
+        'eligible=$eligibleCount');
+    print('[TALLY-QUORUM] ${p.id} participation='
+        '${(participation * 100).toStringAsFixed(1)}% '
+        'required=${(p.quorumRequired * 100).toStringAsFixed(1)}%');
+
+    // 5) Result-Bestimmung — Reihenfolge VERBINDLICH:
+    //    NO_VALID_VOTES → QUORUM_NOT_MET → ALL_ABSTAIN →
+    //    ALL_CANDIDATES_WITHDRAWN → WINNER_WITHDRAWN →
+    //    TIE_REQUIRES_RUNOFF → approved
+    String result;
+    String? resultReason;
+    String? tieOptionIdsJson;
+
+    if (participationCount == 0) {
+      result = 'invalid';
+      resultReason = ResultReason.noValidVotes;
+    } else if (participation < p.quorumRequired) {
+      result = 'invalid';
+      resultReason = ResultReason.quorumNotMet;
+    } else if (optionVoteSum == 0) {
+      result = 'invalid';
+      resultReason = ResultReason.allAbstain;
+    } else {
+      // Aktive vs. WITHDRAWN-Kandidaten unterscheiden
+      final activeOptions = sortedOptions
+          .where((o) => o.status == OptionStatus.ACTIVE)
+          .toList();
+
+      if (activeOptions.isEmpty) {
+        // Schritt 4: ALL_CANDIDATES_WITHDRAWN
+        result = 'invalid';
+        resultReason = ResultReason.allCandidatesWithdrawn;
+      } else {
+        // Schritt 5: WINNER_WITHDRAWN-Check über ALLE Optionen
+        final maxAllCount = optionCounts.values
+            .fold<int>(0, (a, b) => b > a ? b : a);
+        final allWinners = sortedOptions
+            .where((o) => optionCounts[o.optionId] == maxAllCount)
+            .map((o) => o.optionId)
+            .toList();
+
+        final activeIds =
+            activeOptions.map((o) => o.optionId).toSet();
+        final hasWithdrawnWinner =
+            allWinners.any((id) => !activeIds.contains(id));
+
+        if (hasWithdrawnWinner) {
+          result = 'invalid';
+          resultReason = ResultReason.winnerWithdrawn;
+          tieOptionIdsJson = canonicalJsonEncode(allWinners);
+          print('[TALLY-RESULT] ${p.id} WINNER_WITHDRAWN: '
+              'allWinners=$allWinners');
+        } else {
+          // Schritt 6 + 7: TIE_REQUIRES_RUNOFF unter ACTIVE oder approved
+          final activeCounts = <String, int>{};
+          for (final opt in activeOptions) {
+            activeCounts[opt.optionId] =
+                optionCounts[opt.optionId] ?? 0;
+          }
+          final maxActiveCount = activeCounts.values
+              .fold<int>(0, (a, b) => b > a ? b : a);
+          final activeWinners = activeOptions
+              .where(
+                  (o) => activeCounts[o.optionId] == maxActiveCount)
+              .map((o) => o.optionId)
+              .toList();
+
+          if (activeWinners.length == 1) {
+            result = 'approved';
+            resultReason = null;
+          } else {
+            result = 'invalid';
+            resultReason = ResultReason.tieRequiresRunoff;
+            tieOptionIdsJson = canonicalJsonEncode(activeWinners);
+          }
+        }
+      }
+    }
+
+    // 6) optionResultsJson — IMMER bei vorhandenen Optionen (inkl. WITHDRAWN)
+    String? optionResultsJson;
+    if (sortedOptions.isNotEmpty) {
+      final canonicalCounts = <String, dynamic>{};
+      for (final opt in sortedOptions) {
+        canonicalCounts[opt.optionId] =
+            optionCounts[opt.optionId] ?? 0;
+      }
+      optionResultsJson = canonicalJsonEncode(canonicalCounts);
+    }
+
+    print('[TALLY-RESULT] ${p.id} result=$result '
+        'reason=${resultReason ?? "-"}');
+
+    // 7) Proposal-Status + DB + Proposal-Publish
+    //    (analog 4.3 — _publishProposalToNostr ist erlaubt und gewollt)
+    p.status = ProposalStatus.DECIDED;
+    p.decidedAt = DateTime.now().toUtc();
+    p.resultSummary = result;
+    p.resultYes = 0;
+    p.resultNo = 0;
+    p.resultAbstain = abstainCount;
+    p.resultParticipation = participation;
+    await _saveProposalToDb(p);
+    await _publishProposalToNostr(p);
+
+    // 8) DecisionRecord lokal
+    final previousHash = await _getLastDecisionHashForCell(p.cellId);
+    final hashInput = <String, dynamic>{
+      'proposalId': p.id,
+      'cellId': p.cellId,
+      'votingMode': p.votingMode.name,
+      'result': result,
+      'resultReason': resultReason,
+      'resultRelation': null,
+      'yesVotes': 0,
+      'noVotes': 0,
+      'abstainVotes': abstainCount,
+      'participation': participation.toStringAsFixed(4),
+      'eligibleVotersCount': eligibleCount,
+      'decidedAt': p.decidedAt!.toIso8601String(),
+      'previousProposalId': null,
+      'previousDecisionHash': previousHash,
+      'finalTitle': p.title,
+      'finalDescription': p.description,
+      'optionResultsJson': optionResultsJson,
+      'tieOptionIdsJson': tieOptionIdsJson,
+    };
+    final contentHash = computeContentHash(hashInput);
+    print('[TALLY-PERSIST] ${p.id} contentHash=$contentHash '
+        'previousHash=$previousHash');
+
+    final record = DecisionRecord(
+      recordId: DecisionRecord.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      finalTitle: p.title,
+      finalDescription: p.description,
+      result: result,
+      yesVotes: 0,
+      noVotes: 0,
+      abstainVotes: abstainCount,
+      participation: participation,
+      decidedAt: p.decidedAt!,
+      allVotes: sortedVotes,
+      contentHash: contentHash,
+      previousDecisionHash: previousHash,
+      nostrEventId: '',
+      resultReason: resultReason,
+      resultRelation: null,
+      previousProposalId: null,
+      optionResultsJson: optionResultsJson,
+      tieOptionIdsJson: tieOptionIdsJson,
+    );
+    await _saveDecisionRecordToDb(record);
+    print('[PROPOSAL] DecisionRecord saved locally: ${record.recordId}');
+
+    // 9) Audit
+    await addAuditEntry(AuditLogEntry(
+      entryId: AuditLogEntry.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      eventType: AuditEventType.RESULT_CALCULATED,
+      actorDid: p.creatorDid,
+      actorPseudonym: p.creatorPseudonym,
+      timestamp: DateTime.now().toUtc(),
+      payload: {
+        'result': result,
+        'resultReason': resultReason,
+        'votingMode': 'CANDIDATE_CHOICE',
+        'optionVotesSum': optionVoteSum,
+        'abstain': abstainCount,
+        'invalid': invalidVoteCount,
+        'eligibleCount': eligibleCount,
+        'participation': participation,
+        'activeCandidatesCount': sortedOptions
+            .where((o) => o.status == OptionStatus.ACTIVE)
+            .length,
+        'withdrawnCandidatesCount': sortedOptions
+            .where((o) => o.status == OptionStatus.WITHDRAWN)
+            .length,
+      },
+    ));
+
+    // 10) Notification
+    final resultLabel = result == 'approved'
+        ? 'Kandidat:in gewählt'
+        : result == 'invalid'
+            ? 'Ungültig'
+            : 'Abgelehnt';
+    await _notifyAllMembers(
+      p.cellId,
+      title: 'Wahl beendet',
+      body: '${p.title}: $resultLabel',
+      payload: 'proposal:${p.id}',
+    );
+
+    // 11) KEIN _publishDecisionRecord — Phase 4.5
+    //     KEIN _queueDecisionRetry — Phase 4.5
+    print('[TALLY-PERSIST] ${p.id} local-only, no Nostr publish '
+        'in Phase 4.4 (deferred to 4.5)');
 
     _notify();
   }

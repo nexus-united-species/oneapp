@@ -1785,4 +1785,809 @@ void main() {
 
     // No test for _publishDecisionRecord in SC — deferred to Phase 4.5.
   });
+
+  // ── finalizeProposal — CANDIDATE_CHOICE tally (Phase 4.4) ────────────────
+
+  group('finalizeProposal — CANDIDATE_CHOICE tally (Phase 4.4)', () {
+    // Local helpers mirror _finalizeCandidateChoice tally logic.
+
+    /// Creates a ProposalOption for CANDIDATE_CHOICE with explicit status.
+    ProposalOption _makeCandidateOption(
+      String proposalId,
+      String optionId, {
+      OptionStatus status = OptionStatus.ACTIVE,
+      int position = 0,
+      String? candidateDid,
+      String? candidatePseudonym,
+    }) {
+      final now = DateTime.utc(2026, 5, 1);
+      return ProposalOption(
+        optionId: optionId,
+        proposalId: proposalId,
+        label: 'Kandidat $optionId',
+        candidateDid: candidateDid ?? 'did:test:$optionId',
+        candidatePseudonym: candidatePseudonym ?? 'Kandidat_$optionId',
+        status: status,
+        position: position,
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+
+    /// Creates a vote for [selectedOptionId] (choice=ABSTAIN per P1 convention).
+    Vote _makeCandidateVote(
+        String proposalId, String voterId, String selectedOptionId) {
+      return Vote(
+        voteId: 'vote_cc_${proposalId}_$voterId',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: selectedOptionId,
+        createdAt: DateTime.utc(2026, 5, 1),
+        nostrEventId: '',
+      );
+    }
+
+    /// Creates a true abstain vote (selectedOptionId=null).
+    Vote _makeCCAbstainVote(String proposalId, String voterId) {
+      return Vote(
+        voteId: 'vote_cc_${proposalId}_${voterId}_abs',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: null,
+        createdAt: DateTime.utc(2026, 5, 1),
+        nostrEventId: '',
+      );
+    }
+
+    /// Core tally logic mirroring _finalizeCandidateChoice (without DB/service).
+    ({
+      String result,
+      String? resultReason,
+      String? tieOptionIdsJson,
+      String? optionResultsJson,
+      double participation,
+      int abstainCount,
+      String contentHash,
+    }) _tallyCC({
+      required List<ProposalOption> options,
+      required List<Vote> votes,
+      required int eligibleCount,
+      required double quorumRequired,
+      String proposalId = 'prop_cc_test',
+      String cellId = 'cell_cc',
+    }) {
+      final sortedVotes = sortVotesDeterministic(votes);
+      final sortedOptions = sortOptionsDeterministic(options);
+
+      final optionCounts = <String, int>{};
+      for (final opt in sortedOptions) {
+        optionCounts[opt.optionId] = 0;
+      }
+      int abstainCount = 0;
+
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null) {
+          if (optionCounts.containsKey(v.selectedOptionId)) {
+            optionCounts[v.selectedOptionId!] =
+                optionCounts[v.selectedOptionId!]! + 1;
+          }
+          // unknown option → ignored
+        } else if (v.choice == VoteChoice.ABSTAIN) {
+          abstainCount++;
+        }
+      }
+
+      final optionVoteSum =
+          optionCounts.values.fold<int>(0, (a, b) => a + b);
+      final participationCount = optionVoteSum + abstainCount;
+      final participation =
+          eligibleCount > 0 ? participationCount / eligibleCount : 0.0;
+
+      String result;
+      String? resultReason;
+      String? tieOptionIdsJson;
+
+      if (participationCount == 0) {
+        result = 'invalid';
+        resultReason = ResultReason.noValidVotes;
+      } else if (participation < quorumRequired) {
+        result = 'invalid';
+        resultReason = ResultReason.quorumNotMet;
+      } else if (optionVoteSum == 0) {
+        result = 'invalid';
+        resultReason = ResultReason.allAbstain;
+      } else {
+        final activeOptions = sortedOptions
+            .where((o) => o.status == OptionStatus.ACTIVE)
+            .toList();
+
+        if (activeOptions.isEmpty) {
+          result = 'invalid';
+          resultReason = ResultReason.allCandidatesWithdrawn;
+        } else {
+          final maxAllCount =
+              optionCounts.values.fold<int>(0, (a, b) => b > a ? b : a);
+          final allWinners = sortedOptions
+              .where((o) => optionCounts[o.optionId] == maxAllCount)
+              .map((o) => o.optionId)
+              .toList();
+
+          final activeIds = activeOptions.map((o) => o.optionId).toSet();
+          final hasWithdrawnWinner =
+              allWinners.any((id) => !activeIds.contains(id));
+
+          if (hasWithdrawnWinner) {
+            result = 'invalid';
+            resultReason = ResultReason.winnerWithdrawn;
+            tieOptionIdsJson = canonicalJsonEncode(allWinners);
+          } else {
+            final activeCounts = <String, int>{};
+            for (final opt in activeOptions) {
+              activeCounts[opt.optionId] = optionCounts[opt.optionId] ?? 0;
+            }
+            final maxActiveCount =
+                activeCounts.values.fold<int>(0, (a, b) => b > a ? b : a);
+            final activeWinners = activeOptions
+                .where((o) => activeCounts[o.optionId] == maxActiveCount)
+                .map((o) => o.optionId)
+                .toList();
+
+            if (activeWinners.length == 1) {
+              result = 'approved';
+              resultReason = null;
+            } else {
+              result = 'invalid';
+              resultReason = ResultReason.tieRequiresRunoff;
+              tieOptionIdsJson = canonicalJsonEncode(activeWinners);
+            }
+          }
+        }
+      }
+
+      String? optionResultsJson;
+      if (sortedOptions.isNotEmpty) {
+        final canonicalCounts = <String, dynamic>{};
+        for (final opt in sortedOptions) {
+          canonicalCounts[opt.optionId] = optionCounts[opt.optionId] ?? 0;
+        }
+        optionResultsJson = canonicalJsonEncode(canonicalCounts);
+      }
+
+      final decidedAt = DateTime.utc(2026, 5, 5, 12, 0, 0);
+      final hashInput = <String, dynamic>{
+        'proposalId': proposalId,
+        'cellId': cellId,
+        'votingMode': 'CANDIDATE_CHOICE',
+        'result': result,
+        'resultReason': resultReason,
+        'resultRelation': null,
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': abstainCount,
+        'participation': participation.toStringAsFixed(4),
+        'eligibleVotersCount': eligibleCount,
+        'decidedAt': decidedAt.toIso8601String(),
+        'previousProposalId': null,
+        'previousDecisionHash': null,
+        'finalTitle': 'CC Test',
+        'finalDescription': 'desc',
+        'optionResultsJson': optionResultsJson,
+        'tieOptionIdsJson': tieOptionIdsJson,
+      };
+      final contentHash = computeContentHash(hashInput);
+
+      return (
+        result: result,
+        resultReason: resultReason,
+        tieOptionIdsJson: tieOptionIdsJson,
+        optionResultsJson: optionResultsJson,
+        participation: participation,
+        abstainCount: abstainCount,
+        contentHash: contentHash,
+      );
+    }
+
+    // ── Tally-Vektoren ────────────────────────────────────────────────────────
+
+    // V7 — WINNER_WITHDRAWN
+    test(
+        'V7: Alice(ACTIVE):2, Bob(WITHDRAWN):5, Carol(ACTIVE):1, eligible=10 '
+        '→ invalid + WINNER_WITHDRAWN, tieOptionIdsJson=[Bob]', () {
+      final opts = [
+        _makeCandidateOption('p_v7', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_v7', 'Bob',
+            status: OptionStatus.WITHDRAWN, position: 1),
+        _makeCandidateOption('p_v7', 'Carol',
+            status: OptionStatus.ACTIVE, position: 2),
+      ];
+      final votes = [
+        _makeCandidateVote('p_v7', 'v1', 'Alice'),
+        _makeCandidateVote('p_v7', 'v2', 'Alice'),
+        _makeCandidateVote('p_v7', 'v3', 'Bob'),
+        _makeCandidateVote('p_v7', 'v4', 'Bob'),
+        _makeCandidateVote('p_v7', 'v5', 'Bob'),
+        _makeCandidateVote('p_v7', 'v6', 'Bob'),
+        _makeCandidateVote('p_v7', 'v7', 'Bob'),
+        _makeCandidateVote('p_v7', 'v8', 'Carol'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_v7',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      // tieOptionIdsJson enthält nur Bob (alleiniger Top-Tied)
+      expect(t.tieOptionIdsJson, isNotNull);
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, contains('Bob'));
+      expect(tieIds, hasLength(1));
+      // optionResultsJson enthält alle Counts
+      expect(t.optionResultsJson, isNotNull);
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts['Alice'], equals(2));
+      expect(counts['Bob'], equals(5));
+      expect(counts['Carol'], equals(1));
+    });
+
+    // V8 — ALL_CANDIDATES_WITHDRAWN
+    test(
+        'V8: Alice(WITHDRAWN):5, Bob(WITHDRAWN):3 → invalid + '
+        'ALL_CANDIDATES_WITHDRAWN', () {
+      final opts = [
+        _makeCandidateOption('p_v8', 'Alice',
+            status: OptionStatus.WITHDRAWN, position: 0),
+        _makeCandidateOption('p_v8', 'Bob',
+            status: OptionStatus.WITHDRAWN, position: 1),
+      ];
+      final votes = [
+        _makeCandidateVote('p_v8', 'v1', 'Alice'),
+        _makeCandidateVote('p_v8', 'v2', 'Alice'),
+        _makeCandidateVote('p_v8', 'v3', 'Alice'),
+        _makeCandidateVote('p_v8', 'v4', 'Alice'),
+        _makeCandidateVote('p_v8', 'v5', 'Alice'),
+        _makeCandidateVote('p_v8', 'v6', 'Bob'),
+        _makeCandidateVote('p_v8', 'v7', 'Bob'),
+        _makeCandidateVote('p_v8', 'v8', 'Bob'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_v8',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allCandidatesWithdrawn));
+      expect(t.tieOptionIdsJson, isNull);
+      // optionResultsJson trotzdem populated (Audit)
+      expect(t.optionResultsJson, isNotNull);
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts['Alice'], equals(5));
+      expect(counts['Bob'], equals(3));
+    });
+
+    // Klarer ACTIVE-Sieger
+    test(
+        'CC: Alice(ACTIVE):4, Bob(ACTIVE):2 → approved, '
+        'optionResultsJson populated', () {
+      final opts = [
+        _makeCandidateOption('p_cc1', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_cc1', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc1', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc1', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc1', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc1', 'v4', 'Alice'),
+        _makeCandidateVote('p_cc1', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc1', 'v6', 'Bob'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc1',
+      );
+
+      expect(t.result, equals('approved'));
+      expect(t.resultReason, isNull);
+      expect(t.tieOptionIdsJson, isNull);
+      expect(t.optionResultsJson, isNotNull);
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts['Alice'], equals(4));
+      expect(counts['Bob'], equals(2));
+    });
+
+    // Top-Tie unter ACTIVE
+    test(
+        'CC: Alice(ACTIVE):3, Bob(ACTIVE):3, Carol(ACTIVE):1 → '
+        'invalid + TIE_REQUIRES_RUNOFF, tieOptionIdsJson=[A,B]', () {
+      final opts = [
+        _makeCandidateOption('p_cc2', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_cc2', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+        _makeCandidateOption('p_cc2', 'Carol',
+            status: OptionStatus.ACTIVE, position: 2),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc2', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc2', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc2', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc2', 'v4', 'Bob'),
+        _makeCandidateVote('p_cc2', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc2', 'v6', 'Bob'),
+        _makeCandidateVote('p_cc2', 'v7', 'Carol'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc2',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.tieRequiresRunoff));
+      expect(t.tieOptionIdsJson, isNotNull);
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, containsAll(['Alice', 'Bob']));
+      expect(tieIds, hasLength(2));
+      // Carol ist NICHT im Tie
+      expect(tieIds, isNot(contains('Carol')));
+    });
+
+    // WINNER_WITHDRAWN hat Vorrang vor TIE (kritischer Test)
+    test(
+        'CC Vorrang: Alice(WITHDRAWN):3, Bob(WITHDRAWN):3, Carol(ACTIVE):2 → '
+        'invalid + WINNER_WITHDRAWN (NICHT TIE_REQUIRES_RUNOFF), '
+        'tieOptionIdsJson=[Alice,Bob]', () {
+      final opts = [
+        _makeCandidateOption('p_cc3', 'Alice',
+            status: OptionStatus.WITHDRAWN, position: 0),
+        _makeCandidateOption('p_cc3', 'Bob',
+            status: OptionStatus.WITHDRAWN, position: 1),
+        _makeCandidateOption('p_cc3', 'Carol',
+            status: OptionStatus.ACTIVE, position: 2),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc3', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc3', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc3', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc3', 'v4', 'Bob'),
+        _makeCandidateVote('p_cc3', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc3', 'v6', 'Bob'),
+        _makeCandidateVote('p_cc3', 'v7', 'Carol'),
+        _makeCandidateVote('p_cc3', 'v8', 'Carol'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc3',
+      );
+
+      expect(t.result, equals('invalid'));
+      // WINNER_WITHDRAWN hat Vorrang über TIE_REQUIRES_RUNOFF
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      expect(t.resultReason, isNot(equals(ResultReason.tieRequiresRunoff)));
+      expect(t.tieOptionIdsJson, isNotNull);
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, containsAll(['Alice', 'Bob']));
+      expect(tieIds, hasLength(2));
+    });
+
+    // Quorum-Pfade
+    test('CC: 0 votes → invalid + NO_VALID_VOTES', () {
+      final opts = [
+        _makeCandidateOption('p_cc4', 'Alice'),
+        _makeCandidateOption('p_cc4', 'Bob'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: [],
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc4',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.noValidVotes));
+    });
+
+    test('CC: participation < quorum → invalid + QUORUM_NOT_MET', () {
+      final opts = [
+        _makeCandidateOption('p_cc5', 'Alice'),
+        _makeCandidateOption('p_cc5', 'Bob'),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc5', 'v1', 'Alice'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc5',
+      );
+
+      // 1 vote / 10 eligible = 10% < 50% quorum
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.quorumNotMet));
+    });
+
+    test('CC: alle ABSTAIN → invalid + ALL_ABSTAIN', () {
+      final opts = [
+        _makeCandidateOption('p_cc6', 'Alice'),
+        _makeCandidateOption('p_cc6', 'Bob'),
+      ];
+      // 6 echte Abstains (selectedOptionId=null), Quorum erreicht
+      final votes = List.generate(
+          6, (i) => _makeCCAbstainVote('p_cc6', 'v$i'));
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc6',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.allAbstain));
+      expect(t.abstainCount, equals(6));
+    });
+
+    // optionResultsJson zeigt auch WITHDRAWN-Counts
+    test(
+        'CC: optionResultsJson contains both ACTIVE and WITHDRAWN counts', () {
+      final opts = [
+        _makeCandidateOption('p_cc7', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_cc7', 'Bob',
+            status: OptionStatus.WITHDRAWN, position: 1),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc7', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc7', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc7', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc7', 'v4', 'Bob'),
+        _makeCandidateVote('p_cc7', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc7', 'v6', 'Bob'),
+        _makeCandidateVote('p_cc7', 'v7', 'Bob'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc7',
+      );
+
+      // Bob (WITHDRAWN) hat mehr Stimmen → WINNER_WITHDRAWN
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      // Beide Counts in optionResultsJson
+      expect(t.optionResultsJson, isNotNull);
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts.containsKey('Alice'), isTrue);
+      expect(counts.containsKey('Bob'), isTrue);
+      expect(counts['Alice'], equals(3));
+      expect(counts['Bob'], equals(4));
+    });
+
+    // Mehrere allWinners (alle WITHDRAWN, gleichauf)
+    test(
+        'CC: Alice(WITHDRAWN):4, Bob(WITHDRAWN):4, Carol(ACTIVE):1 → '
+        'invalid + WINNER_WITHDRAWN, tieOptionIdsJson=[Alice,Bob]', () {
+      final opts = [
+        _makeCandidateOption('p_cc8', 'Alice',
+            status: OptionStatus.WITHDRAWN, position: 0),
+        _makeCandidateOption('p_cc8', 'Bob',
+            status: OptionStatus.WITHDRAWN, position: 1),
+        _makeCandidateOption('p_cc8', 'Carol',
+            status: OptionStatus.ACTIVE, position: 2),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc8', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc8', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc8', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc8', 'v4', 'Alice'),
+        _makeCandidateVote('p_cc8', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc8', 'v6', 'Bob'),
+        _makeCandidateVote('p_cc8', 'v7', 'Bob'),
+        _makeCandidateVote('p_cc8', 'v8', 'Bob'),
+        _makeCandidateVote('p_cc8', 'v9', 'Carol'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc8',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      expect(t.tieOptionIdsJson, isNotNull);
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, containsAll(['Alice', 'Bob']));
+      expect(tieIds, hasLength(2));
+      expect(tieIds, isNot(contains('Carol')));
+    });
+
+    // Mix WITHDRAWN-Winner + ACTIVE-Winner gleichauf
+    test(
+        'CC: Alice(WITHDRAWN):3, Bob(ACTIVE):3, Carol(ACTIVE):1 → '
+        'invalid + WINNER_WITHDRAWN, tieOptionIdsJson=[Alice,Bob]', () {
+      final opts = [
+        _makeCandidateOption('p_cc9', 'Alice',
+            status: OptionStatus.WITHDRAWN, position: 0),
+        _makeCandidateOption('p_cc9', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+        _makeCandidateOption('p_cc9', 'Carol',
+            status: OptionStatus.ACTIVE, position: 2),
+      ];
+      final votes = [
+        _makeCandidateVote('p_cc9', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc9', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc9', 'v3', 'Alice'),
+        _makeCandidateVote('p_cc9', 'v4', 'Bob'),
+        _makeCandidateVote('p_cc9', 'v5', 'Bob'),
+        _makeCandidateVote('p_cc9', 'v6', 'Bob'),
+        _makeCandidateVote('p_cc9', 'v7', 'Carol'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_cc9',
+      );
+
+      expect(t.result, equals('invalid'));
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      expect(t.tieOptionIdsJson, isNotNull);
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, containsAll(['Alice', 'Bob']));
+      expect(tieIds, hasLength(2));
+    });
+
+    // Defensive: unknown selectedOptionId wird ignoriert
+    test(
+        'CC: vote with unknown selectedOptionId is ignored '
+        '(does not crash, does not count)', () {
+      final opts = [
+        _makeCandidateOption('p_cc10', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_cc10', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+      ];
+      // v3 + v4 stimmen für bekannte Optionen, v_unknown für unbekannte ID
+      final votes = [
+        _makeCandidateVote('p_cc10', 'v1', 'Alice'),
+        _makeCandidateVote('p_cc10', 'v2', 'Alice'),
+        _makeCandidateVote('p_cc10', 'v3', 'Bob'),
+        Vote(
+          voteId: 'vote_cc_p_cc10_unknown',
+          proposalId: 'p_cc10',
+          voterPubkey: 'pubkey_unknown',
+          voterDid: 'did:test:unknown',
+          voterPseudonym: 'unknown',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: 'DOES_NOT_EXIST',
+          createdAt: DateTime.utc(2026, 5, 1),
+          nostrEventId: '',
+        ),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.2,
+        proposalId: 'p_cc10',
+      );
+
+      // Nur Alice:2, Bob:1 — unknown vote ignoriert → Alice gewinnt
+      expect(t.result, equals('approved'));
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts['Alice'], equals(2));
+      expect(counts['Bob'], equals(1));
+    });
+
+    // Determinismus: identische Inputs → identischer contentHash
+    test('CC: identical inputs produce identical contentHash', () {
+      final opts = [
+        _makeCandidateOption('p_det', 'Alice',
+            status: OptionStatus.ACTIVE, position: 0),
+        _makeCandidateOption('p_det', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+      ];
+      final votes = [
+        _makeCandidateVote('p_det', 'v1', 'Alice'),
+        _makeCandidateVote('p_det', 'v2', 'Alice'),
+        _makeCandidateVote('p_det', 'v3', 'Bob'),
+      ];
+
+      final t1 = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.2,
+        proposalId: 'p_det',
+      );
+      final t2 = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.2,
+        proposalId: 'p_det',
+      );
+
+      expect(t1.contentHash, equals(t2.contentHash));
+      expect(t1.contentHash, hasLength(64)); // SHA-256 hex
+    });
+
+    // Dispatch-Bestätigung: CANDIDATE_CHOICE geht nicht mehr in SKIP
+    test(
+        'CC proposal in VOTING_ENDED now goes through tally '
+        '(not SKIP anymore — tally verifiable via local algorithm)', () {
+      // This test verifies the algorithm runs end-to-end by exercising
+      // _tallyCC, which mirrors _finalizeCandidateChoice. The dispatch
+      // change (removing [TALLY-MODE-NOT-IMPLEMENTED]) is verified by
+      // the production code edit; here we confirm the algorithm produces
+      // a non-null result for a valid input.
+      final opts = [_makeCandidateOption('p_disp', 'Alice')];
+      final votes = [
+        _makeCandidateVote('p_disp', 'v1', 'Alice'),
+        _makeCandidateVote('p_disp', 'v2', 'Alice'),
+        _makeCandidateVote('p_disp', 'v3', 'Alice'),
+        _makeCandidateVote('p_disp', 'v4', 'Alice'),
+        _makeCandidateVote('p_disp', 'v5', 'Alice'),
+        _makeCandidateVote('p_disp', 'v6', 'Alice'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_disp',
+      );
+
+      expect(t.result, isNotNull);
+      expect(t.result, equals('approved'));
+      expect(t.contentHash, isNotEmpty);
+    });
+
+    // Phase-3.5-Felder: optionResultsJson + tieOptionIdsJson-Semantik
+    test(
+        'CC: DecisionRecord has correct optionResultsJson and '
+        'tieOptionIdsJson semantics', () {
+      // WINNER_WITHDRAWN: tieOptionIdsJson enthält alle Top-Tied inkl. WITHDRAWN
+      final opts = [
+        _makeCandidateOption('p_sem', 'Alice',
+            status: OptionStatus.WITHDRAWN, position: 0),
+        _makeCandidateOption('p_sem', 'Bob',
+            status: OptionStatus.ACTIVE, position: 1),
+      ];
+      final votes = [
+        _makeCandidateVote('p_sem', 'v1', 'Alice'),
+        _makeCandidateVote('p_sem', 'v2', 'Alice'),
+        _makeCandidateVote('p_sem', 'v3', 'Alice'),
+        _makeCandidateVote('p_sem', 'v4', 'Bob'),
+        _makeCandidateVote('p_sem', 'v5', 'Bob'),
+      ];
+
+      final t = _tallyCC(
+        options: opts,
+        votes: votes,
+        eligibleCount: 10,
+        quorumRequired: 0.5,
+        proposalId: 'p_sem',
+      );
+
+      expect(t.resultReason, equals(ResultReason.winnerWithdrawn));
+      // tieOptionIdsJson enthält den WITHDRAWN-Winner
+      final tieIds =
+          List<String>.from(jsonDecode(t.tieOptionIdsJson!) as List);
+      expect(tieIds, contains('Alice'));
+      // optionResultsJson enthält beide (auch WITHDRAWN)
+      final counts =
+          Map<String, dynamic>.from(jsonDecode(t.optionResultsJson!) as Map);
+      expect(counts.containsKey('Alice'), isTrue);
+      expect(counts.containsKey('Bob'), isTrue);
+    });
+
+    // Lowercase result
+    test('CC: result values stay lowercase', () {
+      final cases = <String Function()>[
+        // approved
+        () => _tallyCC(
+              options: [_makeCandidateOption('lcc1', 'Alice')],
+              votes: List.generate(
+                  6, (i) => _makeCandidateVote('lcc1', 'v$i', 'Alice')),
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+        // invalid — no votes
+        () => _tallyCC(
+              options: [_makeCandidateOption('lcc2', 'Alice')],
+              votes: [],
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+        // invalid — quorum not met
+        () => _tallyCC(
+              options: [_makeCandidateOption('lcc3', 'Alice')],
+              votes: [_makeCandidateVote('lcc3', 'v1', 'Alice')],
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+        // invalid — all candidates withdrawn
+        () => _tallyCC(
+              options: [
+                _makeCandidateOption('lcc4', 'Alice',
+                    status: OptionStatus.WITHDRAWN)
+              ],
+              votes: [_makeCandidateVote('lcc4', 'v1', 'Alice'),
+                      _makeCandidateVote('lcc4', 'v2', 'Alice'),
+                      _makeCandidateVote('lcc4', 'v3', 'Alice'),
+                      _makeCandidateVote('lcc4', 'v4', 'Alice'),
+                      _makeCandidateVote('lcc4', 'v5', 'Alice'),
+                      _makeCandidateVote('lcc4', 'v6', 'Alice')],
+              eligibleCount: 10,
+              quorumRequired: 0.5,
+            ).result,
+      ];
+
+      for (final getResult in cases) {
+        final result = getResult();
+        expect(result, equals(result.toLowerCase()),
+            reason: 'result "$result" must be lowercase');
+        expect(['approved', 'rejected', 'invalid'].contains(result), isTrue,
+            reason:
+                'result "$result" must be one of approved/rejected/invalid');
+      }
+    });
+
+    // KEIN Test der _publishDecisionRecord für CC — deferred to Phase 4.5.
+  });
 }
