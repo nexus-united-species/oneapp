@@ -821,50 +821,16 @@ class ProposalService {
       tieOptionIdsJson: null,
     );
 
-    // ── Phase 4.5b/4.5c-Hinweis: ───────────────────────────
-    // Der bestehende _publishDecisionRecord + _queueDecisionRetry
-    // BLEIBT in 4.5a für YES_NO_ABSTAIN unverändert. Format-
-    // Vereinheitlichung kommt in 4.5b. Wir bauen hier weiter
-    // den ALTEN recordContent für den Publish-Pfad — das ist
-    // bewusste Doppelstruktur in 4.5a, wird in 4.5b aufgelöst.
-
-    final recordContent = SplayTreeMap<String, dynamic>.from({
-      'proposalId': p.id,
-      'finalTitle': p.title,
-      'finalDescription': p.description,
-      'result': result,
-      'yesVotes': yes,
-      'noVotes': no,
-      'abstainVotes': abstain,
-      'participation': participation,
-      'decidedAt': p.decidedAt!.millisecondsSinceEpoch,
-      'allVotes': votes
-          .map((v) => {
-                'voterPseudonym': v.voterPseudonym,
-                'choice': v.choice.name,
-                'reasoning': v.reasoning,
-                'createdAt': v.createdAt.millisecondsSinceEpoch,
-              })
-          .toList(),
-    });
-    final recordMap = SplayTreeMap<String, dynamic>.from(recordContent);
-    final decisionResult = await _publishDecisionRecord(
-      proposalId: p.id,
-      cellId: p.cellId,
-      recordContent: Map<String, dynamic>.from(recordMap),
-      result: result,
-      contentHash: record.contentHash,
-      previousDecisionHash: record.previousDecisionHash,
+    final recordContent = _buildRecordContent(
+      proposal: p,
+      record: record,
+      sortedVotes: votes,
     );
-    // Set local status to DECIDED regardless of publish result.
-    // Decision Records are authoritative per G2 spec.
-    // The retry queue will eventually distribute the record.
-    if (decisionResult.status != PublishResultStatus.accepted) {
-      print('[PROPOSAL] Decision finalized locally, '
-          'sync pending: status=${decisionResult.status}');
-    } else {
-      print('[PROPOSAL] Decision record published: ${record.recordId}');
-    }
+    await _publishAndQueueRetry(
+      proposal: p,
+      record: record,
+      recordContent: recordContent,
+    );
 
     await addAuditEntry(AuditLogEntry(
       entryId: AuditLogEntry.generateId(),
@@ -1080,10 +1046,17 @@ class ProposalService {
       payload: 'proposal:${p.id}',
     );
 
-    // 11) KEIN _publishDecisionRecord — Phase 4.5
-    // KEIN _queueDecisionRetry — Phase 4.5
-    print('[TALLY-PERSIST] ${p.id} local-only, no Nostr publish '
-        'in Phase 4.3 (deferred to 4.5)');
+    // 11) Publish + Retry (aktiviert in Phase 4.5b)
+    final recordContent = _buildRecordContent(
+      proposal: p,
+      record: record,
+      sortedVotes: sortedVotes,
+    );
+    await _publishAndQueueRetry(
+      proposal: p,
+      record: record,
+      recordContent: recordContent,
+    );
 
     _notify();
   }
@@ -1319,10 +1292,17 @@ class ProposalService {
       payload: 'proposal:${p.id}',
     );
 
-    // 11) KEIN _publishDecisionRecord — Phase 4.5
-    //     KEIN _queueDecisionRetry — Phase 4.5
-    print('[TALLY-PERSIST] ${p.id} local-only, no Nostr publish '
-        'in Phase 4.4 (deferred to 4.5)');
+    // 11) Publish + Retry (aktiviert in Phase 4.5b)
+    final recordContent = _buildRecordContent(
+      proposal: p,
+      record: record,
+      sortedVotes: sortedVotes,
+    );
+    await _publishAndQueueRetry(
+      proposal: p,
+      record: record,
+      recordContent: recordContent,
+    );
 
     _notify();
   }
@@ -1404,6 +1384,78 @@ class ProposalService {
         '${record.recordId}');
 
     return record;
+  }
+
+  /// Builds the canonical recordContent payload for Nostr Kind-31013
+  /// publish. Used by all three tally modes since Phase 4.5b.
+  ///
+  /// Keys are alphabetically sorted via SplayTreeMap to ensure
+  /// deterministic JSON output. New v1.3 fields (votingMode,
+  /// resultReason, resultRelation, previousProposalId,
+  /// optionResultsJson, tieOptionIdsJson) are always present —
+  /// null for fields that don't apply to a given mode.
+  ///
+  /// Backwards compatible with pre-4.5b receivers: old fields
+  /// (yesVotes/noVotes/abstainVotes/participation/finalTitle/
+  /// finalDescription/decidedAt/allVotes/proposalId/result) keep
+  /// identical names, types, and meanings. The v1.3 additions
+  /// are extra keys older receivers will harmlessly ignore.
+  Map<String, dynamic> _buildRecordContent({
+    required Proposal proposal,
+    required DecisionRecord record,
+    required List<Vote> sortedVotes,
+  }) {
+    return SplayTreeMap<String, dynamic>.from({
+      'proposalId': proposal.id,
+      'cellId': proposal.cellId,
+      'votingMode': proposal.votingMode.name,
+      'finalTitle': proposal.title,
+      'finalDescription': proposal.description,
+      'result': record.result,
+      'resultReason': record.resultReason,
+      'resultRelation': record.resultRelation,
+      'previousProposalId': record.previousProposalId,
+      'yesVotes': record.yesVotes,
+      'noVotes': record.noVotes,
+      'abstainVotes': record.abstainVotes,
+      'participation': record.participation,
+      'decidedAt': record.decidedAt.millisecondsSinceEpoch,
+      'optionResultsJson': record.optionResultsJson,
+      'tieOptionIdsJson': record.tieOptionIdsJson,
+      'allVotes': sortedVotes
+          .map((v) => {
+                'voterPseudonym': v.voterPseudonym,
+                'choice': v.choice.name,
+                'selectedOptionId': v.selectedOptionId,
+                'reasoning': v.reasoning,
+                'createdAt': v.createdAt.millisecondsSinceEpoch,
+              })
+          .toList(),
+    });
+  }
+
+  /// Publishes a DecisionRecord via the Nostr transport and logs the outcome.
+  /// The PublishResult is already tracked by the transport layer for automatic
+  /// retry via PublishResultDao / _processRetryQueue.
+  /// Used by all three tally modes since Phase 4.5b.
+  Future<void> _publishAndQueueRetry({
+    required Proposal proposal,
+    required DecisionRecord record,
+    required Map<String, dynamic> recordContent,
+  }) async {
+    final result = await _publishDecisionRecord(
+      proposalId: proposal.id,
+      cellId: proposal.cellId,
+      recordContent: recordContent,
+      result: record.result,
+      contentHash: record.contentHash,
+      previousDecisionHash: record.previousDecisionHash,
+    );
+    if (result.status != PublishResultStatus.accepted) {
+      print('[PROPOSAL] Decision record publish failed, queuing retry');
+    } else {
+      print('[PROPOSAL] Decision record published: ${record.recordId}');
+    }
   }
 
   /// DECIDED → ARCHIVED (manual or auto after 30 days).

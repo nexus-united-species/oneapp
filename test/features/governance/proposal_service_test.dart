@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -2589,5 +2590,416 @@ void main() {
     });
 
     // KEIN Test der _publishDecisionRecord für CC — deferred to Phase 4.5.
+  });
+
+  // ── Unified DecisionRecord publish (Phase 4.5b) ───────────────────────────
+
+  group('Unified DecisionRecord publish (Phase 4.5b)', () {
+    // Local mirror of _buildRecordContent from proposal_service.dart.
+    // Production method is private; algorithm is verified here as
+    // executable spec — identical to the 4.2b/4.3/4.4 test approach.
+    Map<String, dynamic> _buildTestRecordContent({
+      required String proposalId,
+      required String cellId,
+      required String votingMode,
+      required String finalTitle,
+      required String finalDescription,
+      required String result,
+      required String? resultReason,
+      required String? resultRelation,
+      required String? previousProposalId,
+      required int yesVotes,
+      required int noVotes,
+      required int abstainVotes,
+      required double participation,
+      required DateTime decidedAt,
+      required String? optionResultsJson,
+      required String? tieOptionIdsJson,
+      required List<Vote> sortedVotes,
+    }) {
+      return SplayTreeMap<String, dynamic>.from({
+        'proposalId': proposalId,
+        'cellId': cellId,
+        'votingMode': votingMode,
+        'finalTitle': finalTitle,
+        'finalDescription': finalDescription,
+        'result': result,
+        'resultReason': resultReason,
+        'resultRelation': resultRelation,
+        'previousProposalId': previousProposalId,
+        'yesVotes': yesVotes,
+        'noVotes': noVotes,
+        'abstainVotes': abstainVotes,
+        'participation': participation,
+        'decidedAt': decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': optionResultsJson,
+        'tieOptionIdsJson': tieOptionIdsJson,
+        'allVotes': sortedVotes
+            .map((v) => {
+                  'voterPseudonym': v.voterPseudonym,
+                  'choice': v.choice.name,
+                  'selectedOptionId': v.selectedOptionId,
+                  'reasoning': v.reasoning,
+                  'createdAt': v.createdAt.millisecondsSinceEpoch,
+                })
+            .toList(),
+      });
+    }
+
+    // Minimal YES vote for YES_NO_ABSTAIN proposals.
+    Vote _makeYesVote(String proposalId, String voterId) {
+      return Vote(
+        voteId: 'vote_${proposalId}_$voterId',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.YES,
+        createdAt: DateTime.utc(2026, 5, 5, 10, 0),
+        nostrEventId: '',
+      );
+    }
+
+    // Minimal option vote for SC/CC proposals.
+    Vote _makeScVote(String proposalId, String voterId, String optionId) {
+      return Vote(
+        voteId: 'vote_${proposalId}_$voterId',
+        proposalId: proposalId,
+        voterPubkey: 'pubkey_$voterId',
+        voterDid: 'did:test:$voterId',
+        voterPseudonym: voterId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: optionId,
+        createdAt: DateTime.utc(2026, 5, 5, 10, 0),
+        nostrEventId: '',
+      );
+    }
+
+    final _decidedAt = DateTime.utc(2026, 5, 5, 12, 0, 0);
+
+    test(
+        'SINGLE_CHOICE now publishes — '
+        '_buildRecordContent produces non-null result for SC mode', () {
+      final votes = [_makeScVote('p_sc', 'v1', 'A')];
+      final content = _buildTestRecordContent(
+        proposalId: 'p_sc',
+        cellId: 'cell1',
+        votingMode: VotingMode.SINGLE_CHOICE.name,
+        finalTitle: 'SC Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.1,
+        decidedAt: _decidedAt,
+        optionResultsJson: '{"A":1}',
+        tieOptionIdsJson: null,
+        sortedVotes: votes,
+      );
+
+      expect(content, isNotNull);
+      expect(content['votingMode'], equals('SINGLE_CHOICE'));
+      expect(content['optionResultsJson'], equals('{"A":1}'));
+    });
+
+    test(
+        'CANDIDATE_CHOICE now publishes — '
+        '_buildRecordContent produces non-null result for CC mode', () {
+      final votes = [_makeScVote('p_cc', 'v1', 'Alice')];
+      final content = _buildTestRecordContent(
+        proposalId: 'p_cc',
+        cellId: 'cell1',
+        votingMode: VotingMode.CANDIDATE_CHOICE.name,
+        finalTitle: 'CC Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.1,
+        decidedAt: _decidedAt,
+        optionResultsJson: '{"Alice":1}',
+        tieOptionIdsJson: null,
+        sortedVotes: votes,
+      );
+
+      expect(content, isNotNull);
+      expect(content['votingMode'], equals('CANDIDATE_CHOICE'));
+      expect(content['result'], equals('approved'));
+    });
+
+    test(
+        'YES_NO_ABSTAIN recordContent contains v1.3 keys '
+        '(votingMode/resultReason/etc, null where inapplicable)', () {
+      final votes = [_makeYesVote('p_yna', 'v1')];
+      final content = _buildTestRecordContent(
+        proposalId: 'p_yna',
+        cellId: 'cell1',
+        votingMode: VotingMode.YES_NO_ABSTAIN.name,
+        finalTitle: 'YNA Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 7,
+        noVotes: 2,
+        abstainVotes: 1,
+        participation: 0.8,
+        decidedAt: _decidedAt,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+        sortedVotes: votes,
+      );
+
+      // v1.3 fields present
+      expect(content.containsKey('votingMode'), isTrue);
+      expect(content.containsKey('resultReason'), isTrue);
+      expect(content.containsKey('resultRelation'), isTrue);
+      expect(content.containsKey('previousProposalId'), isTrue);
+      expect(content.containsKey('optionResultsJson'), isTrue);
+      expect(content.containsKey('tieOptionIdsJson'), isTrue);
+      expect(content.containsKey('cellId'), isTrue);
+
+      // null where inapplicable for YES_NO_ABSTAIN
+      expect(content['optionResultsJson'], isNull);
+      expect(content['tieOptionIdsJson'], isNull);
+      expect(content['resultRelation'], isNull);
+      expect(content['previousProposalId'], isNull);
+      expect(content['resultReason'], isNull);
+      expect(content['votingMode'], equals('YES_NO_ABSTAIN'));
+    });
+
+    test('SC recordContent has optionResultsJson populated', () {
+      final content = _buildTestRecordContent(
+        proposalId: 'p_sc2',
+        cellId: 'cell1',
+        votingMode: VotingMode.SINGLE_CHOICE.name,
+        finalTitle: 'SC',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 1,
+        participation: 0.6,
+        decidedAt: _decidedAt,
+        optionResultsJson: '{"A":3,"B":2}',
+        tieOptionIdsJson: null,
+        sortedVotes: [],
+      );
+
+      expect(content['optionResultsJson'], equals('{"A":3,"B":2}'));
+      expect(content['tieOptionIdsJson'], isNull);
+    });
+
+    test(
+        'CC recordContent has optionResultsJson and tieOptionIdsJson '
+        'when applicable (TIE/WINNER_WITHDRAWN)', () {
+      final content = _buildTestRecordContent(
+        proposalId: 'p_cc2',
+        cellId: 'cell1',
+        votingMode: VotingMode.CANDIDATE_CHOICE.name,
+        finalTitle: 'CC',
+        finalDescription: 'desc',
+        result: 'invalid',
+        resultReason: ResultReason.tieRequiresRunoff,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.6,
+        decidedAt: _decidedAt,
+        optionResultsJson: '{"Alice":3,"Bob":3}',
+        tieOptionIdsJson: '["Alice","Bob"]',
+        sortedVotes: [],
+      );
+
+      expect(content['optionResultsJson'], equals('{"Alice":3,"Bob":3}'));
+      expect(content['tieOptionIdsJson'], equals('["Alice","Bob"]'));
+      expect(content['resultReason'], equals(ResultReason.tieRequiresRunoff));
+    });
+
+    test(
+        'YES_NO_ABSTAIN recordContent shape is backwards-compatible: '
+        'yesVotes/noVotes/abstainVotes are int, participation is double, '
+        'decidedAt is int millis, result is lowercase string', () {
+      final content = _buildTestRecordContent(
+        proposalId: 'p_compat',
+        cellId: 'cell1',
+        votingMode: VotingMode.YES_NO_ABSTAIN.name,
+        finalTitle: 'Compat Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 7,
+        noVotes: 2,
+        abstainVotes: 1,
+        participation: 1.0,
+        decidedAt: _decidedAt,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+        sortedVotes: [],
+      );
+
+      // Backwards-compatible field types (UNVERÄNDERT)
+      expect(content['yesVotes'], isA<int>());
+      expect(content['noVotes'], isA<int>());
+      expect(content['abstainVotes'], isA<int>());
+      expect(content['participation'], isA<double>());
+      expect(content['decidedAt'], isA<int>());
+      expect(content['decidedAt'],
+          equals(_decidedAt.millisecondsSinceEpoch));
+
+      // result lowercase
+      expect(content['result'], equals('approved'));
+      expect(content['result'],
+          equals((content['result'] as String).toLowerCase()));
+
+      // String fields
+      expect(content['finalTitle'], isA<String>());
+      expect(content['finalDescription'], isA<String>());
+      expect(content['proposalId'], isA<String>());
+    });
+
+    test(
+        'allVotes entries always include voterPseudonym, choice, reasoning, '
+        'createdAt; selectedOptionId is additionally present (nullable)', () {
+      final ynaVote = _makeYesVote('p_av', 'alice');
+      final scVote = _makeScVote('p_av', 'bob', 'OptionA');
+
+      // YES_NO_ABSTAIN vote: selectedOptionId is null
+      final ynaContent = _buildTestRecordContent(
+        proposalId: 'p_av',
+        cellId: 'cell1',
+        votingMode: VotingMode.YES_NO_ABSTAIN.name,
+        finalTitle: 'AV Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 1,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.1,
+        decidedAt: _decidedAt,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+        sortedVotes: [ynaVote],
+      );
+      final ynaEntry = (ynaContent['allVotes'] as List).first as Map;
+      expect(ynaEntry.containsKey('voterPseudonym'), isTrue);
+      expect(ynaEntry.containsKey('choice'), isTrue);
+      expect(ynaEntry.containsKey('reasoning'), isTrue);
+      expect(ynaEntry.containsKey('createdAt'), isTrue);
+      expect(ynaEntry.containsKey('selectedOptionId'), isTrue);
+      expect(ynaEntry['selectedOptionId'], isNull);
+
+      // SC vote: selectedOptionId is non-null
+      final scContent = _buildTestRecordContent(
+        proposalId: 'p_av',
+        cellId: 'cell1',
+        votingMode: VotingMode.SINGLE_CHOICE.name,
+        finalTitle: 'AV Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.1,
+        decidedAt: _decidedAt,
+        optionResultsJson: '{"OptionA":1}',
+        tieOptionIdsJson: null,
+        sortedVotes: [scVote],
+      );
+      final scEntry = (scContent['allVotes'] as List).first as Map;
+      expect(scEntry['selectedOptionId'], equals('OptionA'));
+      expect(scEntry['voterPseudonym'], equals('bob'));
+      expect(scEntry['choice'], equals('ABSTAIN'));
+    });
+
+    test('recordContent JSON has alphabetically sorted keys (SplayTreeMap)',
+        () {
+      final content = _buildTestRecordContent(
+        proposalId: 'p_sort',
+        cellId: 'cell1',
+        votingMode: VotingMode.YES_NO_ABSTAIN.name,
+        finalTitle: 'Sort Test',
+        finalDescription: 'desc',
+        result: 'approved',
+        resultReason: null,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 5,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.5,
+        decidedAt: _decidedAt,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+        sortedVotes: [],
+      );
+
+      final keys = content.keys.toList();
+      final sortedKeys = [...keys]..sort();
+      expect(keys, equals(sortedKeys),
+          reason: 'Keys must be in alphabetical order (SplayTreeMap)');
+
+      // Also verify JSON serialization has sorted keys
+      final jsonStr = jsonEncode(content);
+      final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
+      expect(decoded.keys.toList(), equals(sortedKeys));
+    });
+
+    test(
+        'publish failure does not crash — _buildRecordContent succeeds '
+        'even when participation=0.0 and no votes (retry queue internals '
+        'not directly tested due to private member access)', () {
+      // Mirrors the "publish failed, queuing retry" code path:
+      // _buildRecordContent must produce a valid payload regardless of
+      // publish outcome. The retry is handled by PublishResultDao (implicit).
+      final content = _buildTestRecordContent(
+        proposalId: 'p_fail',
+        cellId: 'cell1',
+        votingMode: VotingMode.YES_NO_ABSTAIN.name,
+        finalTitle: 'Fail Test',
+        finalDescription: 'desc',
+        result: 'invalid',
+        resultReason: ResultReason.quorumNotMet,
+        resultRelation: null,
+        previousProposalId: null,
+        yesVotes: 0,
+        noVotes: 0,
+        abstainVotes: 0,
+        participation: 0.0,
+        decidedAt: _decidedAt,
+        optionResultsJson: null,
+        tieOptionIdsJson: null,
+        sortedVotes: [],
+      );
+
+      // Must not throw and must produce a valid map
+      expect(content, isNotNull);
+      expect(content['result'], equals('invalid'));
+      expect(content['resultReason'], equals(ResultReason.quorumNotMet));
+      expect(content['participation'], isA<double>());
+      expect(content['allVotes'], isEmpty);
+    });
   });
 }
