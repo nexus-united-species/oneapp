@@ -1568,34 +1568,15 @@ class ProposalService {
     updated.add(vote);
     _votes[proposalId] = updated;
 
-    // Phase 4.7a1: SC/CC-Options-Votes (selectedOptionId != null)
-    // dürfen NICHT über den alten Wire-Pfad publiziert werden, weil
-    // andere Geräte sie sonst als choice=ABSTAIN +
-    // selectedOptionId=null empfangen würden — was dort eine echte
-    // Enthaltung statt einer Options-Stimme wäre. Das wäre Daten-
-    // korruption. Phase 4.7a2 erweitert den Wire-Pfad.
-    //
-    // YES_NO_ABSTAIN-Votes und SC/CC-Enthaltungen (selectedOptionId
-    // == null) werden weiterhin publiziert.
-    final shouldDeferWirePublish =
-        selectedOptionId != null &&
-        p.votingMode != VotingMode.YES_NO_ABSTAIN;
-
-    if (shouldDeferWirePublish) {
-      print('[VOTE-WIRE-DEFERRED] $proposalId selectedOptionId='
-          '$selectedOptionId stored locally; wire support follows '
-          'in Phase 4.7a2');
-    } else {
-      final voteResult = await _publishVoteToNostr(
-        proposalId: proposalId,
-        cellId: p.cellId,
-        vote: vote,
-      );
-      final published = voteResult.status == PublishResultStatus.accepted ||
-          voteResult.status == PublishResultStatus.partial;
-      if (!published) {
-        print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
-      }
+    final voteResult = await _publishVoteToNostr(
+      proposalId: proposalId,
+      cellId: p.cellId,
+      vote: vote,
+    );
+    final published = voteResult.status == PublishResultStatus.accepted ||
+        voteResult.status == PublishResultStatus.partial;
+    if (!published) {
+      print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
     }
 
     await addAuditEntry(AuditLogEntry(
@@ -2158,6 +2139,11 @@ class ProposalService {
         voterPseudonym: content['voterPseudonym'] as String? ?? '',
         choice: choice,
         reasoning: content['reasoning'] as String?,
+        // Phase 4.7a2: read selectedOptionId from content with
+        // defensive null default. Legacy events (pre-4.7a2) won't
+        // have this key — null is the correct fallback (=
+        // abstention for SC/CC, harmless for YES_NO_ABSTAIN).
+        selectedOptionId: content['selectedOptionId'] as String?,
         createdAt: DateTime.fromMillisecondsSinceEpoch(
             (content['createdAt'] as int? ?? event.createdAt) * 1000,
             isUtc: true),
@@ -2207,6 +2193,9 @@ class ProposalService {
           'choice': vote.choice.name,
           if (vote.reasoning != null) 'reasoning': vote.reasoning,
           if (isChange && existing != null) 'previousChoice': existing.choice.name,
+          if (vote.selectedOptionId != null) 'selectedOptionId': vote.selectedOptionId,
+          if (isChange && existing != null && existing.selectedOptionId != null)
+            'previousSelectedOptionId': existing.selectedOptionId,
         },
         nostrEventId: event.id,
       ));
@@ -2550,6 +2539,7 @@ class ProposalService {
       'voterPseudonym': vote.voterPseudonym,
       'createdAt': vote.createdAt.millisecondsSinceEpoch ~/ 1000,
       if (vote.reasoning != null) 'reasoning': vote.reasoning,
+      if (vote.selectedOptionId != null) 'selectedOptionId': vote.selectedOptionId,
     });
   }
 

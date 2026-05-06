@@ -615,6 +615,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             (params['createdAt'] as int) * 1000,
             isUtc: true),
         reasoning: params['reasoning'] as String?,
+        selectedOptionId: params['selectedOptionId'] as String?,
       );
     };
 

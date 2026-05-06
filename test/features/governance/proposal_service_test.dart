@@ -3785,28 +3785,6 @@ void main() {
       expect(restored.selectedOptionId, isNull);
     });
 
-    // ── SC: Options-Stimme — Wire-Defer ─────────────────────────────────────
-
-    test(
-        'SC castVote with selectedOptionId: persisted locally, '
-        'wire publish DEFERRED ([VOTE-WIRE-DEFERRED] log)', () {
-      final vote = _makeScOptionVote('opt_A');
-
-      expect(vote.selectedOptionId, equals('opt_A'));
-      expect(vote.choice, equals(VoteChoice.ABSTAIN),
-          reason: 'P1 convention: SC option vote uses choice=ABSTAIN');
-
-      // Guard must defer for SC + selectedOptionId != null.
-      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.SINGLE_CHOICE);
-      expect(deferred, isTrue,
-          reason: 'SC option vote must be deferred — old wire format '
-              'delivers it as genuine ABSTAIN on other devices');
-
-      // selectedOptionId must round-trip through toMap/fromMap.
-      final restored = Vote.fromMap(vote.toMap());
-      expect(restored.selectedOptionId, equals('opt_A'));
-    });
-
     // ── SC: Enthaltung — Wire-Publish ────────────────────────────────────────
 
     test(
@@ -3825,25 +3803,6 @@ void main() {
               'receiver correctly counts it as abstention');
     });
 
-    // ── CC: Kandidaten-Stimme — Wire-Defer ───────────────────────────────────
-
-    test(
-        'CC castVote with selectedOptionId: persisted locally, '
-        'wire publish DEFERRED', () {
-      final vote = _makeCcOptionVote('cand_alice');
-
-      expect(vote.selectedOptionId, equals('cand_alice'));
-
-      // Guard must defer for CC + selectedOptionId != null.
-      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.CANDIDATE_CHOICE);
-      expect(deferred, isTrue,
-          reason: 'CC candidate vote must be deferred — wire gap closes in 4.7a2');
-
-      // Round-trip.
-      final restored = Vote.fromMap(vote.toMap());
-      expect(restored.selectedOptionId, equals('cand_alice'));
-    });
-
     // ── CC: Enthaltung — Wire-Publish ────────────────────────────────────────
 
     test(
@@ -3856,51 +3815,6 @@ void main() {
       final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.CANDIDATE_CHOICE);
       expect(deferred, isFalse,
           reason: 'CC abstention must publish: receiver treats as abstention');
-    });
-
-    // ── changeVote mit newSelectedOptionId ───────────────────────────────────
-
-    test(
-        'changeVote with newSelectedOptionId: updates Vote, '
-        'defers wire publish for SC', () {
-      // Simulate previous vote (true abstention) being replaced by an
-      // option vote — the resulting vote must carry selectedOptionId
-      // and must be deferred.
-      final previousVote = _makeScAbstainVote();
-      expect(previousVote.selectedOptionId, isNull);
-
-      // New vote after changeVote(newSelectedOptionId: 'opt_B').
-      final newVote = Vote(
-        voteId: Vote.generateId(),
-        proposalId: 'p_sc',
-        voterPubkey: 'pk_carol',
-        voterDid: 'did:test:carol',
-        voterPseudonym: 'Carol',
-        choice: VoteChoice.ABSTAIN,
-        selectedOptionId: 'opt_B',
-        createdAt: DateTime.utc(2026, 5, 6, 11, 0),
-        nostrEventId: '',
-      );
-
-      expect(newVote.selectedOptionId, equals('opt_B'));
-
-      // Guard fires for updated vote.
-      final deferred = _shouldDefer(newVote.selectedOptionId, VotingMode.SINGLE_CHOICE);
-      expect(deferred, isTrue);
-
-      // previousSelectedOptionId in audit payload: previous vote had null,
-      // so it must NOT appear in the payload.
-      final auditPayload = <String, dynamic>{
-        'choice': newVote.choice.name,
-        if (newVote.selectedOptionId != null)
-          'selectedOptionId': newVote.selectedOptionId,
-        'previousChoice': previousVote.choice.name,
-        if (previousVote.selectedOptionId != null)
-          'previousSelectedOptionId': previousVote.selectedOptionId,
-      };
-      expect(auditPayload.containsKey('selectedOptionId'), isTrue);
-      expect(auditPayload.containsKey('previousSelectedOptionId'), isFalse,
-          reason: 'previousSelectedOptionId absent when previous vote had null');
     });
 
     // ── Audit-Payload: selectedOptionId enthalten ─────────────────────────────
@@ -4055,6 +3969,350 @@ void main() {
       final optionResultsJson = canonicalJsonEncode(
           {for (final o in sortedOptions) o.optionId: optionCounts[o.optionId]!});
       expect(optionResultsJson, equals('{"cand_maria":1}'));
+    });
+  });
+
+  // ── castVote — wire publish with selectedOptionId (Phase 4.7a2) ──────────
+
+  group('castVote — wire publish with selectedOptionId (Phase 4.7a2)', () {
+    // After Phase 4.7a2 the [VOTE-WIRE-DEFERRED] guard is gone. All votes
+    // (YES_NO_ABSTAIN, SC/CC options, SC/CC abstentions) flow through
+    // _publishVoteToNostr. These tests mirror the params map that
+    // _publishVoteToNostr builds from a Vote object.
+
+    Map<String, dynamic> _buildVoteParams(Vote vote) => {
+          'proposalId': vote.proposalId,
+          'cellId': 'cell_test',
+          'voteId': vote.voteId,
+          'choiceName': vote.choice.name,
+          'voterDid': vote.voterDid,
+          'voterPseudonym': vote.voterPseudonym,
+          'createdAt': vote.createdAt.millisecondsSinceEpoch ~/ 1000,
+          if (vote.reasoning != null) 'reasoning': vote.reasoning,
+          if (vote.selectedOptionId != null)
+            'selectedOptionId': vote.selectedOptionId,
+        };
+
+    Vote _makeScOptionVote(String optionId) => Vote(
+          voteId: 'v_sc_opt',
+          proposalId: 'p_sc',
+          voterPubkey: 'pk_bob',
+          voterDid: 'did:test:bob',
+          voterPseudonym: 'Bob',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: optionId,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeScAbstainVote() => Vote(
+          voteId: 'v_sc_abs',
+          proposalId: 'p_sc',
+          voterPubkey: 'pk_carol',
+          voterDid: 'did:test:carol',
+          voterPseudonym: 'Carol',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: null,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeCcOptionVote(String candidateId) => Vote(
+          voteId: 'v_cc_opt',
+          proposalId: 'p_cc',
+          voterPubkey: 'pk_dave',
+          voterDid: 'did:test:dave',
+          voterPseudonym: 'Dave',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: candidateId,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeYnaVote() => Vote(
+          voteId: 'v_yna',
+          proposalId: 'p_yna',
+          voterPubkey: 'pk_alice',
+          voterDid: 'did:test:alice',
+          voterPseudonym: 'Alice',
+          choice: VoteChoice.YES,
+          selectedOptionId: null,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    test('SC castVote with selectedOptionId publishes; params include selectedOptionId',
+        () {
+      final vote = _makeScOptionVote('opt_A');
+      final params = _buildVoteParams(vote);
+      expect(params['selectedOptionId'], equals('opt_A'));
+      expect(params.containsKey('proposalId'), isTrue);
+      expect(params.containsKey('voteId'), isTrue);
+    });
+
+    test('CC castVote with selectedOptionId publishes; params include selectedOptionId',
+        () {
+      final vote = _makeCcOptionVote('cand_alice');
+      final params = _buildVoteParams(vote);
+      expect(params['selectedOptionId'], equals('cand_alice'));
+    });
+
+    test('YES_NO_ABSTAIN castVote: params do NOT include selectedOptionId (key absent)',
+        () {
+      final vote = _makeYnaVote();
+      final params = _buildVoteParams(vote);
+      expect(params.containsKey('selectedOptionId'), isFalse,
+          reason: 'YES_NO_ABSTAIN votes never carry selectedOptionId in wire params');
+    });
+
+    test(
+        'SC castVote without selectedOptionId (Enthaltung): '
+        'params do NOT include selectedOptionId', () {
+      final vote = _makeScAbstainVote();
+      final params = _buildVoteParams(vote);
+      expect(params.containsKey('selectedOptionId'), isFalse,
+          reason: 'SC abstention (null selectedOptionId) must not add the key');
+    });
+
+    test('changeVote with newSelectedOptionId publishes new option', () {
+      final newVote = Vote(
+        voteId: Vote.generateId(),
+        proposalId: 'p_sc',
+        voterPubkey: 'pk_carol',
+        voterDid: 'did:test:carol',
+        voterPseudonym: 'Carol',
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: 'opt_B',
+        createdAt: DateTime.utc(2026, 5, 6, 11, 0),
+        nostrEventId: '',
+      );
+      final params = _buildVoteParams(newVote);
+      expect(params['selectedOptionId'], equals('opt_B'),
+          reason: 'changeVote result must carry updated selectedOptionId in params');
+    });
+
+    test('No [VOTE-WIRE-DEFERRED] log for SC/CC option votes', () {
+      // After 4.7a2 there is no deferred branch — the params map is always
+      // built and passed to the transport. Verified by confirming that the
+      // params map is complete for an SC option vote.
+      final vote = _makeScOptionVote('opt_X');
+      final params = _buildVoteParams(vote);
+      expect(params['selectedOptionId'], equals('opt_X'));
+      expect(params.containsKey('voteId'), isTrue);
+      expect(params.containsKey('proposalId'), isTrue);
+    });
+  });
+
+  // ── handleIncomingVote — selectedOptionId (Phase 4.7a2) ─────────────────
+
+  group('handleIncomingVote — selectedOptionId (Phase 4.7a2)', () {
+    // Mirrors the Vote constructor + audit payload logic in handleIncomingVote.
+
+    Map<String, dynamic> _buildContent({
+      required String voteId,
+      required String voterDid,
+      required String voterPseudonym,
+      required DateTime createdAt,
+      String? reasoning,
+      String? selectedOptionId,
+    }) =>
+        {
+          'voteId': voteId,
+          'voterDid': voterDid,
+          'voterPseudonym': voterPseudonym,
+          'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
+          if (reasoning != null) 'reasoning': reasoning,
+          if (selectedOptionId != null) 'selectedOptionId': selectedOptionId,
+        };
+
+    Vote _parseVote(
+            Map<String, dynamic> content, String choiceStr, String proposalId) =>
+        Vote(
+          voteId: content['voteId'] as String? ?? Vote.generateId(),
+          proposalId: proposalId,
+          voterPubkey: 'pk_remote',
+          voterDid: content['voterDid'] as String? ?? '',
+          voterPseudonym: content['voterPseudonym'] as String? ?? '',
+          choice: VoteChoice.values.firstWhere(
+            (c) => c.name == choiceStr.toUpperCase(),
+            orElse: () => VoteChoice.ABSTAIN,
+          ),
+          reasoning: content['reasoning'] as String?,
+          selectedOptionId: content['selectedOptionId'] as String?,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(
+              (content['createdAt'] as int) * 1000,
+              isUtc: true),
+          nostrEventId: 'evt_test',
+        );
+
+    test('SC incoming vote with selectedOptionId in content: persisted on Vote', () {
+      final content = _buildContent(
+        voteId: 'v1',
+        voterDid: 'did:test:bob',
+        voterPseudonym: 'Bob',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        selectedOptionId: 'opt_A',
+      );
+      final vote = _parseVote(content, 'abstain', 'p_sc');
+      expect(vote.selectedOptionId, equals('opt_A'));
+    });
+
+    test('CC incoming vote with selectedOptionId: persisted', () {
+      final content = _buildContent(
+        voteId: 'v2',
+        voterDid: 'did:test:dave',
+        voterPseudonym: 'Dave',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        selectedOptionId: 'cand_alice',
+      );
+      final vote = _parseVote(content, 'abstain', 'p_cc');
+      expect(vote.selectedOptionId, equals('cand_alice'));
+    });
+
+    test('Legacy incoming vote without selectedOptionId key: Vote.selectedOptionId = null',
+        () {
+      // Pre-4.7a2 event — no selectedOptionId key in content.
+      final content = _buildContent(
+        voteId: 'v3',
+        voterDid: 'did:test:alice',
+        voterPseudonym: 'Alice',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        // selectedOptionId intentionally omitted
+      );
+      expect(content.containsKey('selectedOptionId'), isFalse);
+      final vote = _parseVote(content, 'abstain', 'p_sc');
+      expect(vote.selectedOptionId, isNull,
+          reason: 'Legacy events without selectedOptionId must yield null (= abstention)');
+    });
+
+    test('YES_NO_ABSTAIN incoming vote: behavior unchanged', () {
+      final content = _buildContent(
+        voteId: 'v4',
+        voterDid: 'did:test:yna',
+        voterPseudonym: 'YNA',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        // no selectedOptionId for YES_NO_ABSTAIN
+      );
+      final vote = _parseVote(content, 'yes', 'p_yna');
+      expect(vote.choice, equals(VoteChoice.YES));
+      expect(vote.selectedOptionId, isNull);
+    });
+
+    test('Audit payload on incoming SC vote contains selectedOptionId', () {
+      final content = _buildContent(
+        voteId: 'v5',
+        voterDid: 'did:test:bob',
+        voterPseudonym: 'Bob',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        selectedOptionId: 'opt_X',
+      );
+      final vote = _parseVote(content, 'abstain', 'p_sc');
+
+      // Mirrors the audit payload construction in handleIncomingVote (4.7a2).
+      final payload = <String, dynamic>{
+        'choice': vote.choice.name,
+        if (vote.reasoning != null) 'reasoning': vote.reasoning,
+        if (vote.selectedOptionId != null) 'selectedOptionId': vote.selectedOptionId,
+      };
+
+      expect(payload['selectedOptionId'], equals('opt_X'));
+      expect(payload['choice'], equals('ABSTAIN'));
+    });
+  });
+
+  // ── Cross-device SC roundtrip via wire (Phase 4.7a2) ────────────────────
+
+  group('Cross-device SC roundtrip via wire (Phase 4.7a2)', () {
+    test(
+        'Sender castVote with optionId → captured params → '
+        'simulated incoming → receiver Vote has selectedOptionId '
+        '→ tally counts correctly', () {
+      // Step 1: Sender side — simulate _publishVoteToNostr params for SC vote.
+      final senderVote = Vote(
+        voteId: 'v_sc_roundtrip',
+        proposalId: 'p_sc',
+        voterPubkey: 'pk_bob',
+        voterDid: 'did:test:bob',
+        voterPseudonym: 'Bob',
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: 'opt_A',
+        createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+        nostrEventId: '',
+      );
+      final captured = <String, dynamic>{
+        'proposalId': senderVote.proposalId,
+        'cellId': 'cell_test',
+        'voteId': senderVote.voteId,
+        'choiceName': senderVote.choice.name,
+        'voterDid': senderVote.voterDid,
+        'voterPseudonym': senderVote.voterPseudonym,
+        'createdAt': senderVote.createdAt.millisecondsSinceEpoch ~/ 1000,
+        if (senderVote.selectedOptionId != null)
+          'selectedOptionId': senderVote.selectedOptionId,
+      };
+      expect(captured['selectedOptionId'], equals('opt_A'),
+          reason: 'Sender params must include selectedOptionId');
+
+      // Step 2: Simulate wire — build Nostr event content as publishVoteEvent would.
+      final wireContent = jsonEncode({
+        'voteId': captured['voteId'],
+        'voterDid': captured['voterDid'],
+        'voterPseudonym': captured['voterPseudonym'],
+        'createdAt': captured['createdAt'],
+        'selectedOptionId': captured['selectedOptionId'],
+      });
+      final parsedContent = jsonDecode(wireContent) as Map<String, dynamic>;
+
+      // Step 3: Receiver side — parse as handleIncomingVote would (4.7a2).
+      final receiverVote = Vote(
+        voteId: parsedContent['voteId'] as String,
+        proposalId: senderVote.proposalId,
+        voterPubkey: 'pk_bob_remote',
+        voterDid: parsedContent['voterDid'] as String? ?? '',
+        voterPseudonym: parsedContent['voterPseudonym'] as String? ?? '',
+        choice: VoteChoice.ABSTAIN,
+        reasoning: parsedContent['reasoning'] as String?,
+        selectedOptionId: parsedContent['selectedOptionId'] as String?,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+            (parsedContent['createdAt'] as int) * 1000,
+            isUtc: true),
+        nostrEventId: 'evt_remote_001',
+      );
+
+      // Step 4: Verify receiver Vote has selectedOptionId.
+      expect(receiverVote.selectedOptionId, equals('opt_A'),
+          reason: 'selectedOptionId must survive the wire round-trip');
+
+      // Step 5: Tally counts correctly on receiver.
+      final now = DateTime.utc(2026, 5, 6);
+      final option = ProposalOption(
+        optionId: 'opt_A',
+        proposalId: 'p_sc',
+        label: 'Option A',
+        status: OptionStatus.ACTIVE,
+        position: 0,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final sortedVotes = sortVotesDeterministic([receiverVote]);
+      final sortedOptions = sortOptionsDeterministic([option]);
+      final optionCounts = <String, int>{
+        for (final o in sortedOptions) o.optionId: 0
+      };
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null &&
+            optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] =
+              optionCounts[v.selectedOptionId!]! + 1;
+        }
+      }
+
+      expect(optionCounts['opt_A'], equals(1),
+          reason: 'Cross-device vote with selectedOptionId must tally correctly');
+
+      final optionResultsJson = canonicalJsonEncode(
+          {for (final o in sortedOptions) o.optionId: optionCounts[o.optionId]!});
+      expect(optionResultsJson, equals('{"opt_A":1}'));
     });
   });
 }

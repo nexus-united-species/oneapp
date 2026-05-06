@@ -895,12 +895,13 @@ class NostrTransport implements MessageTransport {
     required String voterPseudonym,
     required DateTime createdAt,
     String? reasoning,
+    String? selectedOptionId,
   }) async {
     final voterPubkey = _keys!.publicKeyHex;
     // Use dash separator instead of colon: some relays mishandle ':' in d-tags.
     final dTag = 'vote-$proposalId-$voterPubkey';
     print('[VOTE-PUB] === START === voteId=$voteId proposalId=$proposalId '
-        'choice=$choiceName');
+        'choice=$choiceName optionId=${selectedOptionId ?? "-"}');
     final tags = <List<String>>[
       ['d', dTag],
       ['t', 'nexus-vote'],
@@ -915,6 +916,7 @@ class NostrTransport implements MessageTransport {
       'voterPseudonym': voterPseudonym,
       'createdAt': createdAt.millisecondsSinceEpoch ~/ 1000,
       if (reasoning != null) 'reasoning': reasoning,
+      if (selectedOptionId != null) 'selectedOptionId': selectedOptionId,
     };
     final event = NostrEvent.create(
       keys: _keys!,
