@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart' as pkg_crypto;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -2198,6 +2197,11 @@ class ProposalService {
         return;
       }
 
+      // Phase 4.5c: read v1.3 fields with defensive null defaults.
+      // Legacy records (pre-4.5b senders) won't have these keys;
+      // null is the correct fallback.
+      // allVotes is intentionally NOT reconstructed in 4.5c —
+      // votes are tracked separately via Kind-31011.
       final record = DecisionRecord(
         recordId: DecisionRecord.generateId(),
         proposalId: proposalId,
@@ -2212,21 +2216,38 @@ class ProposalService {
         decidedAt: DateTime.fromMillisecondsSinceEpoch(
             content['decidedAt'] as int? ?? 0,
             isUtc: true),
-        allVotes: const [], // votes are tracked separately via Kind-31011
+        allVotes: const [],
         contentHash: event.tagValue('content_hash') ?? '',
         previousDecisionHash: event.tagValue('prev_hash'),
         nostrEventId: event.id,
+        // ── Phase 4.5c: v1.3 fields ─────────────────────────────
+        resultReason: content['resultReason'] as String?,
+        resultRelation: content['resultRelation'] as String?,
+        previousProposalId: content['previousProposalId'] as String?,
+        optionResultsJson: content['optionResultsJson'] as String?,
+        tieOptionIdsJson: content['tieOptionIdsJson'] as String?,
       );
 
       await _saveDecisionRecordToDb(record);
       print('[PROPOSAL] Decision record saved from Nostr for $proposalId');
+
+      // votingMode-Fallback: read from content; fallback used inside
+      // localProposal block only (localProposal.votingMode is safe there).
+      final receivedModeStr = content['votingMode'] as String?;
 
       // Bug B fix: update the local proposal with the authoritative result
       // values from the received decision record so that all devices show the
       // same outcome regardless of which device ran finalizeProposal().
       final localProposal = _proposals[proposalId];
       if (localProposal != null) {
-        print('[PROPOSAL] Updating local proposal with decision record values');
+        // With localProposal: use its votingMode as fallback when content
+        // doesn't include votingMode (legacy pre-4.5b senders).
+        final mode = receivedModeStr != null
+            ? parseVotingMode(receivedModeStr)
+            : localProposal.votingMode;
+
+        print('[PROPOSAL] Updating local proposal from decision record '
+            '(mode=${mode.name})');
         print('[PROPOSAL]   Y=${record.yesVotes} N=${record.noVotes} '
             'A=${record.abstainVotes} Participation=${record.participation} '
             'Result=${record.result}');
@@ -2234,10 +2255,18 @@ class ProposalService {
         localProposal.status = ProposalStatus.DECIDED;
         localProposal.decidedAt = record.decidedAt;
         localProposal.resultSummary = record.result;
-        localProposal.resultYes = record.yesVotes;
-        localProposal.resultNo = record.noVotes;
-        localProposal.resultAbstain = record.abstainVotes;
         localProposal.resultParticipation = record.participation;
+        localProposal.resultAbstain = record.abstainVotes;
+
+        // Only YES_NO_ABSTAIN has meaningful yes/no semantics on the
+        // legacy result_yes/result_no columns. For SC/CC the truth
+        // lives in optionResultsJson on the persisted DecisionRecord;
+        // resultYes/resultNo stay at whatever value they had locally
+        // (typically 0).
+        if (mode == VotingMode.YES_NO_ABSTAIN) {
+          localProposal.resultYes = record.yesVotes;
+          localProposal.resultNo = record.noVotes;
+        }
 
         await _saveProposalToDb(localProposal);
 
@@ -2252,10 +2281,14 @@ class ProposalService {
           timestamp: DateTime.now().toUtc(),
           payload: {
             'result': record.result,
+            'resultReason': record.resultReason,
+            'votingMode': receivedModeStr,
             'yes': record.yesVotes,
             'no': record.noVotes,
             'abstain': record.abstainVotes,
             'participation': record.participation,
+            'optionResultsJson': record.optionResultsJson,
+            'tieOptionIdsJson': record.tieOptionIdsJson,
             'source': 'decision_record_received',
           },
           nostrEventId: event.id,
@@ -2494,20 +2527,6 @@ class ProposalService {
       'contentHash': contentHash,
       'previousDecisionHash': previousDecisionHash,
     });
-  }
-
-  // ── Hash calculation ────────────────────────────────────────────────────────
-
-  /// Deterministic SHA-256 hash of the content map.
-  ///
-  /// Keys are sorted alphabetically (SplayTreeMap), serialised to canonical
-  /// JSON (utf8), then SHA-256 hashed. This is stable across all devices.
-  String _calculateContentHash(Map<String, dynamic> content) {
-    final sorted = SplayTreeMap<String, dynamic>.from(content);
-    final jsonStr = jsonEncode(sorted);
-    final bytes = utf8.encode(jsonStr);
-    final digest = pkg_crypto.sha256.convert(bytes);
-    return digest.toString();
   }
 
   /// Returns the `content_hash` of the most recent DecisionRecord for a cell,

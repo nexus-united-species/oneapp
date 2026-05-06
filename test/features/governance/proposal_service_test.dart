@@ -3002,4 +3002,442 @@ void main() {
       expect(content['allVotes'], isEmpty);
     });
   });
+
+  // ── handleIncomingDecisionRecord — v1.3 fields (Phase 4.5c) ──────────────
+
+  group('handleIncomingDecisionRecord — v1.3 fields (Phase 4.5c)', () {
+    // Local mirror of the DecisionRecord construction logic inside
+    // handleIncomingDecisionRecord. Production method is async/service-bound;
+    // algorithm is verified here as executable spec — same approach as 4.5b.
+    DecisionRecord _parseIncomingRecord(
+        Map<String, dynamic> content, String eventId) {
+      return DecisionRecord(
+        recordId: DecisionRecord.generateId(),
+        proposalId: content['proposalId'] as String? ?? '',
+        cellId: content['cellId'] as String? ?? '',
+        finalTitle: content['finalTitle'] as String? ?? '',
+        finalDescription: content['finalDescription'] as String? ?? '',
+        result: content['result'] as String? ?? 'invalid',
+        yesVotes: content['yesVotes'] as int? ?? 0,
+        noVotes: content['noVotes'] as int? ?? 0,
+        abstainVotes: content['abstainVotes'] as int? ?? 0,
+        participation: (content['participation'] as num?)?.toDouble() ?? 0.0,
+        decidedAt: DateTime.fromMillisecondsSinceEpoch(
+            content['decidedAt'] as int? ?? 0,
+            isUtc: true),
+        allVotes: const [],
+        contentHash: content['content_hash'] as String? ?? '',
+        previousDecisionHash: content['prev_hash'] as String?,
+        nostrEventId: eventId,
+        // Phase 4.5c: v1.3 fields
+        resultReason: content['resultReason'] as String?,
+        resultRelation: content['resultRelation'] as String?,
+        previousProposalId: content['previousProposalId'] as String?,
+        optionResultsJson: content['optionResultsJson'] as String?,
+        tieOptionIdsJson: content['tieOptionIdsJson'] as String?,
+      );
+    }
+
+    // Simulate the mode-aware localProposal update.
+    // Returns a Proposal mutated exactly as handleIncomingDecisionRecord does.
+    Proposal _applyModeAwareUpdate(
+        Proposal localProposal, DecisionRecord record, VotingMode mode) {
+      localProposal.status = ProposalStatus.DECIDED;
+      localProposal.decidedAt = record.decidedAt;
+      localProposal.resultSummary = record.result;
+      localProposal.resultParticipation = record.participation;
+      localProposal.resultAbstain = record.abstainVotes;
+      if (mode == VotingMode.YES_NO_ABSTAIN) {
+        localProposal.resultYes = record.yesVotes;
+        localProposal.resultNo = record.noVotes;
+      }
+      return localProposal;
+    }
+
+    final _decidedAt = DateTime.utc(2026, 5, 6, 9, 0, 0);
+
+    // ── YES_NO_ABSTAIN ────────────────────────────────────────────────────────
+
+    test(
+        'YES_NO_ABSTAIN incoming: yes/no/abstain auf '
+        'localProposal gespiegelt, resultReason persistiert', () {
+      final content = {
+        'proposalId': 'p_yna_in',
+        'cellId': 'cell1',
+        'votingMode': 'YES_NO_ABSTAIN',
+        'finalTitle': 'YNA Title',
+        'finalDescription': 'desc',
+        'result': 'approved',
+        'resultReason': null,
+        'resultRelation': null,
+        'previousProposalId': null,
+        'yesVotes': 7,
+        'noVotes': 2,
+        'abstainVotes': 1,
+        'participation': 0.8,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': null,
+        'tieOptionIdsJson': null,
+      };
+
+      final record = _parseIncomingRecord(content, 'event_yna_1');
+
+      expect(record.yesVotes, equals(7));
+      expect(record.noVotes, equals(2));
+      expect(record.abstainVotes, equals(1));
+      expect(record.participation, equals(0.8));
+      expect(record.result, equals('approved'));
+      expect(record.resultReason, isNull);
+      expect(record.allVotes, isEmpty);
+
+      // Mode-aware update: YES_NO_ABSTAIN → yes/no mirrored
+      final localProposal = Proposal(
+        id: 'p_yna_in',
+        cellId: 'cell1',
+        creatorDid: 'did:test:alice',
+        creatorPseudonym: 'Alice',
+        title: 'YNA',
+        description: '',
+        createdAt: DateTime.utc(2026, 5, 1),
+        votingMode: VotingMode.YES_NO_ABSTAIN,
+      );
+      _applyModeAwareUpdate(localProposal, record,
+          parseVotingMode(content['votingMode'] as String?));
+
+      expect(localProposal.resultYes, equals(7));
+      expect(localProposal.resultNo, equals(2));
+      expect(localProposal.resultAbstain, equals(1));
+      expect(localProposal.status, equals(ProposalStatus.DECIDED));
+    });
+
+    // ── SINGLE_CHOICE ─────────────────────────────────────────────────────────
+
+    test(
+        'SINGLE_CHOICE incoming: optionResultsJson persistiert, '
+        'localProposal.resultYes/resultNo BLEIBEN auf altem Wert', () {
+      final content = {
+        'proposalId': 'p_sc_in',
+        'cellId': 'cell1',
+        'votingMode': 'SINGLE_CHOICE',
+        'finalTitle': 'SC Title',
+        'finalDescription': 'desc',
+        'result': 'approved',
+        'resultReason': null,
+        'resultRelation': null,
+        'previousProposalId': null,
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': 1,
+        'participation': 0.6,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': '{"A":3,"B":2}',
+        'tieOptionIdsJson': null,
+      };
+
+      final record = _parseIncomingRecord(content, 'event_sc_1');
+
+      expect(record.optionResultsJson, equals('{"A":3,"B":2}'));
+      expect(record.tieOptionIdsJson, isNull);
+      expect(record.yesVotes, equals(0));
+      expect(record.noVotes, equals(0));
+      expect(record.allVotes, isEmpty);
+
+      // Mode-aware update: SC → resultYes/resultNo NICHT überschrieben
+      final localProposal = Proposal(
+        id: 'p_sc_in',
+        cellId: 'cell1',
+        creatorDid: 'did:test:bob',
+        creatorPseudonym: 'Bob',
+        title: 'SC',
+        description: '',
+        createdAt: DateTime.utc(2026, 5, 1),
+        votingMode: VotingMode.SINGLE_CHOICE,
+        resultYes: 0,
+        resultNo: 0,
+      );
+      _applyModeAwareUpdate(localProposal, record, VotingMode.SINGLE_CHOICE);
+
+      // yes/no columns stay at their pre-existing local value
+      expect(localProposal.resultYes, equals(0));
+      expect(localProposal.resultNo, equals(0));
+      expect(localProposal.resultAbstain, equals(1));
+      expect(localProposal.resultParticipation, equals(0.6));
+      expect(localProposal.resultSummary, equals('approved'));
+      expect(localProposal.status, equals(ProposalStatus.DECIDED));
+    });
+
+    // ── CANDIDATE_CHOICE ──────────────────────────────────────────────────────
+
+    test(
+        'CANDIDATE_CHOICE incoming: tieOptionIdsJson persistiert '
+        'wenn TIE/WINNER_WITHDRAWN, localProposal.resultYes/resultNo '
+        'bleiben auf altem Wert', () {
+      final content = {
+        'proposalId': 'p_cc_in',
+        'cellId': 'cell1',
+        'votingMode': 'CANDIDATE_CHOICE',
+        'finalTitle': 'CC Title',
+        'finalDescription': 'desc',
+        'result': 'invalid',
+        'resultReason': ResultReason.tieRequiresRunoff,
+        'resultRelation': null,
+        'previousProposalId': null,
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': 0,
+        'participation': 0.5,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': '{"Alice":3,"Bob":3}',
+        'tieOptionIdsJson': '["Alice","Bob"]',
+      };
+
+      final record = _parseIncomingRecord(content, 'event_cc_1');
+
+      expect(record.tieOptionIdsJson, equals('["Alice","Bob"]'));
+      expect(record.optionResultsJson, equals('{"Alice":3,"Bob":3}'));
+      expect(record.resultReason, equals(ResultReason.tieRequiresRunoff));
+      expect(record.result, equals('invalid'));
+      expect(record.allVotes, isEmpty);
+
+      // Mode-aware update: CC → yes/no not touched
+      final localProposal = Proposal(
+        id: 'p_cc_in',
+        cellId: 'cell1',
+        creatorDid: 'did:test:carol',
+        creatorPseudonym: 'Carol',
+        title: 'CC',
+        description: '',
+        createdAt: DateTime.utc(2026, 5, 1),
+        votingMode: VotingMode.CANDIDATE_CHOICE,
+        resultYes: 0,
+        resultNo: 0,
+      );
+      _applyModeAwareUpdate(localProposal, record, VotingMode.CANDIDATE_CHOICE);
+
+      expect(localProposal.resultYes, equals(0));
+      expect(localProposal.resultNo, equals(0));
+      expect(localProposal.resultSummary, equals('invalid'));
+    });
+
+    // ── resultReason persistence ──────────────────────────────────────────────
+
+    test(
+        'Incoming record with resultReason=QUORUM_NOT_MET: '
+        'persistiert auf DecisionRecord', () {
+      final content = {
+        'proposalId': 'p_qnm',
+        'cellId': 'cell1',
+        'votingMode': 'YES_NO_ABSTAIN',
+        'finalTitle': 'Quorum Fail',
+        'finalDescription': '',
+        'result': 'invalid',
+        'resultReason': ResultReason.quorumNotMet,
+        'resultRelation': null,
+        'previousProposalId': null,
+        'yesVotes': 1,
+        'noVotes': 0,
+        'abstainVotes': 0,
+        'participation': 0.05,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': null,
+        'tieOptionIdsJson': null,
+      };
+
+      final record = _parseIncomingRecord(content, 'event_qnm_1');
+
+      expect(record.resultReason, equals(ResultReason.quorumNotMet));
+      expect(record.result, equals('invalid'));
+    });
+
+    // ── Legacy backwards-compatibility ────────────────────────────────────────
+
+    test(
+        'Legacy incoming record without v1.3 fields: alle '
+        'neuen Felder = null, Verhalten unverändert', () {
+      // Pre-4.5b sender: only old fields present
+      final content = {
+        'proposalId': 'p_legacy',
+        'cellId': 'cell1',
+        'finalTitle': 'Legacy',
+        'finalDescription': 'desc',
+        'result': 'approved',
+        'yesVotes': 5,
+        'noVotes': 1,
+        'abstainVotes': 0,
+        'participation': 0.7,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+      };
+
+      final record = _parseIncomingRecord(content, 'event_legacy_1');
+
+      // All v1.3 fields default to null
+      expect(record.resultReason, isNull);
+      expect(record.resultRelation, isNull);
+      expect(record.previousProposalId, isNull);
+      expect(record.optionResultsJson, isNull);
+      expect(record.tieOptionIdsJson, isNull);
+
+      // Legacy YES_NO_ABSTAIN fields unaffected
+      expect(record.yesVotes, equals(5));
+      expect(record.noVotes, equals(1));
+      expect(record.result, equals('approved'));
+      expect(record.allVotes, isEmpty);
+    });
+
+    // ── votingMode-Fallback ───────────────────────────────────────────────────
+
+    test(
+        'Incoming mit votingMode in content: parseVotingMode liefert '
+        'korrekte Mode; kein Zugriff auf localProposal.votingMode nötig',
+        () {
+      // content['votingMode'] vorhanden → parseVotingMode direkt
+      expect(parseVotingMode('SINGLE_CHOICE'), equals(VotingMode.SINGLE_CHOICE));
+      expect(parseVotingMode('CANDIDATE_CHOICE'),
+          equals(VotingMode.CANDIDATE_CHOICE));
+      expect(parseVotingMode('YES_NO_ABSTAIN'), equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    test(
+        'Incoming ohne votingMode aber mit localProposal: '
+        'parseVotingMode-Fallback auf localProposal.votingMode', () {
+      // Simulate: receivedModeStr = null → use localProposal.votingMode
+      final localProposal = Proposal(
+        id: 'p_fallback',
+        cellId: 'cell1',
+        creatorDid: 'did:test:x',
+        creatorPseudonym: 'X',
+        title: 'Fallback',
+        description: '',
+        createdAt: DateTime.utc(2026, 5, 1),
+        votingMode: VotingMode.SINGLE_CHOICE,
+      );
+
+      const String? receivedModeStr = null;
+      final mode = receivedModeStr != null
+          ? parseVotingMode(receivedModeStr)
+          : localProposal.votingMode;
+
+      expect(mode, equals(VotingMode.SINGLE_CHOICE));
+    });
+
+    test(
+        'Incoming ohne votingMode UND ohne localProposal: '
+        'kein Crash, DecisionRecord trotzdem persistiert '
+        '(mode-Fallback YES_NO_ABSTAIN nicht relevant weil '
+        'kein localProposal-Update stattfindet)', () {
+      // No localProposal → the localProposal block is skipped entirely.
+      // parseVotingMode(null) is the safe fallback in the code comment
+      // but is never actually reached in the no-localProposal path
+      // (no update is performed). DecisionRecord itself is mode-agnostic.
+      final content = {
+        'proposalId': 'p_no_local',
+        'cellId': 'cell1',
+        'finalTitle': 'No Local',
+        'finalDescription': '',
+        'result': 'approved',
+        'yesVotes': 3,
+        'noVotes': 0,
+        'abstainVotes': 0,
+        'participation': 0.3,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+      };
+
+      // Must not throw even without votingMode key
+      final record = _parseIncomingRecord(content, 'event_no_local_1');
+      expect(record.proposalId, equals('p_no_local'));
+      expect(record.result, equals('approved'));
+
+      // parseVotingMode(null) → YES_NO_ABSTAIN (safe default)
+      expect(parseVotingMode(null), equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    // ── SC resultYes/resultNo Stabilität ─────────────────────────────────────
+
+    test('SC mit localProposal.resultYes=0: bleibt 0 nach Empfang', () {
+      final content = {
+        'proposalId': 'p_sc_stable',
+        'cellId': 'cell1',
+        'votingMode': 'SINGLE_CHOICE',
+        'finalTitle': 'SC Stable',
+        'finalDescription': '',
+        'result': 'approved',
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': 2,
+        'participation': 0.4,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': '{"X":2}',
+        'tieOptionIdsJson': null,
+      };
+
+      final record = _parseIncomingRecord(content, 'event_sc_stable');
+
+      final localProposal = Proposal(
+        id: 'p_sc_stable',
+        cellId: 'cell1',
+        creatorDid: 'did:test:d',
+        creatorPseudonym: 'D',
+        title: 'SC Stable',
+        description: '',
+        createdAt: DateTime.utc(2026, 5, 1),
+        votingMode: VotingMode.SINGLE_CHOICE,
+        resultYes: 0,
+        resultNo: 0,
+      );
+
+      _applyModeAwareUpdate(localProposal, record, VotingMode.SINGLE_CHOICE);
+
+      // Guaranteed to remain 0 — not touched by SC path
+      expect(localProposal.resultYes, equals(0));
+      expect(localProposal.resultNo, equals(0));
+    });
+
+    // ── Audit-Payload ─────────────────────────────────────────────────────────
+
+    test(
+        'Audit payload enthält v1.3 fields (resultReason, '
+        'votingMode, optionResultsJson, tieOptionIdsJson)', () {
+      // Mirror the audit payload construction from handleIncomingDecisionRecord
+      final record = _parseIncomingRecord({
+        'proposalId': 'p_audit',
+        'cellId': 'cell1',
+        'votingMode': 'SINGLE_CHOICE',
+        'finalTitle': 'Audit',
+        'finalDescription': '',
+        'result': 'approved',
+        'resultReason': null,
+        'yesVotes': 0,
+        'noVotes': 0,
+        'abstainVotes': 1,
+        'participation': 0.5,
+        'decidedAt': _decidedAt.millisecondsSinceEpoch,
+        'optionResultsJson': '{"A":5}',
+        'tieOptionIdsJson': null,
+      }, 'event_audit_1');
+
+      const receivedModeStr = 'SINGLE_CHOICE';
+
+      final payload = <String, dynamic>{
+        'result': record.result,
+        'resultReason': record.resultReason,
+        'votingMode': receivedModeStr,
+        'yes': record.yesVotes,
+        'no': record.noVotes,
+        'abstain': record.abstainVotes,
+        'participation': record.participation,
+        'optionResultsJson': record.optionResultsJson,
+        'tieOptionIdsJson': record.tieOptionIdsJson,
+        'source': 'decision_record_received',
+      };
+
+      expect(payload.containsKey('resultReason'), isTrue);
+      expect(payload.containsKey('votingMode'), isTrue);
+      expect(payload.containsKey('optionResultsJson'), isTrue);
+      expect(payload.containsKey('tieOptionIdsJson'), isTrue);
+      expect(payload['votingMode'], equals('SINGLE_CHOICE'));
+      expect(payload['optionResultsJson'], equals('{"A":5}'));
+      expect(payload['tieOptionIdsJson'], isNull);
+      expect(payload['source'], equals('decision_record_received'));
+    });
+  });
 }
