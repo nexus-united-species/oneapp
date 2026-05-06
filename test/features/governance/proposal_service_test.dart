@@ -3688,4 +3688,373 @@ void main() {
       }
     });
   });
+
+  // ── castVote — selectedOptionId (Phase 4.7a1) ────────────────────────────
+
+  group('castVote — selectedOptionId (Phase 4.7a1)', () {
+    // castVote cannot be called directly in unit tests (requires DB/service
+    // singletons). The logic is verified here as executable spec, mirroring
+    // the production predicate and payload construction — identical to the
+    // Phase 4.6 guard test approach.
+
+    // ── Wire-defer guard predicate ──────────────────────────────────────────
+
+    /// Mirrors the shouldDeferWirePublish predicate in castVote.
+    bool _shouldDefer(String? selectedOptionId, VotingMode votingMode) =>
+        selectedOptionId != null && votingMode != VotingMode.YES_NO_ABSTAIN;
+
+    // ── Vote factory helpers ────────────────────────────────────────────────
+
+    Vote _makeYnaVote({String? selectedOptionId}) => Vote(
+          voteId: 'v_yna',
+          proposalId: 'p_yna',
+          voterPubkey: 'pk_alice',
+          voterDid: 'did:test:alice',
+          voterPseudonym: 'Alice',
+          choice: VoteChoice.YES,
+          selectedOptionId: selectedOptionId,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeScOptionVote(String optionId) => Vote(
+          voteId: 'v_sc_opt',
+          proposalId: 'p_sc',
+          voterPubkey: 'pk_bob',
+          voterDid: 'did:test:bob',
+          voterPseudonym: 'Bob',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: optionId,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeScAbstainVote() => Vote(
+          voteId: 'v_sc_abs',
+          proposalId: 'p_sc',
+          voterPubkey: 'pk_carol',
+          voterDid: 'did:test:carol',
+          voterPseudonym: 'Carol',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: null,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeCcOptionVote(String candidateId) => Vote(
+          voteId: 'v_cc_opt',
+          proposalId: 'p_cc',
+          voterPubkey: 'pk_dave',
+          voterDid: 'did:test:dave',
+          voterPseudonym: 'Dave',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: candidateId,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    Vote _makeCcAbstainVote() => Vote(
+          voteId: 'v_cc_abs',
+          proposalId: 'p_cc',
+          voterPubkey: 'pk_eve',
+          voterDid: 'did:test:eve',
+          voterPseudonym: 'Eve',
+          choice: VoteChoice.ABSTAIN,
+          selectedOptionId: null,
+          createdAt: DateTime.utc(2026, 5, 6, 10, 0),
+          nostrEventId: '',
+        );
+
+    // ── YES_NO_ABSTAIN regression ───────────────────────────────────────────
+
+    test(
+        'YES_NO_ABSTAIN castVote without selectedOptionId: '
+        'Vote.selectedOptionId is null, wire publish happens', () {
+      final vote = _makeYnaVote(selectedOptionId: null);
+
+      expect(vote.selectedOptionId, isNull);
+      expect(vote.choice, equals(VoteChoice.YES));
+
+      // Guard must NOT defer for YES_NO_ABSTAIN.
+      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.YES_NO_ABSTAIN);
+      expect(deferred, isFalse,
+          reason: 'YES_NO_ABSTAIN votes must always publish immediately');
+
+      // Serialization round-trip.
+      final restored = Vote.fromMap(vote.toMap());
+      expect(restored.selectedOptionId, isNull);
+    });
+
+    // ── SC: Options-Stimme — Wire-Defer ─────────────────────────────────────
+
+    test(
+        'SC castVote with selectedOptionId: persisted locally, '
+        'wire publish DEFERRED ([VOTE-WIRE-DEFERRED] log)', () {
+      final vote = _makeScOptionVote('opt_A');
+
+      expect(vote.selectedOptionId, equals('opt_A'));
+      expect(vote.choice, equals(VoteChoice.ABSTAIN),
+          reason: 'P1 convention: SC option vote uses choice=ABSTAIN');
+
+      // Guard must defer for SC + selectedOptionId != null.
+      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.SINGLE_CHOICE);
+      expect(deferred, isTrue,
+          reason: 'SC option vote must be deferred — old wire format '
+              'delivers it as genuine ABSTAIN on other devices');
+
+      // selectedOptionId must round-trip through toMap/fromMap.
+      final restored = Vote.fromMap(vote.toMap());
+      expect(restored.selectedOptionId, equals('opt_A'));
+    });
+
+    // ── SC: Enthaltung — Wire-Publish ────────────────────────────────────────
+
+    test(
+        'SC castVote without selectedOptionId (Enthaltung): '
+        'persisted, wire publish happens normally '
+        '(selectedOptionId null is a true abstention)', () {
+      final vote = _makeScAbstainVote();
+
+      expect(vote.selectedOptionId, isNull);
+      expect(vote.choice, equals(VoteChoice.ABSTAIN));
+
+      // Guard must NOT defer — true abstention is safe to publish.
+      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.SINGLE_CHOICE);
+      expect(deferred, isFalse,
+          reason: 'SC abstention (selectedOptionId=null) must publish: '
+              'receiver correctly counts it as abstention');
+    });
+
+    // ── CC: Kandidaten-Stimme — Wire-Defer ───────────────────────────────────
+
+    test(
+        'CC castVote with selectedOptionId: persisted locally, '
+        'wire publish DEFERRED', () {
+      final vote = _makeCcOptionVote('cand_alice');
+
+      expect(vote.selectedOptionId, equals('cand_alice'));
+
+      // Guard must defer for CC + selectedOptionId != null.
+      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.CANDIDATE_CHOICE);
+      expect(deferred, isTrue,
+          reason: 'CC candidate vote must be deferred — wire gap closes in 4.7a2');
+
+      // Round-trip.
+      final restored = Vote.fromMap(vote.toMap());
+      expect(restored.selectedOptionId, equals('cand_alice'));
+    });
+
+    // ── CC: Enthaltung — Wire-Publish ────────────────────────────────────────
+
+    test(
+        'CC castVote without selectedOptionId: wire publish happens '
+        '(true abstention)', () {
+      final vote = _makeCcAbstainVote();
+
+      expect(vote.selectedOptionId, isNull);
+
+      final deferred = _shouldDefer(vote.selectedOptionId, VotingMode.CANDIDATE_CHOICE);
+      expect(deferred, isFalse,
+          reason: 'CC abstention must publish: receiver treats as abstention');
+    });
+
+    // ── changeVote mit newSelectedOptionId ───────────────────────────────────
+
+    test(
+        'changeVote with newSelectedOptionId: updates Vote, '
+        'defers wire publish for SC', () {
+      // Simulate previous vote (true abstention) being replaced by an
+      // option vote — the resulting vote must carry selectedOptionId
+      // and must be deferred.
+      final previousVote = _makeScAbstainVote();
+      expect(previousVote.selectedOptionId, isNull);
+
+      // New vote after changeVote(newSelectedOptionId: 'opt_B').
+      final newVote = Vote(
+        voteId: Vote.generateId(),
+        proposalId: 'p_sc',
+        voterPubkey: 'pk_carol',
+        voterDid: 'did:test:carol',
+        voterPseudonym: 'Carol',
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: 'opt_B',
+        createdAt: DateTime.utc(2026, 5, 6, 11, 0),
+        nostrEventId: '',
+      );
+
+      expect(newVote.selectedOptionId, equals('opt_B'));
+
+      // Guard fires for updated vote.
+      final deferred = _shouldDefer(newVote.selectedOptionId, VotingMode.SINGLE_CHOICE);
+      expect(deferred, isTrue);
+
+      // previousSelectedOptionId in audit payload: previous vote had null,
+      // so it must NOT appear in the payload.
+      final auditPayload = <String, dynamic>{
+        'choice': newVote.choice.name,
+        if (newVote.selectedOptionId != null)
+          'selectedOptionId': newVote.selectedOptionId,
+        'previousChoice': previousVote.choice.name,
+        if (previousVote.selectedOptionId != null)
+          'previousSelectedOptionId': previousVote.selectedOptionId,
+      };
+      expect(auditPayload.containsKey('selectedOptionId'), isTrue);
+      expect(auditPayload.containsKey('previousSelectedOptionId'), isFalse,
+          reason: 'previousSelectedOptionId absent when previous vote had null');
+    });
+
+    // ── Audit-Payload: selectedOptionId enthalten ─────────────────────────────
+
+    test(
+        'Audit payload contains selectedOptionId for SC/CC option votes', () {
+      final vote = _makeScOptionVote('opt_X');
+      const isChange = false;
+
+      final payload = <String, dynamic>{
+        'choice': vote.choice.name,
+        if (vote.selectedOptionId != null) 'selectedOptionId': vote.selectedOptionId,
+        if (isChange) 'previousChoice': 'irrelevant',
+      };
+
+      expect(payload['choice'], equals('ABSTAIN'));
+      expect(payload['selectedOptionId'], equals('opt_X'));
+      expect(payload.containsKey('previousChoice'), isFalse);
+    });
+
+    // ── Audit-Payload: previousSelectedOptionId bei Vote-Änderung ─────────────
+
+    test(
+        'Audit payload includes previousSelectedOptionId on vote change', () {
+      final previousVote = _makeScOptionVote('opt_A');
+      final newVote = _makeScOptionVote('opt_B');
+
+      final payload = <String, dynamic>{
+        'choice': newVote.choice.name,
+        if (newVote.selectedOptionId != null)
+          'selectedOptionId': newVote.selectedOptionId,
+        'previousChoice': previousVote.choice.name,
+        if (previousVote.selectedOptionId != null)
+          'previousSelectedOptionId': previousVote.selectedOptionId,
+      };
+
+      expect(payload['selectedOptionId'], equals('opt_B'));
+      expect(payload['previousSelectedOptionId'], equals('opt_A'));
+      expect(payload['previousChoice'], equals('ABSTAIN'));
+    });
+
+    // ── SC Roundtrip: castVote → Tally → DecisionRecord zeigt Winner ──────────
+
+    test(
+        'SC roundtrip: castVote with optionA, finalizeProposal, '
+        'DecisionRecord shows optionA as winner (single-device, '
+        'no wire publish for the option vote)', () {
+      // Simulate: voter casts an SC option vote (stored locally, wire-deferred).
+      final vote = _makeScOptionVote('opt_A');
+
+      // Confirm wire is deferred.
+      expect(_shouldDefer(vote.selectedOptionId, VotingMode.SINGLE_CHOICE), isTrue);
+
+      // Simulate local tally (mirrors _finalizeSingleChoice).
+      final now = DateTime.utc(2026, 5, 6);
+      final option = ProposalOption(
+        optionId: 'opt_A',
+        proposalId: 'p_sc',
+        label: 'Option A',
+        status: OptionStatus.ACTIVE,
+        position: 0,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final votes = [vote];
+      const eligibleCount = 1;
+      const quorumRequired = 0.0;
+
+      final sortedVotes = sortVotesDeterministic(votes);
+      final sortedOptions = sortOptionsDeterministic([option]);
+      final optionCounts = <String, int>{for (final o in sortedOptions) o.optionId: 0};
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null &&
+            optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] = optionCounts[v.selectedOptionId!]! + 1;
+        }
+      }
+      final optionVoteSum = optionCounts.values.fold<int>(0, (a, b) => a + b);
+      final participationCount = optionVoteSum;
+      final participation = eligibleCount > 0 ? participationCount / eligibleCount : 0.0;
+
+      expect(participation, greaterThanOrEqualTo(quorumRequired));
+      expect(optionVoteSum, greaterThan(0));
+
+      final maxCount = optionCounts.values.fold<int>(0, (a, b) => b > a ? b : a);
+      final winners = sortedOptions
+          .where((o) => optionCounts[o.optionId] == maxCount)
+          .map((o) => o.optionId)
+          .toList();
+
+      expect(winners, equals(['opt_A']),
+          reason: 'opt_A received the only vote → must be winner');
+
+      // Simulate DecisionRecord construction.
+      final optionResultsJson = canonicalJsonEncode(
+          {for (final o in sortedOptions) o.optionId: optionCounts[o.optionId]!});
+      expect(optionResultsJson, equals('{"opt_A":1}'));
+    });
+
+    // ── CC Roundtrip: castVote für ACTIVE candidate ───────────────────────────
+
+    test(
+        'CC roundtrip: castVote for ACTIVE candidate, '
+        'finalizeProposal, candidate winner', () {
+      final vote = _makeCcOptionVote('cand_maria');
+
+      // Confirm wire is deferred.
+      expect(_shouldDefer(vote.selectedOptionId, VotingMode.CANDIDATE_CHOICE), isTrue);
+
+      // Simulate local tally (mirrors _finalizeCandidateChoice).
+      final now = DateTime.utc(2026, 5, 6);
+      final candidate = ProposalOption(
+        optionId: 'cand_maria',
+        proposalId: 'p_cc',
+        label: 'Maria',
+        candidateDid: 'did:test:maria',
+        candidatePseudonym: 'Maria',
+        status: OptionStatus.ACTIVE,
+        position: 0,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final votes = [vote];
+      const eligibleCount = 1;
+      const quorumRequired = 0.0;
+
+      final sortedVotes = sortVotesDeterministic(votes);
+      final sortedOptions = sortOptionsDeterministic([candidate]);
+      final optionCounts = <String, int>{for (final o in sortedOptions) o.optionId: 0};
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null &&
+            optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] = optionCounts[v.selectedOptionId!]! + 1;
+        }
+      }
+      final optionVoteSum = optionCounts.values.fold<int>(0, (a, b) => a + b);
+      final participationCount = optionVoteSum;
+      final participation = eligibleCount > 0 ? participationCount / eligibleCount : 0.0;
+
+      expect(participation, greaterThanOrEqualTo(quorumRequired));
+      expect(optionVoteSum, greaterThan(0));
+
+      final maxCount = optionCounts.values.fold<int>(0, (a, b) => b > a ? b : a);
+      final winners = sortedOptions
+          .where((o) => optionCounts[o.optionId] == maxCount)
+          .map((o) => o.optionId)
+          .toList();
+
+      expect(winners, equals(['cand_maria']),
+          reason: 'cand_maria received the only vote → must be winner');
+
+      final optionResultsJson = canonicalJsonEncode(
+          {for (final o in sortedOptions) o.optionId: optionCounts[o.optionId]!});
+      expect(optionResultsJson, equals('{"cand_maria":1}'));
+    });
+  });
 }

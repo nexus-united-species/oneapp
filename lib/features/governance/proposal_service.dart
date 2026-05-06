@@ -1524,8 +1524,9 @@ class ProposalService {
   ///
   /// If the caller already voted, the old vote is replaced.
   Future<void> castVote(String proposalId, VoteChoice choice,
-      {String? reasoning}) async {
-    print('[VOTE] castVote: $choice for $proposalId');
+      {String? reasoning, String? selectedOptionId}) async {
+    print('[VOTE] castVote: $choice for $proposalId '
+        'optionId=${selectedOptionId ?? "-"}');
     final p = _proposals[proposalId];
     if (p == null) throw StateError('Proposal not found');
     if (p.status != ProposalStatus.VOTING) {
@@ -1553,6 +1554,7 @@ class ProposalService {
       voterPseudonym: IdentityService.instance.currentIdentity!.pseudonym,
       choice: choice,
       reasoning: reasoning,
+      selectedOptionId: selectedOptionId,
       createdAt: DateTime.now().toUtc(),
       nostrEventId: '',
     );
@@ -1566,15 +1568,34 @@ class ProposalService {
     updated.add(vote);
     _votes[proposalId] = updated;
 
-    final voteResult = await _publishVoteToNostr(
-      proposalId: proposalId,
-      cellId: p.cellId,
-      vote: vote,
-    );
-    final published = voteResult.status == PublishResultStatus.accepted ||
-        voteResult.status == PublishResultStatus.partial;
-    if (!published) {
-      print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
+    // Phase 4.7a1: SC/CC-Options-Votes (selectedOptionId != null)
+    // dürfen NICHT über den alten Wire-Pfad publiziert werden, weil
+    // andere Geräte sie sonst als choice=ABSTAIN +
+    // selectedOptionId=null empfangen würden — was dort eine echte
+    // Enthaltung statt einer Options-Stimme wäre. Das wäre Daten-
+    // korruption. Phase 4.7a2 erweitert den Wire-Pfad.
+    //
+    // YES_NO_ABSTAIN-Votes und SC/CC-Enthaltungen (selectedOptionId
+    // == null) werden weiterhin publiziert.
+    final shouldDeferWirePublish =
+        selectedOptionId != null &&
+        p.votingMode != VotingMode.YES_NO_ABSTAIN;
+
+    if (shouldDeferWirePublish) {
+      print('[VOTE-WIRE-DEFERRED] $proposalId selectedOptionId='
+          '$selectedOptionId stored locally; wire support follows '
+          'in Phase 4.7a2');
+    } else {
+      final voteResult = await _publishVoteToNostr(
+        proposalId: proposalId,
+        cellId: p.cellId,
+        vote: vote,
+      );
+      final published = voteResult.status == PublishResultStatus.accepted ||
+          voteResult.status == PublishResultStatus.partial;
+      if (!published) {
+        print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
+      }
     }
 
     await addAuditEntry(AuditLogEntry(
@@ -1587,8 +1608,11 @@ class ProposalService {
       timestamp: DateTime.now().toUtc(),
       payload: {
         'choice': choice.name,
+        if (selectedOptionId != null) 'selectedOptionId': selectedOptionId,
         if (reasoning != null) 'reasoning': reasoning,
         if (isChange) 'previousChoice': myExisting.choice.name,
+        if (isChange && myExisting.selectedOptionId != null)
+          'previousSelectedOptionId': myExisting.selectedOptionId,
       },
     ));
 
@@ -1597,8 +1621,10 @@ class ProposalService {
 
   /// Alias – changeVote delegates to castVote (same semantics).
   Future<void> changeVote(String proposalId, VoteChoice newChoice,
-      {String? newReasoning}) async {
-    await castVote(proposalId, newChoice, reasoning: newReasoning);
+      {String? newReasoning, String? newSelectedOptionId}) async {
+    await castVote(proposalId, newChoice,
+        reasoning: newReasoning,
+        selectedOptionId: newSelectedOptionId);
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
