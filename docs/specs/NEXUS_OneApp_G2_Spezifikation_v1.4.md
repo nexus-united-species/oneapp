@@ -3387,3 +3387,687 @@ Wichtig:
 - Intercell: 1 Zelle = 1 Stimme
 - Superadmin Recall: 1 Mensch = 1 Stimme, kein QV, keine Delegation
 ```
+# Anhang an: G2-Spezifikation für die N.E.X.U.S. OneApp — v1.3
+# Neuer Abschnitt §31 — v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung
+
+> **Hinweis zur Form:** Dieser Abschnitt wird **direkt an v1.3** angehängt. v1.3 bleibt vollständig gültig. Wo v1.4 von v1.3 abweicht, ist das in der jeweiligen Sub-Sektion explizit als „Abweichung" oder „Pragmatik" gekennzeichnet. Alle anderen v1.3-Inhalte gelten unverändert weiter.
+
+---
+
+# 31. v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung
+
+## 31.0 Vorbemerkung
+
+v1.4 ist keine neue Architektur-Stufe und keine Neufassung von v1.3. v1.4 dokumentiert die Erkenntnisse, die bei der vollständigen Implementierung von Phase 4 (YNA-, SC- und CC-Tally + Stichwahl-Auto-Anlage + PARTIAL-Publish-Semantik) entstanden sind. Wo Phase 4 vom v1.3-Wortlaut abweicht, geschieht das bewusst und mit Begründung. Wo die Implementierung v1.3 unverändert bestätigt, hält v1.4 das fest, damit spätere G2-Blöcke (Liquid Democracy, QV, Grundstimm-Recht) ohne Reibung anschließen können.
+
+Stand: 07. Mai 2026, nach Live-Verifikation 4.7c4 + 4.8.
+
+---
+
+## 31.1 Phase-4-Status
+
+```text
+YES_NO_ABSTAIN:
+  Backend / Tally:                      ✅ implementiert
+  UI:                                   ✅ implementiert
+  Cross-Device Live-Test:               ✅ verifiziert (alle früheren Phasen)
+
+SINGLE_CHOICE:
+  Backend / Tally:                      ✅ implementiert (Phase 4.3)
+  Wire-Format (votingMode + Options):   ✅ implementiert (Phase 4.7c1/c2)
+  UI (Erstellen + Abstimmen):           ✅ implementiert (Phase 4.7c3)
+  Cross-Device Live-Test:               ✅ verifiziert (Phase 4.7c4)
+
+CANDIDATE_CHOICE:
+  Backend / Tally:                      ✅ implementiert (Phase 4.4)
+  Wire-Format (votingMode + Options):   ✅ implementiert (Phase 4.7c1/c2)
+  UI (vollwertig):                      ⚠ noch nicht — fällt im
+                                          Detail-Screen in den
+                                          SC-Layout-Pfad
+                                          (kein Crash, aber keine
+                                          Kandidaten-Avatare,
+                                          keine WITHDRAWN-Hinweise)
+  CC im Create-Flow:                    ⚠ Modus-Dropdown bietet CC
+                                          bewusst noch nicht an
+  Cross-Device Live-Test (CC voll):     ⚠ noch nicht — folgt mit
+                                          vollständiger CC-UI in
+                                          späterer Phase
+
+Stichwahl-Auto-Anlage (TIE_REQUIRES_RUNOFF):
+  Backend:                              ✅ implementiert (Phase 4.8)
+  Cross-Device Live-Test:               ✅ verifiziert (07.05.2026)
+
+Stichwahl-Auto-Anlage (WINNER_WITHDRAWN):
+  Backend:                              ⚠ ResultReason wird gesetzt,
+                                          aber noch keine automatische
+                                          Folge-Proposal-Erzeugung
+                                          (siehe §31.9 zu DoD-22)
+
+PARTIAL-Publish-Semantik:
+  Korrektur:                            ✅ implementiert (Phase 4.7d)
+  Cross-Device Live-Test:               ✅ implizit verifiziert
+                                          (Phase 4.8-Test zeigte
+                                          korrektes PARTIAL-Logging)
+```
+
+Test-Suite-Stand nach Phase 4: **274 Tests grün, 0 Bestand-Tests gebrochen.**
+
+---
+
+## 31.2 Wire-Format-Konvention (bestätigt durch Phase 4)
+
+Die folgende Konvention wurde in Phase 4.5b/4.7a/4.7c1/4.7c2 etabliert und ist ab v1.4 für alle G2-Wire-Erweiterungen verbindlich.
+
+### 31.2.1 JSON-Content nutzt camelCase
+
+Alle Felder im Nostr-`event.content`-JSON tragen camelCase-Keys (`votingMode`, `selectedOptionId`, `proposalOptions`, `optionResultsJson`, `tieOptionIdsJson`, `previousProposalId`). DB-interne Felder können snake_case behalten (`option_id`, `proposal_id`); die Übersetzung passiert beim Marshalling in den Service-Methoden, nicht im Wire.
+
+### 31.2.2 Atomare Embeds statt separater Nostr-Tags
+
+`votingMode` und `proposalOptions` reisen **ausschließlich im content**, nicht als zusätzliche Nostr-Tags. Begründung: Tags sind für Indizierung/Filterung relevant (z.B. `proposal_id`, `t`-Tags); inhaltliche Felder gehören in den content. Atomarer Embed der Optionen im Proposal-content stellt sicher, dass ein Empfänger nicht in einem Zustand landet, in dem ein SC-Proposal sichtbar ist, aber die Optionen fehlen.
+
+### 31.2.3 Vote-Wire trägt selectedOptionId im content
+
+Vote-Events (`Kind 31011`) tragen `selectedOptionId` im JSON-content, **nicht** als separater Nostr-Tag. Empfänger validieren strikt: YNA mit `selectedOptionId` wird abgelehnt (`[VOTE-REJECT]`-Log); SC/CC mit `choice=YES`/`NO` wird abgelehnt; CC mit `selectedOptionId` auf einer WITHDRAWN-Option wird abgelehnt.
+
+### 31.2.4 ProposalOption-Wire-Schema
+
+Eine ProposalOption-Wire-Entry hat folgende Form:
+
+```json
+{
+  "optionId": "<string>",
+  "position": <int>,
+  "label": "<string>",
+  "description": "<string, optional, only when non-empty>",
+  "candidateDid": "<string, optional, only when present>",
+  "candidatePseudonym": "<string, optional, only when present>",
+  "status": "ACTIVE" | "WITHDRAWN",
+  "candidateAcceptedAt": <int millis, optional>,
+  "candidateWithdrawnAt": <int millis, optional>
+}
+```
+
+Wichtige Konventionen:
+
+```text
+- Wire-Key heißt 'label', nicht 'displayText'.
+  v1.3 hatte 'displayText' verwendet; Phase-4.7c2-Recon ergab dass
+  das lokale Modell ProposalOption.label heißt, also wurde der
+  Wire-Key direkt ans Modell angeglichen. Eine Übersetzungsschicht
+  wurde dadurch vermieden.
+
+- createdAt und updatedAt sind LOKALE Audit-Felder und reisen
+  NICHT im Wire. Beim Empfang werden sie auf DateTime.now().toUtc()
+  gesetzt. Der zweite Empfang desselben Events überschreibt
+  updatedAt erneut — das ist gewollt, weil updatedAt lokal den
+  letzten Empfangs-/Upsert-Zeitpunkt abbildet.
+
+- description ist optional. Outgoing wird sie nur geschrieben wenn
+  description != null && description.isNotEmpty. Empfänger nimmt
+  description: m['description'] as String?.
+
+- Numerische Felder (position, candidateAcceptedAt,
+  candidateWithdrawnAt) werden defensiv via num.toInt() geparst,
+  weil JSON-Zahlen in Dart als int oder num ankommen können.
+```
+
+### 31.2.5 Backwards-Kompatibilität
+
+Pre-v1.4-Events ohne neue content-Keys werden ohne Fehler verarbeitet. Fehlendes `votingMode` defaultet zu `YES_NO_ABSTAIN`. Fehlendes `proposalOptions` führt zu keinem DB-Write für Optionen. Fehlendes `selectedOptionId` ist für YNA-Votes der Normalfall.
+
+`handleIncomingProposal` toleriert ausdrücklich beliebige zusätzliche unbekannte content-Keys — dies wurde in Phase 4.7c1 als Vorbereitung für 4.7c2 verifiziert und ist ab v1.4 verbindliche Eigenschaft jedes Empfangs-Pfades. Künftige Wire-Erweiterungen sollen sich darauf verlassen können.
+
+---
+
+## 31.3 Sender-only Pattern (verbindlich für Auto-Aktionen)
+
+### 31.3.1 Definition
+
+Wenn eine automatische Systemaktion irreversible Folgen hat (Anlage eines Folge-Proposals, Veränderung eines Quartal-Credit-Standes, Auslösung einer Abwahl-Phase), darf diese Aktion **ausschließlich von dem Gerät** ausgelöst werden, das den auslösenden lokalen Abschluss erzeugt hat. Alle anderen Geräte empfangen das Ergebnis dieser Aktion über den normalen Nostr-Sync und führen die Aktion **nicht selbst** aus.
+
+### 31.3.2 Verbindliche Anwendungen
+
+```text
+1. Stichwahl-Auto-Anlage (Phase 4.8 — implementiert):
+   Nur das Tally-owner-Gerät, das den DecisionRecord mit
+   resultReason=TIE_REQUIRES_RUNOFF erzeugt hat, legt das
+   Folge-Proposal an. handleIncomingDecisionRecord auf anderen
+   Geräten triggert KEINE Runoff-Anlage.
+
+2. Künftige Auto-Aktionen — folgen demselben Muster:
+
+   - QV-Quartalsreset:
+     Nur das erste Gerät, das den Quartalswechsel lokal
+     erkennt (z.B. via Scheduler-Tick), publiziert das
+     Reset-Event. Andere Geräte empfangen es passiv.
+
+   - Automatische Statusübergänge:
+     Voting-Period-Ende → VOTING_ENDED → finalizeProposal
+     ist bereits sender-only über den Phase-4.6-Idempotenz-
+     Guard abgesichert. Künftige Auto-Status-Übergänge
+     folgen analog.
+
+   - Superadmin-/Grundstimm-Trigger:
+     Wenn ein Quorum-Schwellwert für eine Abwahl erreicht
+     wird, löst nur das Gerät, das den Schwellwert lokal
+     zuerst feststellt, die Folge-Aktion aus.
+
+   - Delegation-Decay (G2.1+):
+     analog.
+```
+
+### 31.3.3 Warum nicht autonom auf allen Geräten?
+
+Eine alternative Architektur — jedes Gerät erkennt selbst die Trigger-Bedingung und löst aus — wäre theoretisch resilienter (kein Single-Point-of-Failure). Sie würde aber zwingend voraussetzen:
+
+```text
+- deterministische Folge-Event-IDs (Hash-basiert)
+- Race-Condition-Auflösung bei gleichzeitiger Erkennung
+- Mehrfachanlage-Schutz mit Cross-Device-Konsens
+- Konflikt-Behandlung bei abweichenden lokalen Daten-
+  Ständen (z.B. unterschiedlichen cell_members-Listen)
+```
+
+Diese Komplexität ist für G2 nicht gerechtfertigt. Sender-only ist einfach, deterministisch, und der Phase-4.6-Idempotenz-Guard sorgt strukturell dafür, dass im Race-Fall genau ein Gerät den Auslöser durchführt.
+
+### 31.3.4 Akzeptierte Konsequenz
+
+Wenn das Tally-Owner-Gerät offline ist und nie wieder online kommt, wird die Auto-Aktion auf dem Folge-Pfad nicht ausgelöst. Das ist **kein neuer Bruch**, sondern derselbe Zustand, den auch der Tally selbst schon heute hat: kein finalizeProposal → kein DecisionRecord → kein Runoff. Manuelle Re-Tally-Triggerung durch einen anderen Founder/Admin als Recovery-Pfad ist Phase-5+-Thema.
+
+---
+
+## 31.4 PARTIAL-Publish-Semantik (Korrektur in Phase 4.7d)
+
+### 31.4.1 Korrekte Semantik
+
+Ein Nostr-Publish-Versuch geht an mehrere Relays. Die Antwort wird in einem `PublishResult`-Objekt zusammengefasst (`acceptedRelayCount`, `failedRelayCount`, `requiredAckCount`, `status`). Aus Caller-Sicht gilt:
+
+```text
+acceptedRelayCount >= 1   → Erfolg (FULL oder PARTIAL).
+                            Event ist im Netz und propagiert.
+                            KEIN Retry nötig.
+
+acceptedRelayCount == 0   → Failure.
+                            Event ist nicht im Netz.
+                            Retry-Queue wird befüllt.
+```
+
+### 31.4.2 Was vor Phase 4.7d falsch war
+
+Pre-4.7d-Code hat `status != ACCEPTED` als Failure interpretiert. PARTIAL-Status wurde damit als Failure gewertet, ein „publish failed, queuing retry"-Log erschien, und ein Retry-Eintrag wurde in der DB angelegt — obwohl das Event bereits durch ≥1 Relay propagiert war. Strukturell hat der Retry-Worker (`findRetryDue` filtert auf `status='RETRYING'`) PARTIAL-Einträge ohnehin nie verarbeitet, sodass faktisch kein Republish stattfand. Der Schaden war daher rein kosmetisch (irreführende Logs), nicht funktional.
+
+### 31.4.3 requiredAckCount
+
+Das Feld bleibt für **Sync-Qualitäts-Bewertung** wichtig: ein PARTIAL mit `acceptedRelayCount=1, requiredAckCount=2` ist im Netz, aber unterhalb der gewünschten Redundanz. Diese Information kann in einer späteren UI als Sync-Indikator angezeigt werden („Antrag auf 1 von 2 Relays bestätigt"). Sie beeinflusst aber **nicht** die Erfolg/Failure-Klassifikation aus Caller-Sicht. Sync-Qualitäts-Indikatoren sind Phase-5+-Thema.
+
+### 31.4.4 Logging-Konvention
+
+```text
+[PUBLISH] kind=<num> FULL: <accepted>/<sent> accepted
+[PUBLISH] kind=<num> PARTIAL: <accepted>/<sent> accepted, <rejected> rejected, timedOut=<bool>
+[PUBLISH] kind=<num> FAILED: 0/<sent> accepted
+
+[X-PUB] === DONE === Published: <event-id>           (nur bei accepted > 0)
+[X-PUB] === FAILED === 0/<sent> accepted: <details>  (bei accepted == 0)
+
+[PROPOSAL] <X> publish FULL/PARTIAL/FAILED: <accepted>/<sent> accepted
+```
+
+`[PROPOSAL] ... publish failed, queuing retry` darf **nur** noch bei `acceptedRelayCount == 0` auftreten.
+
+---
+
+## 31.5 Idempotenz-Pattern
+
+Phase 4 hat zwei komplementäre Idempotenz-Mechanismen etabliert. v1.4 macht beide zur Konvention für G2.
+
+### 31.5.1 DB-Existing-Record-Guard (Phase 4.6)
+
+Vor jeder schreibenden Operation, die einen primären Datensatz erzeugt (DecisionRecord, künftig auch Delegation-Event-Persistenz, QV-Credit-Reset-Marker), wird **strukturell** geprüft, ob der Datensatz bereits existiert. Falls ja: Operation skippen + Status-Heal-Pfad. Beispiel aus Phase 4.6:
+
+```text
+finalizeProposal(proposalId):
+  if (status == VOTING_ENDED && DecisionRecord(proposalId) exists):
+    heal Status → DECIDED
+    return
+  ... finalize logic ...
+```
+
+### 31.5.2 SharedPreferences-Tracking (Phase 4.8)
+
+Wenn die Folge-Aktion einer Trigger-Bedingung **nicht** in einem eindeutigen DB-Datensatz mündet, der für den Guard genutzt werden kann, wird eine kleine SharedPreferences-Liste als Tracking-Set verwendet. Beispiel aus Phase 4.8:
+
+```text
+Key: 'runoff_created_for_original_ids'
+Value: List<String>  (Original-Proposal-IDs für die das Tally-
+                      owner-Gerät bereits einen Runoff angelegt hat)
+
+Bei Trigger:
+  if (originalId in trackingSet):
+    skip
+  else:
+    perform action; trackingSet.add(originalId)
+```
+
+### 31.5.3 Wann welcher Mechanismus
+
+```text
+DB-Guard, wenn:
+  - die Folge-Aktion einen eindeutigen DB-Datensatz erzeugt
+  - eine Reverse-Lookup-Query auf diesen Datensatz möglich ist
+  - der Guard auch nach App-Reinstallation greifen muss
+
+SharedPreferences-Tracking, wenn:
+  - die Folge-Aktion mehrere DB-Datensätze erzeugt, die nicht
+    eindeutig auf den Auslöser zurückführbar sind
+  - die Aktion ohnehin nur von einem bestimmten Gerät ausgelöst
+    wird (Sender-only-Pattern, §31.3) — dann ist Tracking-Verlust
+    bei Reinstallation tolerierbar
+  - keine DB-Migration zugemutet werden soll
+```
+
+### 31.5.4 Cross-Device-Idempotenz
+
+Beide Mechanismen sind **gerätelokal**. Cross-Device-Idempotenz ist ausschließlich durch das Sender-only-Pattern (§31.3) gegeben — andere Geräte erzeugen die Folge-Aktion gar nicht erst, also kann es auch keine Cross-Device-Duplikate geben.
+
+---
+
+## 31.6 Stichwahl-Pragmatik (Abweichung von v1.3)
+
+### 31.6.1 Was v1.3 sagte
+
+§22 in der DoD-Liste in v1.3:
+
+> 22. Stichwahl-Workflow funktioniert (TIE_REQUIRES_RUNOFF und WINNER_WITHDRAWN erzeugen Folge-Proposal mit **RUNOFF_OF**).
+
+§20.7 in v1.3 sah ein `resultRelation`-Feld im DecisionRecord vor. v1.3 implizierte außerdem ein `previousProposalId`- bzw. `RUNOFF_OF`-Feld direkt am Proposal-Modell, das die Verkettung Original → Stichwahl auf Datenstruktur-Ebene ausdrückt.
+
+### 31.6.2 Was Phase 4.8 implementiert hat
+
+Phase 4.8 hat **bewusst** kein `previousProposalId`-Feld am Proposal-Modell ergänzt:
+
+```text
+- Eine neue Modell-Spalte hätte eine DB-Migration verlangt.
+- DB-Migrationen wurden in Phase 4.8 bewusst vermieden, um den
+  fokussierten Patch-Charakter der Mini-Phase zu wahren.
+- Stattdessen wird die Original-Proposal-ID textuell in der
+  description des Stichwahl-Folge-Proposals eingebettet, neben
+  einer kurzen Erklärung und der Liste der Tie-Optionen.
+```
+
+Im DecisionRecord-Modell existiert `previousProposalId` weiterhin (Phase 4.5) und wird auch genutzt — das ist **nicht** dasselbe Feld wie das geplante v1.3-`Proposal.previousProposalId`.
+
+### 31.6.3 Status: MVP-Pragmatik, nicht End-Architektur
+
+Diese Lösung ist explizit als **MVP-Pragmatik** dokumentiert. Die saubere End-Architektur — `Proposal.previousProposalId` als Modell-Feld + Wire-Embed + UI-Linkage zwischen Original und Stichwahl im Detail-Screen — bleibt offene Aufgabe. Sie wird voraussichtlich Teil der vollständigen CC-UI-Phase oder einer eigenen kleinen Verfeinerungs-Phase nach G2.
+
+### 31.6.4 Empfehlung für G2-Implementierung
+
+Wenn G2-Code an einer Stelle die Verkettung Original → Stichwahl programmatisch braucht (z.B. zur Anzeige „Diese Stichwahl folgt aus Antrag X"), ist die saubere Lösung:
+
+```text
+1. Modell-Feld Proposal.previousProposalId einführen
+2. DB-Migration ALTER TABLE proposals ADD COLUMN
+3. Wire-Embed im Proposal-content (camelCase, optional)
+4. Description-Marker als Fallback für Legacy-Proposals
+5. UI-Linkage im Detail-Screen
+```
+
+Bis dahin bleibt der description-Marker die einzige Verkettung.
+
+---
+
+## 31.7 Stichwahl-Folge-Proposal — strukturelle Konvention
+
+Phase 4.8 hat folgende strukturelle Konvention für automatisch erzeugte Stichwahl-Folge-Proposals etabliert. Diese Konvention ist ab v1.4 verbindlich.
+
+```text
+votingMode:           SINGLE_CHOICE
+                      (auch wenn das Original CC war —
+                      die Stichwahl ist eine Auswahl-Wahl
+                      zwischen den Tie-Optionen, kein
+                      neuer Kandidaten-Wahl-Vorgang)
+
+Status:               DISCUSSION
+                      (NICHT DRAFT, NICHT direkt VOTING)
+
+Optionen:             EXAKT die Tie-Optionen aus
+                      tieOptionIdsJson, mit den
+                      Original-Labels. Andere Optionen des
+                      Originals werden NICHT übernommen.
+                      Mindestens 2 Optionen.
+
+Titel:                'Stichwahl: <Original-Titel>'
+
+Description:          Erklärungs-Block + Original-Proposal-ID
+                      + Liste der Tie-Optionen-Labels
+                      (Phase-4.8-Pragmatik, siehe §31.6)
+
+cellId:               vom Original übernommen
+
+category:             vom Original übernommen
+
+proposalType:         vom Original übernommen
+
+creatorDid:           lokale Identity des Tally-owner-Geräts
+                      (Nostr-Signierung erfordert lokalen
+                      privaten Schlüssel — der Original-
+                      creator-DID kann nicht verwendet
+                      werden, weil das Identitäts-Fälschung
+                      wäre)
+
+creatorPseudonym:     'Stichwahl-System'  (konstant, nicht
+                      tally-owner-abhängig — verhindert
+                      versehentliche Outing-Funktion und
+                      macht Stichwahl-Proposals visuell
+                      unterscheidbar)
+
+Voting-Periode:       NICHT gesetzt — wird beim manuellen
+                      startVoting durch Founder/Admin
+                      etabliert
+```
+
+### 31.7.1 Begründung Status DISCUSSION
+
+DRAFT würde nur lokal sichtbar sein und nie im Netzwerk auftauchen. VOTING direkt würde die Voting-Periode ohne User-Steuerung fixieren — ein Founder/Admin soll bewusst entscheiden wann die Stichwahl startet. DISCUSSION ist konsistent mit dem normalen Erstellungs-Flow (createDraft → publishToDiscussion → startVoting) und gibt allen Mitgliedern die Chance, die Stichwahl wahrzunehmen, bevor jemand startVoting auslöst.
+
+### 31.7.2 Sender-only-Bestätigung
+
+`handleIncomingDecisionRecord` triggert **keine** Stichwahl-Anlage. Andere Geräte empfangen das Stichwahl-Folge-Proposal über die normale Proposal-Nostr-Pipeline (mit `votingMode` und `proposalOptions` aus Phase 4.7c1/c2). Es kann **per Konstruktion** keine Cross-Device-Duplikate geben.
+
+---
+
+## 31.8 Bekannte Einschränkungen nach Phase 4
+
+Die folgenden Punkte sind nach Phase 4 ausdrücklich **bekannte Einschränkungen**, keine Bugs. Sie werden in späteren Phasen adressiert.
+
+```text
+1. CANDIDATE_CHOICE-UI ist minimal:
+   - Modus-Dropdown im Create-Flow bietet CC noch nicht an
+   - Detail-Screen rendert CC im SC-Layout-Pfad (kein Crash,
+     aber keine Kandidaten-Avatare, keine WITHDRAWN-Hinweise)
+   - Kandidatenrücktritts-UI fehlt (Backend-Status existiert)
+   → vollständige CC-UI: spätere Phase
+
+2. previousProposalId fehlt im Proposal-Modell:
+   - Stichwahl → Original-Verkettung nur über
+     description-Marker
+   - UI-Linkage zwischen Original und Stichwahl im
+     Detail-Screen fehlt
+   → siehe §31.6 für die saubere End-Lösung
+
+3. WINNER_WITHDRAWN löst keine automatische Stichwahl aus:
+   - Phase 4.4 produziert resultReason=WINNER_WITHDRAWN
+   - Phase 4.8 reagiert NUR auf TIE_REQUIRES_RUNOFF
+   - Folge: bei einem zurückgetretenen Sieger entsteht
+     ein DecisionRecord mit Result=invalid, aber kein
+     automatischer Folge-Antrag
+   → Phase-4.8.x oder im Rahmen der CC-UI-Phase nachholen
+
+4. Maximum-Validierung der Optionsanzahl beim VOTING-Start
+   ist nicht aktiv:
+   - Phase 4.7c3 createDraft validiert das Minimum (≥2 für SC)
+   - DoD-§24 fordert auch Maximum-Limits (10 für SC, 20 für CC)
+   - Aktuell weder in createDraft noch in startVoting enforced
+   → vor produktivem G2 nachholen
+
+5. QV, Delegation, Expertenprofile, Intercell-Governance,
+   Superadmin-Abwahl: weiterhin offene G2-Blöcke
+   (Phase 4 hatte mit diesen Themen explizit nichts zu tun).
+
+6. Hybrid-Encryption / encPayload-Schema:
+   ist späterer Block. Phase 4 läuft ausschließlich auf
+   Klartext-Wire. Sensible Felder werden in einer späteren
+   Phase migriert (siehe v1.3 §17 / Implementierungsplan
+   „Hybrid-Governance-Schema").
+
+7. Relay-Infrastruktur (TD-6):
+   nur 2/4 Default-Relays sind aktuell stabil. Phase 4 hat
+   das nicht gefixt — das ist ein Operational/DevOps-Thema,
+   kein Code-Thema, und liegt außerhalb von Phase 4.
+   PARTIAL-Publish-Semantik (Phase 4.7d) macht das Verhalten
+   bei eingeschränkter Relay-Verfügbarkeit transparent.
+
+8. Audit-Log append-only ist konzeptionell vorgesehen
+   (v1.3 §29.x), aber nicht alle Pfade enforce strikt
+   keine Hard-Deletes. Vor produktivem G2 nachhärten.
+```
+
+---
+
+## 31.9 DoD-Aktualisierung gegenüber §27 (v1.3)
+
+Status der 25 DoD-Punkte aus §27 nach Phase 4:
+
+```text
+ 1. Zellinterne Abstimmungen vollständig                    ⚠ teilweise
+    YNA: ✅. SC: ✅ inkl. Live-Test. CC: Backend ✅, UI ⚠.
+
+ 2. Delegation pro Proposal                                  ⬜ G2
+ 3. Expertenprofile mit AURA                                 ⬜ G2
+ 4. Statementpflicht enforced                                ⬜ G2
+ 5. QV mit 100 Credits/Quartal                               ⬜ G2
+ 6. Quoren und Entscheidungsregeln korrekt                   ✅ (Phase 4)
+ 7. Interzelluläre Entscheidungen                            ⬜ G2/G3
+ 8. Superadmin-Abwahl mit Übergangsphase                     ⬜ G2
+ 9. Tally-Engine deterministisch                             ✅ (Phase 4)
+10. Audit-Log append-only                                    ⚠ teilweise
+    Audit-Einträge werden geschrieben; Hard-Delete-Schutz
+    nicht in allen Pfaden strikt enforced.
+
+11. sensible Daten verschlüsselt (encPayload)                ⬜ Phase 5+
+12. PublishResult / Relay-ACKs gespeichert                   ✅ (seit Phase
+    1.x; Phase 4.7d hat Semantik korrigiert)
+13. Retry-Logik funktioniert                                 ✅ (Phase 4.7d
+    hat sie auf korrektes Verhalten gestellt)
+14. UI zeigt Sync-Status ehrlich an                          ⬜ späteres
+    Frontend-Thema; Backend-Logs sind ehrlich.
+15. Pflicht-Tests grün                                       ✅ 274/274
+16. keine bestehenden DB-Tabellen gelöscht                   ✅
+17. Migrationen nur über ALTER TABLE                         ✅
+18. keine Hard Deletes bei veröffentlichten Governance-      ⚠ siehe DoD-10
+    Daten
+19. Alle drei Voting-Modi funktionieren (YNA, SC, CC)        ⚠ teilweise
+    Backend/Tally aller drei: ✅. UI YNA + SC: ✅. UI CC: ⚠.
+
+20. proposal_options-Tabelle implementiert + ab DRAFT        ✅
+    verwendbar
+21. CC erzwingt 1-Mensch=1-Stimme / keine Delegation /       ✅ Backend
+    kein QV                                                    Strukturell
+                                                               garantiert
+                                                               weil Delegation
+                                                               und QV in
+                                                               Phase 4 noch
+                                                               gar nicht
+                                                               existieren.
+                                                               Bei G2-Imple-
+                                                               mentierung von
+                                                               Delegation/QV
+                                                               muss CC
+                                                               explizit
+                                                               ausgenommen
+                                                               werden.
+
+22. Stichwahl-Workflow (TIE_REQUIRES_RUNOFF und              ⚠ teilweise
+    WINNER_WITHDRAWN erzeugen Folge-Proposal)                  TIE_REQUIRES
+                                                               _RUNOFF: ✅
+                                                               (Phase 4.8,
+                                                               live verifi-
+                                                               ziert).
+                                                               WINNER_
+                                                               WITHDRAWN:
+                                                               Backend
+                                                               erkennt den
+                                                               Reason, aber
+                                                               KEINE
+                                                               automatische
+                                                               Folge-Anlage
+                                                               (siehe §31.8
+                                                               Punkt 3).
+                                                               RUNOFF_OF-
+                                                               Feld am
+                                                               Proposal-
+                                                               Modell wurde
+                                                               BEWUSST nicht
+                                                               eingeführt
+                                                               (siehe §31.6).
+
+23. Kandidatenrücktritt während VOTING                       ⚠ Backend ✅
+    (WITHDRAWN-Status, Stimmen bleiben erhalten)               UI-Flow für
+                                                               aktiven
+                                                               Rücktritt:
+                                                               ⬜ noch offen.
+
+24. Optionen-Anzahl-Validierung beim VOTING-Start            ⚠ teilweise
+    (SC: 2-10, CC: 2-20)                                       Minimum (≥2)
+                                                               beim
+                                                               createDraft:
+                                                               ✅
+                                                               (Phase 4.7c3).
+                                                               Maximum
+                                                               (10/20) und
+                                                               Voting-Start-
+                                                               Validierung:
+                                                               ⬜ noch offen,
+                                                               vor
+                                                               produktivem G2
+                                                               nachholen.
+
+25. Schema-Migration setzt votingMode = YES_NO_ABSTAIN       ✅
+    für Altbestand
+```
+
+### 31.9.1 Zusammenfassung
+
+```text
+DoD-Punkte vollständig erfüllt (Phase 4-Beitrag):  9, 12, 13, 15,
+                                                    16, 17, 20, 25
+DoD-Punkte teilweise erfüllt (Phase 4-Beitrag):    1, 6, 19, 21,
+                                                    22, 23, 24
+DoD-Punkte unverändert offen für G2:               2, 3, 4, 5, 7,
+                                                    8, 11, 14
+Strukturelle Klarstellungen in §31.6/§31.8:        Punkte 22, 24
+                                                    bekommen explizite
+                                                    Teilerfüllungs-
+                                                    Begründung
+```
+
+Phase 4 hat damit den Tally-/DecisionRecord-/Stichwahl-Block der DoD weitgehend abgedeckt. Die offenen G2-Blöcke (Liquid Democracy, Quadratic Voting, Expertenprofile, Statementpflicht, Intercell-Governance, Superadmin-Abwahl, Hybrid-Encryption) sind die nächsten großen Implementierungs-Schritte.
+
+---
+
+# Kurzform für Claude Code — Stand nach Phase 4
+
+> Dieser Block ist **kein** Teil der formalen Spezifikation. Er dient als kompakter Onboarding-Kontext für Claude Code beim Start eines neuen G2-Implementierungs-Schritts.
+
+## Wo wir stehen
+
+Phase 4 ist abgeschlossen und live verifiziert. Der Tally-/DecisionRecord-Pfad funktioniert für YNA + SC + CC end-to-end, inkl. automatischer Stichwahl-Anlage bei Tie. SC-UI ist live cross-device getestet. PARTIAL-Publish-Semantik ist korrigiert.
+
+## Was Claude Code wissen muss, bevor G2-Code geschrieben wird
+
+```text
+1. Wire-Format-Konvention (verbindlich, §31.2):
+   - JSON-content nutzt camelCase
+   - inhaltliche Felder reisen im content, nicht als Tags
+   - ProposalOption-Wire-Key heißt 'label', nicht 'displayText'
+   - createdAt/updatedAt sind lokal, reisen nicht
+   - JSON-Zahlen defensiv via num.toInt() parsen
+
+2. Sender-only Pattern (verbindlich, §31.3):
+   - Auto-Aktionen werden nur vom auslösenden Gerät durchgeführt
+   - handleIncoming<X>-Pfade triggern KEINE Auto-Aktionen
+   - Cross-Device-Idempotenz ist strukturell durch dieses
+     Pattern gegeben
+
+3. PARTIAL-Publish-Semantik (verbindlich, §31.4):
+   - acceptedRelayCount > 0 ist Erfolg
+   - Retry nur bei acceptedRelayCount == 0
+   - keine 'publish failed'-Logs bei PARTIAL
+
+4. Idempotenz-Pattern (§31.5):
+   - DB-Existing-Record-Guard wo möglich (wie Phase 4.6)
+   - SharedPreferences-Tracking als Fallback (wie Phase 4.8)
+
+5. Stichwahl-Pragmatik (§31.6):
+   - Proposal.previousProposalId existiert NICHT als
+     Modell-Feld
+   - Wenn Cross-Verkettung nötig: über
+     description-Marker oder via DecisionRecord-Felder
+
+6. Tally-Reasons (Phase 4.4, verbindliche Reihenfolge):
+   NO_VALID_VOTES → QUORUM_NOT_MET → ALL_ABSTAIN
+   → ALL_CANDIDATES_WITHDRAWN → WINNER_WITHDRAWN
+   → TIE_REQUIRES_RUNOFF → approved
+```
+
+## Was Claude Code NICHT tun soll, ohne Joachim zu fragen
+
+```text
+- DB-Migrationen einführen
+- Modell-Felder ergänzen (insbesondere Proposal.*)
+- Öffentliche Signaturen ändern
+  (publishProposalEvent / publishVoteEvent /
+   publishDecisionRecord, castVote, createDraft, ...)
+- Wire-Format-Tags ändern
+- Mock-Frameworks einführen
+- 'flutter clean' / 'adb uninstall' ausführen
+- Mehr als die freigegebenen Dateien anfassen
+- Auto-Commits durchführen
+```
+
+## Nächste G2-Blöcke (in Reihenfolge der Empfehlung)
+
+```text
+G2-Block 1: Delegation (zell-intern, pro Proposal)
+  - Delegation-Modell (Delegator, Delegate, ProposalId, Status)
+  - Delegation-Wire (Kind 31014?)
+  - Tally-Engine-Erweiterung: delegierte Stimmen werden
+    transitiv NICHT gefolgt, aber direkt zugerechnet
+  - Widerruf jederzeit möglich
+  - CC ist explizit ausgenommen (1-Mensch=1-Stimme)
+  - UI: Delegations-Manager im Proposal-Detail-Screen
+  - Sender-only-Pattern für jede Auto-Aktion (z.B. Tally-
+    Berücksichtigung)
+
+G2-Block 2: Quadratic Voting
+  - Voice-Credit-Pool pro Quartal (100 Credits, kein Übertrag)
+  - QV-aware Vote-Modell + Wire
+  - Tally-Engine-Erweiterung: kostbasiertes Gewicht
+  - Membership-Maturity-Check (14 Tage Default)
+  - QV-Quartalsreset: sender-only über Scheduler-Tick
+  - CC ist auch hier explizit ausgenommen
+
+G2-Block 3: Superadmin-Abwahl via Grundstimm-Recht
+  - Sonder-Proposal-Typ
+  - 2/3-Quorum
+  - Keine Delegation, kein QV (1-Mensch=1-Stimme)
+  - Übergangsphase mit definiertem Sub-State
+  - Auto-Ausführung der Abwahl bei Erreichen des Quorums
+    (sender-only)
+
+G2-Block 4: Expertenprofile + AURA + Statementpflicht
+  - eher konzeptionell-strukturell als datenmodell-schwer
+  - kommt nach den drei harten Voting-Mechanismus-Blöcken
+```
+
+## Workflow-Erinnerung
+
+```text
+- Jeder Block startet mit Recon-Pflicht und STOP-Bedingungen
+- Vier Dateien als Richtwert pro Block (Service + Tests +
+  ggf. UI + ggf. Wire). Mehr nur mit Begründung.
+- Tests OHNE Mock-Framework — Capture-Callbacks und
+  kontrollierte Test-Stubs
+- Live-Test nach jedem inhaltlich abgeschlossenen Block
+  (Pattern aus Phase 4.7c4 / 4.8)
+- Commit-Vorschlag im Bericht, kein Auto-Commit
+- Phase-4-Abschlussdokument als Referenz für „so machen wir
+  Mini-Phasen sauber"
+```
+
+---
+
+*Ende von §31 — v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung.*
+*Nächste Spec-Aktualisierung erwartet: nach Abschluss von G2-Block 1 (Delegation), als §32 — v1.5-Präzisierungen.*
