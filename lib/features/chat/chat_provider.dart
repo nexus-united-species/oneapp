@@ -601,6 +601,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             : null,
         editReason: params['editReason'] as String?,
         votingMode: params['votingMode'] as String?,
+        proposalOptions: (params['proposalOptions'] as List?)
+            ?.cast<Map<String, dynamic>>(),
       );
     };
 

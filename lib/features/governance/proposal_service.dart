@@ -2034,6 +2034,7 @@ class ProposalService {
           }
         }
         await _saveProposalToDb(existing);
+        await _persistIncomingOptions(proposalId, content); // Phase 4.7c2
       } else {
         // New proposal – create from event.
         final createdAtTs = content['createdAt'] as int? ?? event.createdAt;
@@ -2075,6 +2076,7 @@ class ProposalService {
         _proposals[proposalId] = proposal;
 
         await _saveProposalToDb(proposal);
+        await _persistIncomingOptions(proposalId, content); // Phase 4.7c2
 
         await addAuditEntry(AuditLogEntry(
           entryId: AuditLogEntry.generateId(),
@@ -2615,6 +2617,20 @@ class ProposalService {
         updatedAt: now,
       );
     }
+    // Phase 4.7c2: embed ProposalOptions for non-YES_NO_ABSTAIN proposals
+    // so receivers get the options atomically with the proposal event.
+    List<Map<String, dynamic>>? optionsForWire;
+    if (p.votingMode != VotingMode.YES_NO_ABSTAIN) {
+      final rows = await PodDatabase.instance.listProposalOptions(p.id);
+      if (rows.isNotEmpty) {
+        final options = rows.map(ProposalOption.fromMap).toList()
+          ..sort((a, b) => a.position.compareTo(b.position));
+        optionsForWire = options
+            .map(_optionToWireMap)
+            .toList(growable: false);
+      }
+    }
+
     return fn({
       'proposalId': p.id,
       'cellId': p.cellId,
@@ -2631,7 +2647,102 @@ class ProposalService {
         'votingEndsAt': p.votingEndsAt!.millisecondsSinceEpoch ~/ 1000,
       if (editReason != null) 'editReason': editReason,
       'votingMode': p.votingMode.name,
+      if (optionsForWire != null) 'proposalOptions': optionsForWire,
     });
+  }
+
+  /// Phase 4.7c2: serialize a ProposalOption to the wire-format
+  /// Map embedded in the Proposal Kind-31010 event content.
+  /// Keys are camelCase to match the rest of the content payload.
+  Map<String, dynamic> _optionToWireMap(ProposalOption opt) {
+    return <String, dynamic>{
+      'optionId': opt.optionId,
+      'position': opt.position,
+      'label': opt.label,
+      if (opt.description != null && opt.description!.isNotEmpty)
+        'description': opt.description,
+      if (opt.candidateDid != null) 'candidateDid': opt.candidateDid,
+      if (opt.candidatePseudonym != null)
+        'candidatePseudonym': opt.candidatePseudonym,
+      'status': opt.status.name,
+      if (opt.candidateAcceptedAt != null)
+        'candidateAcceptedAt':
+            opt.candidateAcceptedAt!.millisecondsSinceEpoch,
+      if (opt.candidateWithdrawnAt != null)
+        'candidateWithdrawnAt':
+            opt.candidateWithdrawnAt!.millisecondsSinceEpoch,
+    };
+  }
+
+  /// Phase 4.7c2: parse the proposalOptions list embedded in
+  /// the Proposal content (if present) and upsert each into
+  /// the local proposal_options table. Idempotent — receiving
+  /// the same proposal multiple times produces no duplicates
+  /// (upsert via UNIQUE(option_id)).
+  ///
+  /// Legacy events without the key produce a no-op.
+  /// Malformed individual entries are skipped without aborting
+  /// the rest of the list.
+  Future<void> _persistIncomingOptions(
+      String proposalId, Map<String, dynamic> content) async {
+    final raw = content['proposalOptions'];
+    if (raw == null) return;
+    if (raw is! List) {
+      print('[PROPOSAL] proposalOptions is not a list, ignoring');
+      return;
+    }
+    print('[PROPOSAL] persisting ${raw.length} embedded options '
+        'for $proposalId');
+    int persistedCount = 0;
+    int skippedCount = 0;
+    for (final entry in raw) {
+      if (entry is! Map) {
+        skippedCount++;
+        continue;
+      }
+      final m = entry.cast<String, dynamic>();
+      try {
+        final positionRaw = m['position'];
+        final acceptedRaw = m['candidateAcceptedAt'];
+        final withdrawnRaw = m['candidateWithdrawnAt'];
+        final now = DateTime.now().toUtc();
+
+        final opt = ProposalOption(
+          optionId: m['optionId'] as String,
+          proposalId: proposalId,
+          position: (positionRaw as num).toInt(),
+          label: m['label'] as String,
+          description: m['description'] as String?,
+          candidateDid: m['candidateDid'] as String?,
+          candidatePseudonym: m['candidatePseudonym'] as String?,
+          status: OptionStatus.values.firstWhere(
+            (e) => e.name == (m['status'] as String? ?? ''),
+            orElse: () => OptionStatus.ACTIVE,
+          ),
+          candidateAcceptedAt: acceptedRaw is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  acceptedRaw.toInt(),
+                  isUtc: true,
+                )
+              : null,
+          candidateWithdrawnAt: withdrawnRaw is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  withdrawnRaw.toInt(),
+                  isUtc: true,
+                )
+              : null,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await PodDatabase.instance.upsertProposalOption(opt.toMap());
+        persistedCount++;
+      } catch (e) {
+        skippedCount++;
+        print('[PROPOSAL] skipping malformed option entry: $e');
+      }
+    }
+    print('[PROPOSAL] options persist done for $proposalId: '
+        '$persistedCount persisted, $skippedCount skipped');
   }
 
   Future<PublishResult> _publishVoteToNostr({

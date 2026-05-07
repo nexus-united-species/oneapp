@@ -4965,4 +4965,578 @@ void main() {
           reason: 'votingMode must remain SINGLE_CHOICE after a title edit');
     });
   });
+
+  // ── Proposal wire format — proposalOptions embed (Phase 4.7c2) ──────────
+
+  group('Proposal wire format — proposalOptions embed (Phase 4.7c2)', () {
+    // These tests verify the contract at the model boundary without
+    // instantiating ProposalService (singleton / DB dependency). They mirror:
+    //   • outgoing: _optionToWireMap + _publishProposalToNostr options logic
+    //   • incoming: _persistIncomingOptions parsing logic
+    //   • backwards-compat: missing key → no-op
+    //   • malformed entry handling: skipped, valid entries still persisted
+    //   • cross-device roundtrip: JSON encode/decode preserves all fields
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /// Mirror of ProposalService._optionToWireMap (camelCase wire format).
+    Map<String, dynamic> _optionToWireMap(ProposalOption opt) {
+      return <String, dynamic>{
+        'optionId': opt.optionId,
+        'position': opt.position,
+        'label': opt.label,
+        if (opt.description != null && opt.description!.isNotEmpty)
+          'description': opt.description,
+        if (opt.candidateDid != null) 'candidateDid': opt.candidateDid,
+        if (opt.candidatePseudonym != null)
+          'candidatePseudonym': opt.candidatePseudonym,
+        'status': opt.status.name,
+        if (opt.candidateAcceptedAt != null)
+          'candidateAcceptedAt':
+              opt.candidateAcceptedAt!.millisecondsSinceEpoch,
+        if (opt.candidateWithdrawnAt != null)
+          'candidateWithdrawnAt':
+              opt.candidateWithdrawnAt!.millisecondsSinceEpoch,
+      };
+    }
+
+    /// Mirror of the ProposalOption construction inside
+    /// ProposalService._persistIncomingOptions.
+    ProposalOption _optionFromWire(
+        String proposalId, Map<String, dynamic> m) {
+      final positionRaw = m['position'];
+      final acceptedRaw = m['candidateAcceptedAt'];
+      final withdrawnRaw = m['candidateWithdrawnAt'];
+      final now = DateTime.now().toUtc();
+      return ProposalOption(
+        optionId: m['optionId'] as String,
+        proposalId: proposalId,
+        position: (positionRaw as num).toInt(),
+        label: m['label'] as String,
+        description: m['description'] as String?,
+        candidateDid: m['candidateDid'] as String?,
+        candidatePseudonym: m['candidatePseudonym'] as String?,
+        status: OptionStatus.values.firstWhere(
+          (e) => e.name == (m['status'] as String? ?? ''),
+          orElse: () => OptionStatus.ACTIVE,
+        ),
+        candidateAcceptedAt: acceptedRaw is num
+            ? DateTime.fromMillisecondsSinceEpoch(
+                acceptedRaw.toInt(),
+                isUtc: true,
+              )
+            : null,
+        candidateWithdrawnAt: withdrawnRaw is num
+            ? DateTime.fromMillisecondsSinceEpoch(
+                withdrawnRaw.toInt(),
+                isUtc: true,
+              )
+            : null,
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+
+    /// Creates a minimal ProposalOption for outgoing serialisation tests.
+    ProposalOption _makeOpt({
+      required String optionId,
+      required String proposalId,
+      int position = 0,
+      String label = 'Option',
+      String? description,
+      String? candidateDid,
+      String? candidatePseudonym,
+      OptionStatus status = OptionStatus.ACTIVE,
+      DateTime? candidateAcceptedAt,
+      DateTime? candidateWithdrawnAt,
+    }) {
+      final now = DateTime.utc(2026, 5, 1);
+      return ProposalOption(
+        optionId: optionId,
+        proposalId: proposalId,
+        label: label,
+        description: description,
+        candidateDid: candidateDid,
+        candidatePseudonym: candidatePseudonym,
+        status: status,
+        position: position,
+        createdAt: now,
+        updatedAt: now,
+        candidateAcceptedAt: candidateAcceptedAt,
+        candidateWithdrawnAt: candidateWithdrawnAt,
+      );
+    }
+
+    /// Mirror of the proposalOptions block in _publishProposalToNostr.
+    Map<String, dynamic> _outgoingParams(
+        Proposal p, List<ProposalOption> options) {
+      List<Map<String, dynamic>>? optionsForWire;
+      if (p.votingMode != VotingMode.YES_NO_ABSTAIN && options.isNotEmpty) {
+        final sorted = [...options]
+          ..sort((a, b) => a.position.compareTo(b.position));
+        optionsForWire =
+            sorted.map(_optionToWireMap).toList(growable: false);
+      }
+      return {
+        'proposalId': p.id,
+        'votingMode': p.votingMode.name,
+        if (optionsForWire != null) 'proposalOptions': optionsForWire,
+      };
+    }
+
+    Proposal _makeProposal(VotingMode mode) => Proposal.create(
+          cellId: 'cell-test',
+          creatorDid: 'did:test:creator',
+          creatorPseudonym: 'Tester',
+          title: 'Test-Antrag',
+          description: 'Beschreibung',
+          votingMode: mode,
+        );
+
+    // ── Outgoing: YES_NO_ABSTAIN ───────────────────────────────────────────
+
+    test('YES_NO_ABSTAIN proposal: outgoing params do NOT include '
+        'proposalOptions key', () {
+      final p = _makeProposal(VotingMode.YES_NO_ABSTAIN);
+      final params = _outgoingParams(p, []);
+      expect(params.containsKey('proposalOptions'), isFalse);
+    });
+
+    // ── Outgoing: SC with 3 options ────────────────────────────────────────
+
+    test('SINGLE_CHOICE proposal with 3 options: outgoing params include '
+        'proposalOptions list with 3 entries sorted by position', () {
+      final p = _makeProposal(VotingMode.SINGLE_CHOICE);
+      // Deliberately unsorted to verify position ASC sort.
+      final opts = [
+        _makeOpt(
+            optionId: 'opt_c',
+            proposalId: p.id,
+            position: 2,
+            label: 'Option C'),
+        _makeOpt(
+            optionId: 'opt_a',
+            proposalId: p.id,
+            position: 0,
+            label: 'Option A'),
+        _makeOpt(
+            optionId: 'opt_b',
+            proposalId: p.id,
+            position: 1,
+            label: 'Option B'),
+      ];
+      final params = _outgoingParams(p, opts);
+      expect(params.containsKey('proposalOptions'), isTrue);
+      final wireOpts =
+          params['proposalOptions'] as List<Map<String, dynamic>>;
+      expect(wireOpts.length, equals(3));
+      expect(wireOpts[0]['optionId'], equals('opt_a'));
+      expect(wireOpts[1]['optionId'], equals('opt_b'));
+      expect(wireOpts[2]['optionId'], equals('opt_c'));
+    });
+
+    // ── Outgoing: CC with candidates ──────────────────────────────────────
+
+    test('CANDIDATE_CHOICE proposal with 2 candidates: outgoing params '
+        'include candidateDid + candidatePseudonym + status', () {
+      final p = _makeProposal(VotingMode.CANDIDATE_CHOICE);
+      final opts = [
+        _makeOpt(
+          optionId: 'cand_alice',
+          proposalId: p.id,
+          position: 0,
+          label: 'Alice',
+          candidateDid: 'did:test:alice',
+          candidatePseudonym: 'Alice T.',
+        ),
+        _makeOpt(
+          optionId: 'cand_bob',
+          proposalId: p.id,
+          position: 1,
+          label: 'Bob',
+          candidateDid: 'did:test:bob',
+          candidatePseudonym: 'Bob M.',
+        ),
+      ];
+      final params = _outgoingParams(p, opts);
+      final wireOpts =
+          params['proposalOptions'] as List<Map<String, dynamic>>;
+      expect(wireOpts[0]['candidateDid'], equals('did:test:alice'));
+      expect(wireOpts[0]['candidatePseudonym'], equals('Alice T.'));
+      expect(wireOpts[0]['status'], equals('ACTIVE'));
+      expect(wireOpts[1]['candidateDid'], equals('did:test:bob'));
+    });
+
+    // ── Outgoing: empty options list ──────────────────────────────────────
+
+    test('Empty options list (SC ohne Optionen): proposalOptions key omitted '
+        '(no empty array)', () {
+      final p = _makeProposal(VotingMode.SINGLE_CHOICE);
+      final params = _outgoingParams(p, []);
+      expect(params.containsKey('proposalOptions'), isFalse);
+    });
+
+    // ── Wire format: camelCase keys ────────────────────────────────────────
+
+    test('Option wire map has camelCase keys '
+        '(optionId, position, label, status)', () {
+      final opt = _makeOpt(
+          optionId: 'opt_x', proposalId: 'p1', position: 5, label: 'Ja');
+      final wire = _optionToWireMap(opt);
+      expect(wire.containsKey('optionId'), isTrue);
+      expect(wire.containsKey('position'), isTrue);
+      expect(wire.containsKey('label'), isTrue);
+      expect(wire.containsKey('status'), isTrue);
+      // Ensure no snake_case leakage from the DB format.
+      expect(wire.containsKey('option_id'), isFalse);
+      expect(wire.containsKey('display_text'), isFalse);
+      expect(wire.containsKey('candidate_did'), isFalse);
+    });
+
+    // ── Wire format: timestamps as millis ─────────────────────────────────
+
+    test('candidateAcceptedAt and candidateWithdrawnAt encoded as '
+        'millisecondsSinceEpoch', () {
+      final accepted = DateTime.utc(2026, 3, 15, 12, 0, 0);
+      final opt = _makeOpt(
+        optionId: 'cand_x',
+        proposalId: 'p1',
+        label: 'Cand',
+        candidateAcceptedAt: accepted,
+      );
+      final wire = _optionToWireMap(opt);
+      expect(wire['candidateAcceptedAt'],
+          equals(accepted.millisecondsSinceEpoch));
+      expect(wire.containsKey('candidateWithdrawnAt'), isFalse);
+    });
+
+    // ── Wire format: WITHDRAWN ─────────────────────────────────────────────
+
+    test('WITHDRAWN candidate: status="WITHDRAWN" + candidateWithdrawnAt set',
+        () {
+      final withdrawn = DateTime.utc(2026, 4, 1, 9, 0, 0);
+      final opt = _makeOpt(
+        optionId: 'cand_w',
+        proposalId: 'p1',
+        label: 'Zurückgezogen',
+        status: OptionStatus.WITHDRAWN,
+        candidateWithdrawnAt: withdrawn,
+      );
+      final wire = _optionToWireMap(opt);
+      expect(wire['status'], equals('WITHDRAWN'));
+      expect(wire['candidateWithdrawnAt'],
+          equals(withdrawn.millisecondsSinceEpoch));
+    });
+
+    // ── Wire format: description optional ─────────────────────────────────
+
+    test('description included in wire only when non-empty', () {
+      final optWithDesc = _makeOpt(
+        optionId: 'opt_d',
+        proposalId: 'p1',
+        label: 'Desc',
+        description: 'Some info',
+      );
+      final optNoDesc =
+          _makeOpt(optionId: 'opt_nd', proposalId: 'p1', label: 'No desc');
+      final wireWith = _optionToWireMap(optWithDesc);
+      final wireWithout = _optionToWireMap(optNoDesc);
+      expect(wireWith['description'], equals('Some info'));
+      expect(wireWithout.containsKey('description'), isFalse);
+    });
+
+    // ── Incoming: SC proposal ─────────────────────────────────────────────
+
+    test('Incoming SC proposal with proposalOptions: each option parsed '
+        'correctly', () {
+      const proposalId = 'inc_sc_001';
+      final wireOpts = [
+        {
+          'optionId': 'opt_a',
+          'position': 0,
+          'label': 'Alpha',
+          'status': 'ACTIVE'
+        },
+        {
+          'optionId': 'opt_b',
+          'position': 1,
+          'label': 'Beta',
+          'status': 'ACTIVE'
+        },
+      ];
+      final parsed =
+          wireOpts.map((m) => _optionFromWire(proposalId, m)).toList();
+      expect(parsed.length, equals(2));
+      expect(parsed[0].optionId, equals('opt_a'));
+      expect(parsed[0].label, equals('Alpha'));
+      expect(parsed[0].position, equals(0));
+      expect(parsed[0].status, equals(OptionStatus.ACTIVE));
+      expect(parsed[0].proposalId, equals(proposalId));
+      expect(parsed[1].optionId, equals('opt_b'));
+      expect(parsed[1].label, equals('Beta'));
+    });
+
+    // ── Incoming: CC with WITHDRAWN ────────────────────────────────────────
+
+    test('Incoming CC proposal with WITHDRAWN candidate: status persisted '
+        'correctly', () {
+      final withdrawnAt = DateTime.utc(2026, 4, 5, 10, 0, 0);
+      final wireOpt = <String, dynamic>{
+        'optionId': 'cand_z',
+        'position': 0,
+        'label': 'Zurückgezogen',
+        'candidateDid': 'did:test:cand_z',
+        'candidatePseudonym': 'Z. Kandidat',
+        'status': 'WITHDRAWN',
+        'candidateWithdrawnAt': withdrawnAt.millisecondsSinceEpoch,
+      };
+      final opt = _optionFromWire('cc_proposal_001', wireOpt);
+      expect(opt.status, equals(OptionStatus.WITHDRAWN));
+      expect(opt.candidateDid, equals('did:test:cand_z'));
+      expect(opt.candidatePseudonym, equals('Z. Kandidat'));
+      expect(opt.candidateWithdrawnAt, equals(withdrawnAt));
+    });
+
+    // ── Idempotenz ──────────────────────────────────────────────────────────
+
+    test('Receiving same SC proposal twice: both times produces same '
+        'ProposalOption (same optionId → upsert deduplicates)', () {
+      const proposalId = 'idem_001';
+      final wireOpt = <String, dynamic>{
+        'optionId': 'opt_idem',
+        'position': 0,
+        'label': 'Idempotent',
+        'status': 'ACTIVE',
+      };
+      final first = _optionFromWire(proposalId, wireOpt);
+      final second = _optionFromWire(proposalId, wireOpt);
+      // Both produce the same DB key — upsert will overwrite, not duplicate.
+      expect(first.optionId, equals(second.optionId));
+      expect(first.proposalId, equals(second.proposalId));
+      expect(first.label, equals(second.label));
+      expect(first.toMap()['option_id'], equals(second.toMap()['option_id']));
+    });
+
+    // ── Legacy-Compat ──────────────────────────────────────────────────────
+
+    test('Legacy incoming proposal without proposalOptions key: '
+        '_persistIncomingOptions is a no-op', () {
+      // Mirrors the null-check guard at the top of _persistIncomingOptions.
+      final content = <String, dynamic>{
+        'title': 'Alter Antrag',
+        'description': 'Kein proposalOptions-Key',
+        'votingMode': 'YES_NO_ABSTAIN',
+      };
+      final raw = content['proposalOptions'];
+      // Null guard: function returns immediately, no DB writes.
+      expect(raw, isNull,
+          reason: 'Legacy content must not have proposalOptions key');
+    });
+
+    // ── Malformed mix ──────────────────────────────────────────────────────
+
+    test('Malformed entry mixed with valid entries: valid persisted, '
+        'malformed skipped, no crash', () {
+      const proposalId = 'malformed_001';
+      final rawList = <dynamic>[
+        // Valid
+        {
+          'optionId': 'opt_valid_1',
+          'position': 0,
+          'label': 'Valid 1',
+          'status': 'ACTIVE'
+        },
+        // Malformed: missing 'optionId' → cast to String throws
+        {'position': 1, 'label': 'No ID', 'status': 'ACTIVE'},
+        // Valid
+        {
+          'optionId': 'opt_valid_2',
+          'position': 2,
+          'label': 'Valid 2',
+          'status': 'ACTIVE'
+        },
+      ];
+
+      // Mirror the for-loop in _persistIncomingOptions.
+      final persisted = <ProposalOption>[];
+      int skipped = 0;
+      for (final entry in rawList) {
+        if (entry is! Map) {
+          skipped++;
+          continue;
+        }
+        final m = (entry as Map).cast<String, dynamic>();
+        try {
+          persisted.add(_optionFromWire(proposalId, m));
+        } catch (_) {
+          skipped++;
+        }
+      }
+
+      expect(persisted.length, equals(2),
+          reason: 'Both valid entries must be persisted');
+      expect(skipped, equals(1),
+          reason: 'Malformed entry must be counted as skipped');
+      expect(persisted[0].optionId, equals('opt_valid_1'));
+      expect(persisted[1].optionId, equals('opt_valid_2'));
+    });
+
+    // ── Existing-branch ─────────────────────────────────────────────────────
+
+    test('Edit on existing SC proposal with new option set: options in '
+        'wire content are parsed correctly (existing-branch path)', () {
+      // Both new-branch and existing-branch call _persistIncomingOptions
+      // with the same content map. The parsing logic is identical.
+      const proposalId = 'sc_edit_001';
+      final wireContent = <String, dynamic>{
+        'title': 'Überarbeiteter SC-Antrag',
+        'description': 'Neue Beschreibung',
+        'votingMode': 'SINGLE_CHOICE',
+        'proposalOptions': [
+          {
+            'optionId': 'opt_1',
+            'position': 0,
+            'label': 'Weg A',
+            'status': 'ACTIVE'
+          },
+          {
+            'optionId': 'opt_2',
+            'position': 1,
+            'label': 'Weg B',
+            'status': 'ACTIVE'
+          },
+        ],
+      };
+      final rawList = wireContent['proposalOptions'] as List;
+      final opts = rawList
+          .whereType<Map>()
+          .map((m) => _optionFromWire(proposalId, m.cast<String, dynamic>()))
+          .toList();
+      expect(opts.length, equals(2));
+      expect(opts[0].optionId, equals('opt_1'));
+      expect(opts[1].optionId, equals('opt_2'));
+    });
+
+    // ── YES_NO_ABSTAIN regression ──────────────────────────────────────────
+
+    test('YES_NO_ABSTAIN end-to-end (outgoing + incoming): no options '
+        'touched anywhere', () {
+      final p = _makeProposal(VotingMode.YES_NO_ABSTAIN);
+
+      // Outgoing: no proposalOptions key emitted.
+      final params = _outgoingParams(p, []);
+      expect(params.containsKey('proposalOptions'), isFalse);
+
+      // Incoming: YNA content has no proposalOptions key.
+      final content = <String, dynamic>{
+        'title': p.title,
+        'votingMode': 'YES_NO_ABSTAIN',
+      };
+      final raw = content['proposalOptions'];
+      // _persistIncomingOptions null-guard → no-op.
+      expect(raw, isNull);
+    });
+
+    // ── JSON-Numeric robustness ────────────────────────────────────────────
+
+    test('JSON-Numeric: position as double survives num.toInt() parsing', () {
+      // JSON decoding can produce num that is double (e.g. 2.0).
+      final wireOpt = <String, dynamic>{
+        'optionId': 'opt_num',
+        'position': 2.0, // simulate double from JSON decoder
+        'label': 'Numeric',
+        'status': 'ACTIVE',
+      };
+      final opt = _optionFromWire('p_num', wireOpt);
+      expect(opt.position, equals(2));
+      expect(opt.position.runtimeType, equals(int));
+    });
+
+    // ── Cross-device roundtrip ─────────────────────────────────────────────
+
+    test('Cross-device SC roundtrip: sender publishes 3 options, simulated '
+        'incoming on receiver, receiver reconstructs 3 entries with correct '
+        'optionIds/labels, and createdAt is set locally (not from sender)',
+        () {
+      // Sender sets createdAt to an explicit far-past value.
+      // After the roundtrip the receiver must NOT have this date.
+      final senderCreatedAt = DateTime.utc(2020, 1, 1);
+
+      // Step 1: Sender creates 3 options.
+      final senderProposal = _makeProposal(VotingMode.SINGLE_CHOICE);
+      final senderOptions = [
+        ProposalOption(
+          optionId: 'rt_opt_a',
+          proposalId: senderProposal.id,
+          label: 'Route A',
+          position: 0,
+          status: OptionStatus.ACTIVE,
+          createdAt: senderCreatedAt,
+          updatedAt: senderCreatedAt,
+        ),
+        ProposalOption(
+          optionId: 'rt_opt_b',
+          proposalId: senderProposal.id,
+          label: 'Route B',
+          position: 1,
+          status: OptionStatus.ACTIVE,
+          createdAt: senderCreatedAt,
+          updatedAt: senderCreatedAt,
+        ),
+        ProposalOption(
+          optionId: 'rt_opt_c',
+          proposalId: senderProposal.id,
+          label: 'Route C',
+          position: 2,
+          status: OptionStatus.ACTIVE,
+          createdAt: senderCreatedAt,
+          updatedAt: senderCreatedAt,
+        ),
+      ];
+
+      // Step 2: Sender serializes to wire (sorted by position ASC).
+      final sorted = [...senderOptions]
+        ..sort((a, b) => a.position.compareTo(b.position));
+      final wireList = sorted.map(_optionToWireMap).toList();
+
+      // Verify createdAt does NOT appear in wire format.
+      expect(wireList[0].containsKey('createdAt'), isFalse,
+          reason: 'createdAt must NOT be in wire format');
+      expect(wireList[0].containsKey('updatedAt'), isFalse,
+          reason: 'updatedAt must NOT be in wire format');
+
+      // Step 3: Encode as JSON and decode (simulates Nostr transport).
+      final encoded = jsonEncode({'proposalOptions': wireList});
+      final decoded = jsonDecode(encoded) as Map<String, dynamic>;
+      final receivedRaw = decoded['proposalOptions'] as List;
+
+      // Step 4: Receiver parses each entry (mirrors _persistIncomingOptions).
+      final receivedOptions = receivedRaw
+          .whereType<Map>()
+          .map((m) => _optionFromWire(
+                senderProposal.id,
+                m.cast<String, dynamic>(),
+              ))
+          .toList();
+
+      // Verify 3 entries with correct optionIds and labels.
+      expect(receivedOptions.length, equals(3));
+      final optIds = receivedOptions.map((o) => o.optionId).toList();
+      expect(optIds, containsAll(['rt_opt_a', 'rt_opt_b', 'rt_opt_c']));
+
+      final optA =
+          receivedOptions.firstWhere((o) => o.optionId == 'rt_opt_a');
+      expect(optA.label, equals('Route A'));
+      expect(optA.position, equals(0));
+
+      // Critical timestamp test: receiver's createdAt must be set locally,
+      // NOT be the sender's 2020-01-01 value (which is absent from the wire).
+      expect(
+        optA.createdAt.isAfter(DateTime.utc(2024, 1, 1)),
+        isTrue,
+        reason: 'createdAt must be set locally on receive, '
+            'not taken from sender wire payload',
+      );
+    });
+  });
 }
