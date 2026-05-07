@@ -14,6 +14,7 @@ import '../../core/transport/nostr/publish_result_status.dart';
 import '../../services/notification_service.dart';
 import 'audit_log_entry.dart';
 import 'cell_member.dart';
+import 'delegation.dart';
 import 'cell_service.dart';
 import 'retry_backoff.dart';
 import 'decision_record.dart';
@@ -1684,6 +1685,39 @@ class ProposalService {
     }
     // ── Ende Phase 4.7b castVote-Validierung ────────────────────────────────
 
+    // ── Phase G2.1.1b: Auto-revoke active delegation when the delegator
+    //    casts a direct vote (E5 first direction + D7 Status REVOKED). ────────
+    final activeDelegationsForVoter = await PodDatabase.instance
+        .listActiveDelegationsForProposal(proposalId);
+    final ownActiveDelegation = activeDelegationsForVoter
+        .where((m) => m['delegator_did'] == myDid)
+        .toList();
+    if (ownActiveDelegation.isNotEmpty) {
+      final old = Delegation.fromMap(ownActiveDelegation.first);
+      final autoRevoked = old.copyWith(
+        status: DelegationStatus.REVOKED,
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await PodDatabase.instance.upsertDelegation(autoRevoked.toMap());
+      await addAuditEntry(AuditLogEntry(
+        entryId: AuditLogEntry.generateId(),
+        proposalId: proposalId,
+        cellId: old.cellId,
+        eventType: AuditEventType.DELEGATION_REVOKED_BY_DIRECT_VOTE,
+        actorDid: myDid,
+        actorPseudonym: '',
+        timestamp: DateTime.now().toUtc(),
+        payload: {
+          'delegationId': old.delegationId,
+          'previousDelegateDid': old.delegateDid,
+          'reason': 'DIRECT_VOTE_CAST',
+        },
+      ));
+      print('[DELEGATION] auto-revoked due to direct vote: '
+          'delegationId=${old.delegationId} voter=$myDid');
+    }
+    // ── Ende Phase G2.1.1b ────────────────────────────────────────────────────
+
     final existingVotes = _votes[proposalId] ?? [];
     final myExisting = existingVotes
         .where((v) => v.voterDid == myDid)
@@ -1763,6 +1797,228 @@ class ProposalService {
     await castVote(proposalId, newChoice,
         reasoning: newReasoning,
         selectedOptionId: newSelectedOptionId);
+  }
+
+  // ── Delegation (Phase G2.1.1b) ─────────────────────────────────────────────
+
+  /// Phase G2.1.1b: Create a per-proposal delegation.
+  ///
+  /// Local-only — no wire publish in this phase. Returns the newly-created
+  /// (or, for re-delegation, the new ACTIVE) Delegation.
+  ///
+  /// Throws [StateError] when:
+  ///   - Proposal does not exist
+  ///   - Proposal.votingMode == CANDIDATE_CHOICE
+  ///   - Proposal.status != VOTING
+  ///   - Proposal.votingEndsAt is set and now > votingEndsAt
+  ///   - delegatorDid == delegateDid (self-delegation)
+  ///   - delegatorDid is not a member of proposal.cellId
+  ///   - delegateDid is not a member of proposal.cellId
+  ///   - delegator has already cast a direct vote on this proposal
+  Future<Delegation> createDelegation({
+    required String delegatorDid,
+    required String delegateDid,
+    required String proposalId,
+  }) async {
+    // 1. Proposal-Lookup.
+    final p = _proposals[proposalId];
+    if (p == null) throw StateError('Antrag nicht gefunden: $proposalId');
+
+    // 2. Modus-Check: CC-Ausschluss.
+    if (p.votingMode == VotingMode.CANDIDATE_CHOICE) {
+      print('[DELEGATION-REJECT] mode=CANDIDATE_CHOICE proposal=$proposalId');
+      throw StateError('Delegation in Kandidatenwahlen nicht möglich');
+    }
+
+    // 3. Status-Check: nur VOTING erlaubt.
+    if (p.status != ProposalStatus.VOTING) {
+      print('[DELEGATION-REJECT] status=${p.status.name} proposal=$proposalId');
+      throw StateError('Delegation nur während laufender Abstimmung möglich');
+    }
+
+    // 4. votingEndsAt-Check.
+    if (p.votingEndsAt != null &&
+        DateTime.now().toUtc().isAfter(p.votingEndsAt!)) {
+      print('[DELEGATION-REJECT] reason=voting-ended proposal=$proposalId');
+      throw StateError(
+          'Delegation nicht mehr möglich — Abstimmungsfrist ist abgelaufen');
+    }
+
+    // 5. Self-Check.
+    if (delegatorDid == delegateDid) {
+      throw StateError('Du kannst nicht an dich selbst delegieren');
+    }
+
+    // 6. Cell-Membership-Check (DB-direkt, L5 Entscheidung).
+    final memberRows =
+        await PodDatabase.instance.listCellMembers(p.cellId);
+    final memberDids = <String>{};
+    for (final row in memberRows) {
+      final m = CellMember.fromJson(row);
+      if (m.isConfirmed) memberDids.add(m.did);
+    }
+    if (!memberDids.contains(delegatorDid)) {
+      throw StateError(
+          'Du bist kein stimmberechtigtes Mitglied dieser Zelle');
+    }
+    if (!memberDids.contains(delegateDid)) {
+      throw StateError('Delegierter ist kein Mitglied dieser Zelle');
+    }
+
+    // 7. Direct-Vote-Check: delegator hat schon direkt abgestimmt?
+    final voteRows = await PodDatabase.instance.listVotes(proposalId);
+    final hasDirectVote =
+        voteRows.any((v) => (v['voter_did'] as String?) == delegatorDid);
+    if (hasDirectVote) {
+      throw StateError(
+          'Du hast bereits direkt abgestimmt — Delegation nicht mehr möglich');
+    }
+
+    // 8. Re-Delegation-Check (defense-in-depth neben Partial Unique Index).
+    final activeDelegations =
+        await PodDatabase.instance.listActiveDelegationsForProposal(proposalId);
+    final existingActive = activeDelegations
+        .where((m) => (m['delegator_did'] as String?) == delegatorDid)
+        .toList();
+
+    if (existingActive.isNotEmpty) {
+      final existing = Delegation.fromMap(existingActive.first);
+      if (existing.delegateDid == delegateDid) {
+        // Idempotent: gleicher Delegat — keine Änderung.
+        print('[DELEGATION] createDelegation: delegator=$delegatorDid '
+            'delegate=$delegateDid proposal=$proposalId result=idempotent');
+        return existing;
+      }
+      // Re-Delegation: alte Delegation auf SUPERSEDED setzen.
+      final superseded = existing.copyWith(
+        status: DelegationStatus.SUPERSEDED,
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await PodDatabase.instance.upsertDelegation(superseded.toMap());
+      await addAuditEntry(AuditLogEntry(
+        entryId: AuditLogEntry.generateId(),
+        proposalId: p.id,
+        cellId: p.cellId,
+        eventType: AuditEventType.DELEGATION_SUPERSEDED,
+        actorDid: delegatorDid,
+        actorPseudonym: '',
+        timestamp: DateTime.now().toUtc(),
+        payload: {
+          'oldDelegationId': existing.delegationId,
+          'newDelegationId': '', // filled below after creation
+          'oldDelegateDid': existing.delegateDid,
+          'newDelegateDid': delegateDid,
+          'proposalId': p.id,
+        },
+      ));
+    }
+
+    // 9. Neue Delegation anlegen.
+    final created = Delegation.create(
+      delegatorDid: delegatorDid,
+      delegateDid: delegateDid,
+      proposalId: proposalId,
+      cellId: p.cellId,
+    );
+    await PodDatabase.instance.upsertDelegation(created.toMap());
+    await addAuditEntry(AuditLogEntry(
+      entryId: AuditLogEntry.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      eventType: AuditEventType.DELEGATION_CREATED,
+      actorDid: delegatorDid,
+      actorPseudonym: '',
+      timestamp: DateTime.now().toUtc(),
+      payload: {
+        'delegationId': created.delegationId,
+        'delegateDid': delegateDid,
+        'proposalId': p.id,
+        'cellId': p.cellId,
+      },
+    ));
+
+    final result = existingActive.isNotEmpty ? 're-delegated' : 'created';
+    print('[DELEGATION] createDelegation: delegator=$delegatorDid '
+        'delegate=$delegateDid proposal=$proposalId result=$result');
+    return created;
+  }
+
+  /// Phase G2.1.1b: Revoke an existing delegation.
+  ///
+  /// Local-only — no wire publish in this phase.
+  ///
+  /// Throws [StateError] when:
+  ///   - Delegation does not exist
+  ///   - Delegation.status != ACTIVE
+  ///   - Underlying proposal not found
+  ///   - proposal.status != VOTING
+  ///   - proposal.votingEndsAt is set and now > votingEndsAt
+  Future<Delegation> revokeDelegation(String delegationId) async {
+    // 1. Delegation-Lookup.
+    final row = await PodDatabase.instance.getDelegation(delegationId);
+    if (row == null) {
+      throw StateError('Delegation nicht gefunden: $delegationId');
+    }
+
+    // 2. Status-Check: nur ACTIVE kann widerrufen werden.
+    final delegation = Delegation.fromMap(row);
+    if (delegation.status != DelegationStatus.ACTIVE) {
+      throw StateError(
+          'Nur aktive Delegationen können widerrufen werden, '
+          'aktueller Status: ${delegation.status.name}');
+    }
+
+    // 3. Proposal-Lookup.
+    final p = _proposals[delegation.proposalId];
+    if (p == null) {
+      throw StateError(
+          'Zu dieser Delegation gehört kein auffindbarer Antrag mehr');
+    }
+
+    // 4. Status-Check (verschärft per Joachim G2.1.1b): nur VOTING erlaubt.
+    if (p.status != ProposalStatus.VOTING) {
+      throw StateError(
+          'Delegation kann nur während laufender Abstimmung widerrufen werden, '
+          'aktueller Antragsstatus: ${p.status.name}');
+    }
+
+    // 5. votingEndsAt-Check.
+    if (p.votingEndsAt != null &&
+        DateTime.now().toUtc().isAfter(p.votingEndsAt!)) {
+      throw StateError(
+          'Delegation kann nach Ablauf der Abstimmungsfrist '
+          'nicht mehr widerrufen werden');
+    }
+
+    // 6. Update: ACTIVE → REVOKED.
+    final revoked = delegation.copyWith(
+      status: DelegationStatus.REVOKED,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    await PodDatabase.instance.upsertDelegation(revoked.toMap());
+
+    // 7. Audit.
+    await addAuditEntry(AuditLogEntry(
+      entryId: AuditLogEntry.generateId(),
+      proposalId: p.id,
+      cellId: p.cellId,
+      eventType: AuditEventType.DELEGATION_REVOKED,
+      actorDid: delegation.delegatorDid,
+      actorPseudonym: '',
+      timestamp: DateTime.now().toUtc(),
+      payload: {
+        'delegationId': delegationId,
+        'delegateDid': delegation.delegateDid,
+        'proposalId': p.id,
+        'reason': 'USER_REVOKED',
+      },
+    ));
+
+    // 8. Logging.
+    print('[DELEGATION] revokeDelegation: delegationId=$delegationId '
+        'delegator=${delegation.delegatorDid} previous=ACTIVE → REVOKED');
+
+    return revoked;
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
@@ -3297,6 +3553,17 @@ class ProposalService {
       buf.writeln('  • $label');
     }
     return buf.toString();
+  }
+
+  // ── Test hooks (visibleForTesting only) ───────────────────────────────────
+
+  @visibleForTesting
+  void injectProposalForTest(Proposal p) => _proposals[p.id] = p;
+
+  @visibleForTesting
+  void resetForTest() {
+    _proposals.clear();
+    _votes.clear();
   }
 }
 

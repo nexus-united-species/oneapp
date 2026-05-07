@@ -197,4 +197,12 @@ class IdentityService {
     }
     return result;
   }
+
+  // ── Test hooks (visibleForTesting only) ───────────────────────────────────
+
+  @visibleForTesting
+  void setForTest(NexusIdentity identity) => _current = identity;
+
+  @visibleForTesting
+  void clearForTest() => _current = null;
 }

@@ -1684,4 +1684,19 @@ class CellService {
   }
 
   void _notify() => _streamCtrl.add(null);
+
+  // ── Test hooks (visibleForTesting only) ───────────────────────────────────
+
+  @visibleForTesting
+  void addCellForTest(Cell cell) => _myCells.add(cell);
+
+  @visibleForTesting
+  void addMemberForTest(String cellId, CellMember member) =>
+      (_members[cellId] ??= []).add(member);
+
+  @visibleForTesting
+  void clearForTest() {
+    _myCells.clear();
+    _members.clear();
+  }
 }
