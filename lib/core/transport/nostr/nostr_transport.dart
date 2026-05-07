@@ -17,6 +17,7 @@ import '../../../core/identity/profile_service.dart';
 import '../../../features/chat/group_channel_service.dart';
 import '../../../features/governance/cell_founding_permit.dart';
 import '../../../features/governance/cell_founding_permit_service.dart';
+import '../../../features/governance/delegation.dart';
 import '../../../features/profile/profile_image_service.dart';
 import '../../../services/role_service.dart';
 import '../message_transport.dart';
@@ -176,6 +177,7 @@ class NostrTransport implements MessageTransport {
   final _proposalEventController = StreamController<NostrEvent>.broadcast();
   final _voteEventController = StreamController<NostrEvent>.broadcast();
   final _decisionRecordController = StreamController<NostrEvent>.broadcast();
+  final _delegationEventController = StreamController<NostrEvent>.broadcast();
 
   /// Emits Kind-31010 proposal events received from Nostr.
   Stream<NostrEvent> get onProposalEvent => _proposalEventController.stream;
@@ -187,10 +189,15 @@ class NostrTransport implements MessageTransport {
   Stream<NostrEvent> get onDecisionRecordEvent =>
       _decisionRecordController.stream;
 
+  /// Emits Kind-31012 delegation events received from Nostr.
+  /// Phase G2.1.2.
+  Stream<NostrEvent> get onDelegationEvent => _delegationEventController.stream;
+
   // Active subscription IDs for governance events (cell-filtered).
   String? _proposalSubId;
   String? _voteSubId;
   String? _decisionSubId;
+  String? _delegationSubId;
 
   // Last cell-ID list used when opening governance subscriptions.
   // Used to skip redundant close+reopen when the list hasn't changed.
@@ -358,10 +365,12 @@ class NostrTransport implements MessageTransport {
     if (_proposalSubId != null) _relayManager.closeSubscription(_proposalSubId!);
     if (_voteSubId != null) _relayManager.closeSubscription(_voteSubId!);
     if (_decisionSubId != null) _relayManager.closeSubscription(_decisionSubId!);
+    if (_delegationSubId != null) _relayManager.closeSubscription(_delegationSubId!);
     if (_permitSubId != null) _relayManager.closeSubscription(_permitSubId!);
     _proposalSubId = null;
     _voteSubId = null;
     _decisionSubId = null;
+    _delegationSubId = null;
     _permitSubId = null;
     for (final subId in _channelSubIds.values) {
       _relayManager.closeSubscription(subId);
@@ -1167,6 +1176,142 @@ class NostrTransport implements MessageTransport {
     return updated;
   }
 
+  /// Phase G2.1.2: Publish a delegation event (Kind 31012) over the Nostr
+  /// relay layer.
+  ///
+  /// Wire format follows v1.4 §31.2 (camelCase content, atomic embeds,
+  /// indexing-only tags).
+  ///
+  /// Returns a [PublishResult]. PARTIAL is treated as success per v1.4 §31.4
+  /// — only acceptedRelayCount == 0 indicates failure and the caller may
+  /// insert a retry queue entry.
+  Future<PublishResult> publishDelegationEvent(Delegation d) async {
+    print('[DELEGATION-PUB] === START === delegationId=${d.delegationId}');
+    print('[DELEGATION-PUB]   delegator=${d.delegatorDid}');
+    print('[DELEGATION-PUB]   delegate=${d.delegateDid}');
+    print('[DELEGATION-PUB]   proposal=${d.proposalId}');
+    print('[DELEGATION-PUB]   status=${d.status.name}');
+
+    final tags = <List<String>>[
+      ['d', d.delegationId],
+      ['t', 'nexus-delegation'],
+      ['t', 'nexus-cell-${d.cellId}'],
+      ['proposal_id', d.proposalId],
+      ['cell', d.cellId],
+      ['delegator', d.delegatorDid],
+      ['delegate', d.delegateDid],
+      ['status', d.status.name.toLowerCase()],
+    ];
+    print('[DELEGATION-PUB] Tags: $tags');
+
+    final content = <String, dynamic>{
+      'delegationId': d.delegationId,
+      'delegatorDid': d.delegatorDid,
+      'delegateDid': d.delegateDid,
+      'proposalId': d.proposalId,
+      'cellId': d.cellId,
+      'status': d.status.name,
+      'createdAt': d.createdAt.millisecondsSinceEpoch,
+      'updatedAt': d.updatedAt.millisecondsSinceEpoch,
+    };
+
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.delegationEvent,
+      content: jsonEncode(content),
+      tags: tags,
+    );
+
+    // Persist PENDING record before hitting the network (sync RAM lock).
+    final attemptedAt = DateTime.now().millisecondsSinceEpoch;
+    final shortEventId = event.id.length >= 8
+        ? event.id.substring(0, 8)
+        : event.id;
+    final pending = PublishResult(
+      publishResultId: 'publish_${event.id}',
+      localEventId: event.id,
+      nostrEventId: event.id,
+      eventKind: event.kind,
+      proposalId: d.proposalId,
+      cellId: d.cellId,
+      // delegationId stored in voteId field for retry-queue lookup (no DB
+      // migration needed; field is unused for kind-31012 as a vote ID).
+      voteId: d.delegationId,
+      status: PublishResultStatus.pending,
+      attemptedAt: attemptedAt,
+      retryCount: 0,
+      requiredAckCount: 2,
+      acceptedRelayCount: 0,
+      failedRelayCount: 0,
+      createdAt: attemptedAt,
+      updatedAt: attemptedAt,
+    );
+    await PublishResultDao.instance.insert(pending);
+    print('[PUBLISH-RESULT] kind=${event.kind} '
+        'eventId=$shortEventId status=PENDING attempted');
+
+    final outcome = await _relayManager.publish(event);
+
+    const requiredAckCount = 2;
+    final completedAt = DateTime.now().millisecondsSinceEpoch;
+    String newStatus;
+    String? finalStatus;
+    int? nextRetryAt;
+    if (outcome.acceptedCount >= requiredAckCount) {
+      newStatus = PublishResultStatus.accepted;
+      finalStatus = PublishResultStatus.accepted;
+    } else if (outcome.acceptedCount > 0) {
+      // Phase §31.4: PARTIAL is success — no retry needed.
+      // The event is already in the network via the accepting relay(s).
+      newStatus = PublishResultStatus.partial;
+    } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
+      newStatus = PublishResultStatus.rejected;
+      finalStatus = PublishResultStatus.rejected;
+    } else {
+      newStatus = PublishResultStatus.retrying;
+      nextRetryAt = completedAt + 60 * 1000;
+    }
+
+    final firstRejection = outcome.rejections.entries.isEmpty
+        ? null
+        : outcome.rejections.entries.first.value;
+
+    final updated = pending.copyWith(
+      status: newStatus,
+      finalStatus: finalStatus,
+      nextRetryAt: nextRetryAt,
+      acceptedRelayCount: outcome.acceptedCount,
+      failedRelayCount: outcome.rejectedCount,
+      ackReceivedAt: outcome.acceptedCount > 0 ? completedAt : null,
+      errorMessage: firstRejection,
+      updatedAt: completedAt,
+    );
+    await PublishResultDao.instance.update(updated);
+
+    // Phase §31.4: differentiated FULL / PARTIAL / FAILED log.
+    final totalRelays = outcome.sentToRelays.length;
+    if (outcome.acceptedCount == totalRelays && totalRelays > 0) {
+      print('[DELEGATION] publish FULL: '
+          '${outcome.acceptedCount}/$totalRelays accepted');
+    } else if (outcome.acceptedCount > 0) {
+      print('[DELEGATION] publish PARTIAL: '
+          '${outcome.acceptedCount}/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    } else {
+      print('[DELEGATION] publish FAILED: '
+          '0/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    }
+
+    if (outcome.acceptedCount > 0) {
+      print('[DELEGATION-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    } else {
+      print('[DELEGATION-PUB] === FAILED === '
+          '0/$totalRelays accepted: ${event.id.substring(0, 16)}…');
+    }
+    return updated;
+  }
+
   // ── Cell Founding Permits (Kind-31006) ───────────────────────────────────
 
   /// Returns true if [value] is a valid 64-character hex Nostr pubkey.
@@ -1316,6 +1461,10 @@ class NostrTransport implements MessageTransport {
         _relayManager.closeSubscription(_decisionSubId!);
         _decisionSubId = null;
       }
+      if (_delegationSubId != null) {
+        _relayManager.closeSubscription(_delegationSubId!);
+        _delegationSubId = null;
+      }
       return;
     }
 
@@ -1351,6 +1500,15 @@ class NostrTransport implements MessageTransport {
     });
     print('[NOSTR] Subscription Kind-31013 #t tags: $cellTags');
     print('[PROPOSAL] Decision sub: $_decisionSubId  (${cellIds.length} cells)');
+
+    if (_delegationSubId != null) _relayManager.closeSubscription(_delegationSubId!);
+    _delegationSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.delegationEvent],
+      '#t': cellTags,
+      'since': since,
+    });
+    print('[NOSTR] Subscription Kind-31012 #t tags: $cellTags');
+    print('[DELEGATION] Delegation sub: $_delegationSubId  (${cellIds.length} cells)');
   }
 
   // ── Sending ───────────────────────────────────────────────────────────────
@@ -1971,6 +2129,8 @@ class NostrTransport implements MessageTransport {
         _handleVoteEvent(event);
       case NostrKind.decisionRecord:
         _handleDecisionRecordEvent(event);
+      case NostrKind.delegationEvent:
+        _handleDelegationEvent(event);
       case NostrKind.cellFoundingPermit:
         _handleIncomingPermitEvent(event);
     }
@@ -2093,6 +2253,11 @@ class NostrTransport implements MessageTransport {
   void _handleDecisionRecordEvent(NostrEvent event) {
     print('[PROPOSAL] Kind-31013 decision record received: ${event.id}');
     _decisionRecordController.add(event);
+  }
+
+  void _handleDelegationEvent(NostrEvent event) {
+    print('[DELEGATION] Kind-31012 received: ${event.id}');
+    _delegationEventController.add(event);
   }
 
   void _handleFeedPost(NostrEvent event) {

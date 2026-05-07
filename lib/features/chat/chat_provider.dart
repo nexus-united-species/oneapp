@@ -44,6 +44,7 @@ import '../governance/cell_founding_permit_service.dart';
 import '../governance/cell_join_request.dart';
 import '../governance/cell_member.dart';
 import '../governance/cell_service.dart';
+import '../governance/delegation.dart';
 import '../governance/proposal_service.dart';
 import '../../services/invite_service.dart';
 
@@ -577,6 +578,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     transport.onDecisionRecordEvent.listen((event) {
       ProposalService.instance.handleIncomingDecisionRecord(event);
     });
+    transport.onDelegationEvent.listen((event) {
+      ProposalService.instance.handleIncomingDelegationEvent(event);
+    });
 
     // Outgoing: ProposalService → NostrTransport publish methods.
     ProposalService.instance.onPublishProposalToNostr = (params) async {
@@ -632,6 +636,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         contentHash: params['contentHash'] as String,
         previousDecisionHash: params['previousDecisionHash'] as String?,
       );
+    };
+
+    // G2.1.2: delegation publish callback.
+    ProposalService.instance.onPublishDelegationToNostr = (delegation) async {
+      return transport.publishDelegationEvent(delegation);
     };
 
     ProposalService.instance.getMyNostrPubkeyHex = () => transport.localNostrPubkeyHex;

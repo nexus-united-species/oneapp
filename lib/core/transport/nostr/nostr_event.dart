@@ -114,6 +114,20 @@ class NostrKind {
   /// Content: JSON { voteId, voterDid, voterPseudonym, reasoning?, createdAt }
   static const int voteEvent = 31011;
 
+  /// G2 governance — delegation event (NIP-33 parameterized replaceable).
+  /// Phase G2.1.2.
+  ///
+  /// d-tag: delegationId (UUID, unique per delegation record).
+  /// Tags: ['d',delegationId], ['t','nexus-delegation'],
+  ///        ['t','nexus-cell-<cellId>'], ['proposal_id',proposalId],
+  ///        ['cell',cellId], ['delegator',delegatorDid],
+  ///        ['delegate',delegateDid], ['status',status]
+  /// Content: JSON (camelCase) { delegationId, delegatorDid, delegateDid,
+  ///           proposalId, cellId, status, createdAt, updatedAt }
+  /// Note: proposalId is a UUID, NOT a 64-hex Nostr event ID — stored as
+  /// custom 'proposal_id' tag per NIP-01 (never as 'e' tag).
+  static const int delegationEvent = 31012;
+
   /// G2 governance – immutable decision record (normal event, NOT replaceable).
   ///
   /// Published once after a proposal is finalised.

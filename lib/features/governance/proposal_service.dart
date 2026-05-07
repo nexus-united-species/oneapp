@@ -111,6 +111,13 @@ class ProposalService {
   /// proposal_id UNIQUE constraint at the DB level.
   final Set<String> _seenDecisionEventIds = <String>{};
 
+  /// AETHER synchronous seen-set for incoming Kind-31012 delegation events.
+  /// Prevents duplicate audit log entries when two relays deliver the same
+  /// event in parallel. Cross-session dedup is provided by the
+  /// delegationId primary key + updatedAt comparison in the handler.
+  /// Phase G2.1.2.
+  final Set<String> _seenDelegationEventIds = <String>{};
+
   static const _tombstonesKey = 'proposal_tombstones';
   static const _tombstoneMigrationKey = 'proposal_tombstones_migrated_to_sqlite';
 
@@ -145,6 +152,10 @@ class ProposalService {
   /// Called to publish a Kind-31013 decision record.
   /// Returns a [PublishResult] tracking relay ACKs.
   Future<PublishResult> Function(Map<String, dynamic>)? onPublishDecisionToNostr;
+
+  /// Called to publish a Kind-31012 delegation event. Phase G2.1.2.
+  /// Returns a [PublishResult] tracking relay ACKs.
+  Future<PublishResult> Function(Delegation)? onPublishDelegationToNostr;
 
   /// Called to send a proposal discussion message via the transport layer.
   Future<void> Function(Map<String, dynamic>)? onSendDiscussionMessage;
@@ -1713,6 +1724,15 @@ class ProposalService {
           'reason': 'DIRECT_VOTE_CAST',
         },
       ));
+      // G2.1.2: wire publish so other devices see the REVOKED status during
+      // tally aggregation (G2.1.3).
+      final autoRevokeResult = await _publishDelegationToNostr(autoRevoked);
+      if (autoRevokeResult.acceptedRelayCount == 0) {
+        final totalAR =
+            autoRevokeResult.acceptedRelayCount + autoRevokeResult.failedRelayCount;
+        print('[DELEGATION] publish FAILED (auto-revoke): '
+            '${totalAR > 0 ? "0/$totalAR accepted" : "no relays"}, queuing retry');
+      }
       print('[DELEGATION] auto-revoked due to direct vote: '
           'delegationId=${old.delegationId} voter=$myDid');
     }
@@ -1911,6 +1931,15 @@ class ProposalService {
           'proposalId': p.id,
         },
       ));
+      // G2.1.2: publish SUPERSEDED delegation wire event first (re-delegation
+      // requires two events: old SUPERSEDED, then new ACTIVE).
+      final supersededResult = await _publishDelegationToNostr(superseded);
+      if (supersededResult.acceptedRelayCount == 0) {
+        final totalS =
+            supersededResult.acceptedRelayCount + supersededResult.failedRelayCount;
+        print('[DELEGATION] publish FAILED (SUPERSEDED): '
+            '${totalS > 0 ? "0/$totalS accepted" : "no relays"}, queuing retry');
+      }
     }
 
     // 9. Neue Delegation anlegen.
@@ -1936,6 +1965,15 @@ class ProposalService {
         'cellId': p.cellId,
       },
     ));
+
+    // G2.1.2: publish new ACTIVE delegation.
+    final createdResult = await _publishDelegationToNostr(created);
+    if (createdResult.acceptedRelayCount == 0) {
+      final totalC =
+          createdResult.acceptedRelayCount + createdResult.failedRelayCount;
+      print('[DELEGATION] publish FAILED (ACTIVE): '
+          '${totalC > 0 ? "0/$totalC accepted" : "no relays"}, queuing retry');
+    }
 
     final result = existingActive.isNotEmpty ? 're-delegated' : 'created';
     print('[DELEGATION] createDelegation: delegator=$delegatorDid '
@@ -2014,7 +2052,15 @@ class ProposalService {
       },
     ));
 
-    // 8. Logging.
+    // 8. G2.1.2: wire publish (DB + Audit already done above).
+    final revokeResult = await _publishDelegationToNostr(revoked);
+    if (revokeResult.acceptedRelayCount == 0) {
+      final totalR = revokeResult.acceptedRelayCount + revokeResult.failedRelayCount;
+      print('[DELEGATION] publish FAILED (REVOKED): '
+          '${totalR > 0 ? "0/$totalR accepted" : "no relays"}, queuing retry');
+    }
+
+    // 9. Logging.
     print('[DELEGATION] revokeDelegation: delegationId=$delegationId '
         'delegator=${delegation.delegatorDid} previous=ACTIVE → REVOKED');
 
@@ -2831,6 +2877,179 @@ class ProposalService {
     }
   }
 
+  /// Phase G2.1.2: Handle an incoming Kind-31012 delegation event from Nostr.
+  ///
+  /// Sender-only pattern §31.3: NO auto-actions are triggered on the receiver
+  /// side. The event is persisted (idempotent via delegationId as primary key)
+  /// and an audit entry is written iff the delegation is new locally.
+  Future<void> handleIncomingDelegationEvent(NostrEvent event) async {
+    // Synchronous seen-set check (same AETHER pattern as vote/decision).
+    if (!_seenDelegationEventIds.add(event.id)) {
+      print('[DELEGATION] Event already processed: ${event.id}');
+      return;
+    }
+
+    try {
+      // 1. Identity / Echo — skip echo of own events.
+      final myPubkey = getMyNostrPubkeyHex?.call();
+      if (myPubkey == null || myPubkey.isEmpty) {
+        print('[DELEGATION-REJECT] reason=no-identity event=${event.id}');
+        return;
+      }
+      if (event.pubkey == myPubkey) {
+        print('[DELEGATION] Echo of own delegation ignored: ${event.id}');
+        return;
+      }
+
+      // 2. Content parse.
+      Map<String, dynamic> content;
+      try {
+        content = jsonDecode(event.content) as Map<String, dynamic>;
+      } catch (_) {
+        print('[DELEGATION-REJECT] reason=malformed-content event=${event.id}');
+        return;
+      }
+
+      final delegationId = content['delegationId'] as String?;
+      final delegatorDid = content['delegatorDid'] as String?;
+      final delegateDid = content['delegateDid'] as String?;
+      final proposalId = content['proposalId'] as String?;
+      final cellId = content['cellId'] as String?;
+      final statusStr = content['status'] as String?;
+
+      if (delegationId == null || delegatorDid == null ||
+          delegateDid == null || proposalId == null || cellId == null) {
+        print('[DELEGATION-REJECT] reason=malformed-content '
+            '(missing required field) event=${event.id}');
+        return;
+      }
+
+      // 3. Status parse — EXPIRED/INVALID → REJECT (D9 Variante A: these
+      //    states exist only as tally-time evaluation results, never as
+      //    legitimate wire status values).
+      final parsedStatus = parseDelegationStatus(statusStr);
+      if (parsedStatus == DelegationStatus.EXPIRED ||
+          parsedStatus == DelegationStatus.INVALID) {
+        print('[DELEGATION-REJECT] reason=non-persistent-status '
+            'status=$statusStr event=${event.id}');
+        return;
+      }
+
+      final createdAtMs = (content['createdAt'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch;
+      final updatedAtMs = (content['updatedAt'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch;
+
+      // 4. Proposal lookup — cannot validate mode or provide tally context
+      //    without the proposal.
+      final proposal = _proposals[proposalId];
+      if (proposal == null) {
+        print('[DELEGATION-REJECT] reason=unknown-proposal '
+            'proposalId=$proposalId event=${event.id}');
+        return;
+      }
+
+      // 5. Mode validation (defense-in-depth, mirrors sender-side check).
+      if (proposal.votingMode == VotingMode.CANDIDATE_CHOICE) {
+        print('[DELEGATION-REJECT] reason=candidate-choice '
+            'proposalId=$proposalId event=${event.id}');
+        return;
+      }
+
+      // 6. Cell-membership validation (defense-in-depth).
+      final memberRows = await PodDatabase.instance.listCellMembers(cellId);
+      final memberDids = <String>{};
+      for (final row in memberRows) {
+        final m = CellMember.fromJson(row);
+        if (m.isConfirmed) memberDids.add(m.did);
+      }
+      if (!memberDids.contains(delegatorDid)) {
+        print('[DELEGATION-REJECT] reason=not-cell-member '
+            'delegatorDid=$delegatorDid event=${event.id}');
+        return;
+      }
+      if (!memberDids.contains(delegateDid)) {
+        print('[DELEGATION-REJECT] reason=not-cell-member '
+            'delegateDid=$delegateDid event=${event.id}');
+        return;
+      }
+
+      // 7. Idempotency check — updatedAt-based stale detection.
+      final existingRow =
+          await PodDatabase.instance.getDelegation(delegationId);
+
+      if (existingRow != null) {
+        final existing = Delegation.fromMap(existingRow);
+        if (updatedAtMs <= existing.updatedAt.millisecondsSinceEpoch) {
+          print('[DELEGATION] Stale incoming, ignored: $delegationId');
+          return;
+        }
+        // Newer wire version: update local row, NO audit (delegation was
+        // already known locally — either from sender or earlier receive).
+        final updated = existing.copyWith(
+          status: parsedStatus,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAtMs,
+              isUtc: true),
+          nostrEventId: event.id,
+        );
+        await PodDatabase.instance.upsertDelegation(updated.toMap());
+        print('[DELEGATION] Status update from wire: $delegationId '
+            '${existing.status.name} → ${parsedStatus.name}');
+        return;
+      }
+
+      // 8. New delegation: persist + audit.
+      final incoming = Delegation(
+        delegationId: delegationId,
+        delegatorDid: delegatorDid,
+        delegateDid: delegateDid,
+        proposalId: proposalId,
+        cellId: cellId,
+        status: parsedStatus,
+        nostrEventId: event.id,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(createdAtMs,
+            isUtc: true),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAtMs,
+            isUtc: true),
+      );
+      await PodDatabase.instance.upsertDelegation(incoming.toMap());
+
+      AuditEventType auditType;
+      switch (parsedStatus) {
+        case DelegationStatus.ACTIVE:
+          auditType = AuditEventType.DELEGATION_CREATED;
+        case DelegationStatus.REVOKED:
+          auditType = AuditEventType.DELEGATION_REVOKED;
+        case DelegationStatus.SUPERSEDED:
+          auditType = AuditEventType.DELEGATION_SUPERSEDED;
+        default:
+          auditType = AuditEventType.DELEGATION_CREATED;
+      }
+
+      await addAuditEntry(AuditLogEntry(
+        entryId: AuditLogEntry.generateId(),
+        proposalId: proposalId,
+        cellId: cellId,
+        eventType: auditType,
+        actorDid: delegatorDid,
+        actorPseudonym: '',
+        timestamp: DateTime.now().toUtc(),
+        payload: {
+          'delegationId': delegationId,
+          'delegateDid': delegateDid,
+          'proposalId': proposalId,
+          'source': 'wire_received',
+        },
+        nostrEventId: event.id,
+      ));
+
+      print('[DELEGATION] handleIncoming: persisted new $delegationId '
+          'status=${parsedStatus.name}');
+    } catch (e) {
+      print('[DELEGATION] handleIncomingDelegationEvent error: $e');
+    }
+  }
+
   // ── Retry queue (DB-based) ─────────────────────────────────────────────────
 
   void _startRetryTimer() {
@@ -2852,7 +3071,20 @@ class ProposalService {
       PublishResult? newResult;
 
       try {
-        if (pendingResult.voteId != null) {
+        if (pendingResult.eventKind == NostrKind.delegationEvent) {
+          // Delegation retry — delegationId stored in voteId field at publish
+          // time to avoid a DB migration (no delegationId column in
+          // publish_results). Phase G2.1.2.
+          final delegationId = pendingResult.voteId;
+          if (delegationId != null) {
+            final row =
+                await PodDatabase.instance.getDelegation(delegationId);
+            if (row != null) {
+              final delegation = Delegation.fromMap(row);
+              newResult = await _publishDelegationToNostr(delegation);
+            }
+          }
+        } else if (pendingResult.voteId != null) {
           // Vote retry
           final votes = _votes[pendingResult.proposalId] ?? [];
           final vote = votes
@@ -3169,6 +3401,31 @@ class ProposalService {
       'contentHash': contentHash,
       'previousDecisionHash': previousDecisionHash,
     });
+  }
+
+  /// Phase G2.1.2: thin wrapper calling [onPublishDelegationToNostr].
+  /// Returns a failed [PublishResult] when no callback is registered.
+  Future<PublishResult> _publishDelegationToNostr(Delegation d) async {
+    final fn = onPublishDelegationToNostr;
+    if (fn == null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      return PublishResult(
+        publishResultId: 'publish_no_callback_$now',
+        localEventId: '',
+        eventKind: 0,
+        status: PublishResultStatus.failed,
+        finalStatus: PublishResultStatus.failed,
+        attemptedAt: now,
+        retryCount: 0,
+        requiredAckCount: 2,
+        acceptedRelayCount: 0,
+        failedRelayCount: 0,
+        errorMessage: 'No transport callback registered',
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+    return fn(d);
   }
 
   /// Returns the `content_hash` of the most recent DecisionRecord for a cell,
