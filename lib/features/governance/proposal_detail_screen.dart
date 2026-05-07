@@ -12,8 +12,10 @@ import 'cell_service.dart';
 import 'edit_history_screen.dart';
 import 'proposal.dart';
 import 'proposal_edit_screen.dart';
+import 'proposal_option.dart';
 import 'proposal_service.dart';
 import 'vote.dart';
+import 'voting_mode.dart';
 
 /// Full detail view of a proposal — Tabs: Details / Historie.
 class ProposalDetailScreen extends StatefulWidget {
@@ -32,6 +34,8 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
 
   // Voting state
   VoteChoice? _selectedChoice;
+  String? _selectedOptionId; // Phase 4.7c3: for SC/CC option selection
+  List<ProposalOption> _options = []; // Phase 4.7c3: loaded for SC/CC
   final _reasoningCtrl = TextEditingController();
   Vote? _myExistingVote;
   bool _isVoting = false;
@@ -46,7 +50,20 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
       if (mounted) setState(() => _refreshProposal());
     });
     _refreshProposal();
+    _loadOptions();
     print('[G2-UI] Opening detail screen for: ${_proposal.id}');
+  }
+
+  /// Phase 4.7c3: Load proposal options for SC/CC proposals.
+  Future<void> _loadOptions() async {
+    if (_proposal.votingMode == VotingMode.YES_NO_ABSTAIN) return;
+    final rows =
+        await PodDatabase.instance.listProposalOptions(_proposal.id);
+    if (!mounted) return;
+    setState(() {
+      _options = rows.map(ProposalOption.fromMap).toList()
+        ..sort((a, b) => a.position.compareTo(b.position));
+    });
   }
 
   void _refreshProposal() {
@@ -56,6 +73,7 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
     // Pre-fill voting state from existing vote
     if (_selectedChoice == null && _myExistingVote != null) {
       _selectedChoice = _myExistingVote!.choice;
+      _selectedOptionId = _myExistingVote!.selectedOptionId;
       _reasoningCtrl.text = _myExistingVote!.reasoning ?? '';
     }
   }
@@ -260,7 +278,8 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
   Future<void> _castVote() async {
     if (_selectedChoice == null) return;
     setState(() => _isVoting = true);
-    print('[G2-UI] Cast vote: $_selectedChoice for ${_proposal.id}');
+    print('[G2-UI] Cast vote: $_selectedChoice for ${_proposal.id} '
+        'optionId=${_selectedOptionId ?? "-"}');
     try {
       await ProposalService.instance.castVote(
         _proposal.id,
@@ -268,6 +287,7 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
         reasoning: _reasoningCtrl.text.trim().isEmpty
             ? null
             : _reasoningCtrl.text.trim(),
+        selectedOptionId: _selectedOptionId,
       );
       if (mounted) {
         final isChange = _myExistingVote != null;
@@ -278,6 +298,10 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
             backgroundColor: Colors.green,
           ),
         );
+        setState(() {
+          _selectedChoice = null;
+          _selectedOptionId = null;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -348,6 +372,8 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
             proposal: _proposal,
             myExistingVote: _myExistingVote,
             selectedChoice: _selectedChoice,
+            selectedOptionId: _selectedOptionId,
+            options: _options,
             reasoningCtrl: _reasoningCtrl,
             isVoting: _isVoting,
             isSuperadmin: _isSuperadmin,
@@ -356,7 +382,22 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
               if (_myExistingVote != null) {
                 print('[G2-UI] Vote update from ${_myExistingVote!.choice} to $c');
               }
-              setState(() => _selectedChoice = c);
+              setState(() {
+                _selectedChoice = c;
+                _selectedOptionId = null; // clear option when choosing YNA
+              });
+            },
+            onSelectOption: (optionId) {
+              setState(() {
+                _selectedChoice = VoteChoice.ABSTAIN;
+                _selectedOptionId = optionId;
+              });
+            },
+            onSelectAbstention: () {
+              setState(() {
+                _selectedChoice = VoteChoice.ABSTAIN;
+                _selectedOptionId = null;
+              });
             },
             onCastVote: _castVote,
             onForceFinalize: _forceFinalize,
@@ -479,10 +520,14 @@ class _DetailsTab extends StatelessWidget {
   final Proposal proposal;
   final Vote? myExistingVote;
   final VoteChoice? selectedChoice;
+  final String? selectedOptionId;
+  final List<ProposalOption> options;
   final TextEditingController reasoningCtrl;
   final bool isVoting;
   final bool isSuperadmin;
   final ValueChanged<VoteChoice> onSelectChoice;
+  final ValueChanged<String> onSelectOption;
+  final VoidCallback onSelectAbstention;
   final VoidCallback onCastVote;
   final VoidCallback onForceFinalize;
 
@@ -490,10 +535,14 @@ class _DetailsTab extends StatelessWidget {
     required this.proposal,
     required this.myExistingVote,
     required this.selectedChoice,
+    required this.selectedOptionId,
+    required this.options,
     required this.reasoningCtrl,
     required this.isVoting,
     required this.isSuperadmin,
     required this.onSelectChoice,
+    required this.onSelectOption,
+    required this.onSelectAbstention,
     required this.onCastVote,
     required this.onForceFinalize,
   });
@@ -526,9 +575,13 @@ class _DetailsTab extends StatelessWidget {
             proposal: p,
             myExistingVote: myExistingVote,
             selectedChoice: selectedChoice,
+            selectedOptionId: selectedOptionId,
+            options: options,
             reasoningCtrl: reasoningCtrl,
             isVoting: isVoting,
             onSelectChoice: onSelectChoice,
+            onSelectOption: onSelectOption,
+            onSelectAbstention: onSelectAbstention,
             onCastVote: onCastVote,
             votes: votes,
             confirmedMemberCount: confirmedMembers,
@@ -537,7 +590,7 @@ class _DetailsTab extends StatelessWidget {
           _GracePeriodBanner()
         else if (p.status == ProposalStatus.DECIDED ||
             p.status == ProposalStatus.ARCHIVED)
-          _ResultSection(proposal: p, votes: votes),
+          _ResultSection(proposal: p, votes: votes, options: options),
 
         // ── Superadmin Force-Button (nur Voting + Superadmin) ─────────────
         if (p.status == ProposalStatus.VOTING && isSuperadmin) ...[
@@ -975,9 +1028,13 @@ class _VotingCard extends StatelessWidget {
   final Proposal proposal;
   final Vote? myExistingVote;
   final VoteChoice? selectedChoice;
+  final String? selectedOptionId;
+  final List<ProposalOption> options;
   final TextEditingController reasoningCtrl;
   final bool isVoting;
   final ValueChanged<VoteChoice> onSelectChoice;
+  final ValueChanged<String> onSelectOption;
+  final VoidCallback onSelectAbstention;
   final VoidCallback onCastVote;
   final List<Vote> votes;
   final int confirmedMemberCount;
@@ -986,9 +1043,13 @@ class _VotingCard extends StatelessWidget {
     required this.proposal,
     required this.myExistingVote,
     required this.selectedChoice,
+    required this.selectedOptionId,
+    required this.options,
     required this.reasoningCtrl,
     required this.isVoting,
     required this.onSelectChoice,
+    required this.onSelectOption,
+    required this.onSelectAbstention,
     required this.onCastVote,
     required this.votes,
     required this.confirmedMemberCount,
@@ -1058,53 +1119,59 @@ class _VotingCard extends StatelessWidget {
             const SizedBox(height: 12),
           ],
 
-          // Vote buttons — responsive layout (Bug 2: no overflow on phones)
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final buttons = [
-                _VoteButton(
-                    label: 'Ja',
-                    choice: VoteChoice.YES,
-                    color: Colors.green,
-                    selected: selectedChoice == VoteChoice.YES,
-                    onTap: () => onSelectChoice(VoteChoice.YES)),
-                _VoteButton(
-                    label: 'Enthaltung',
-                    choice: VoteChoice.ABSTAIN,
-                    color: Colors.blueGrey.shade300,
-                    selected: selectedChoice == VoteChoice.ABSTAIN,
-                    onTap: () => onSelectChoice(VoteChoice.ABSTAIN)),
-                _VoteButton(
-                    label: 'Nein',
-                    choice: VoteChoice.NO,
-                    color: Colors.red,
-                    selected: selectedChoice == VoteChoice.NO,
-                    onTap: () => onSelectChoice(VoteChoice.NO)),
-              ];
-              if (constraints.maxWidth >= 400) {
-                return Row(
-                  children: [
-                    Expanded(child: buttons[0]),
-                    const SizedBox(width: 8),
-                    Expanded(child: buttons[1]),
-                    const SizedBox(width: 8),
-                    Expanded(child: buttons[2]),
-                  ],
-                );
-              } else {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    buttons[0],
-                    const SizedBox(height: 8),
-                    buttons[1],
-                    const SizedBox(height: 8),
-                    buttons[2],
-                  ],
-                );
-              }
-            },
-          ),
+          // Vote buttons — mode-aware (Phase 4.7c3)
+          if (proposal.votingMode == VotingMode.YES_NO_ABSTAIN)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final buttons = [
+                  _VoteButton(
+                      label: 'Ja',
+                      choice: VoteChoice.YES,
+                      color: Colors.green,
+                      selected: selectedChoice == VoteChoice.YES,
+                      onTap: () => onSelectChoice(VoteChoice.YES)),
+                  _VoteButton(
+                      label: 'Enthaltung',
+                      choice: VoteChoice.ABSTAIN,
+                      color: Colors.blueGrey.shade300,
+                      selected: selectedChoice == VoteChoice.ABSTAIN &&
+                          selectedOptionId == null,
+                      onTap: () => onSelectChoice(VoteChoice.ABSTAIN)),
+                  _VoteButton(
+                      label: 'Nein',
+                      choice: VoteChoice.NO,
+                      color: Colors.red,
+                      selected: selectedChoice == VoteChoice.NO,
+                      onTap: () => onSelectChoice(VoteChoice.NO)),
+                ];
+                if (constraints.maxWidth >= 400) {
+                  return Row(
+                    children: [
+                      Expanded(child: buttons[0]),
+                      const SizedBox(width: 8),
+                      Expanded(child: buttons[1]),
+                      const SizedBox(width: 8),
+                      Expanded(child: buttons[2]),
+                    ],
+                  );
+                } else {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      buttons[0],
+                      const SizedBox(height: 8),
+                      buttons[1],
+                      const SizedBox(height: 8),
+                      buttons[2],
+                    ],
+                  );
+                }
+              },
+            )
+          else
+            // SINGLE_CHOICE and CANDIDATE_CHOICE: option list + Enthaltung
+            _buildOptionsButtons(options, selectedChoice, selectedOptionId,
+                onSelectOption, onSelectAbstention),
           const SizedBox(height: 14),
 
           // Reasoning
@@ -1229,6 +1296,41 @@ class _VotingCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Phase 4.7c3: Builds the voting UI for SINGLE_CHOICE and CANDIDATE_CHOICE.
+  Widget _buildOptionsButtons(
+    List<ProposalOption> opts,
+    VoteChoice? selectedChoice,
+    String? selectedOptionId,
+    ValueChanged<String> onSelectOption,
+    VoidCallback onSelectAbstention,
+  ) {
+    final activeOpts =
+        opts.where((o) => o.status == OptionStatus.ACTIVE).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final opt in activeOpts)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _OptionVoteButton(
+              label: opt.label,
+              selected: selectedOptionId == opt.optionId,
+              onTap: () => onSelectOption(opt.optionId),
+            ),
+          ),
+        const SizedBox(height: 8),
+        _VoteButton(
+          label: 'Enthaltung',
+          choice: VoteChoice.ABSTAIN,
+          color: Colors.blueGrey.shade300,
+          selected: selectedChoice == VoteChoice.ABSTAIN &&
+              selectedOptionId == null,
+          onTap: onSelectAbstention,
+        ),
+      ],
+    );
+  }
 }
 
 class _VoteButton extends StatelessWidget {
@@ -1277,6 +1379,60 @@ class _VoteButton extends StatelessWidget {
   }
 }
 
+// ── Option vote button (Phase 4.7c3) ─────────────────────────────────────────
+
+class _OptionVoteButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _OptionVoteButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : AppColors.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? AppColors.gold : AppColors.surfaceVariant,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selected ? AppColors.deepBlue : AppColors.onDark,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: selected ? AppColors.deepBlue : AppColors.onDark,
+                  fontWeight:
+                      selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Grace period banner ───────────────────────────────────────────────────────
 
 class _GracePeriodBanner extends StatelessWidget {
@@ -1312,8 +1468,13 @@ class _GracePeriodBanner extends StatelessWidget {
 class _ResultSection extends StatelessWidget {
   final Proposal proposal;
   final List<Vote> votes;
+  final List<ProposalOption> options;
 
-  const _ResultSection({required this.proposal, required this.votes});
+  const _ResultSection({
+    required this.proposal,
+    required this.votes,
+    this.options = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1394,7 +1555,7 @@ class _ResultSection extends StatelessWidget {
 
         // Transparency list
         if (votes.isNotEmpty)
-          _TransparencyList(votes: votes),
+          _TransparencyList(votes: votes, options: options),
       ],
     );
   }
@@ -1434,7 +1595,11 @@ class _StatColumn extends StatelessWidget {
 
 class _TransparencyList extends StatelessWidget {
   final List<Vote> votes;
-  const _TransparencyList({required this.votes});
+  final List<ProposalOption> options;
+  const _TransparencyList({
+    required this.votes,
+    this.options = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1456,7 +1621,7 @@ class _TransparencyList extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          ...votes.map((v) => _VoteRow(vote: v)),
+          ...votes.map((v) => _VoteRow(vote: v, options: options)),
         ],
       ),
     );
@@ -1465,15 +1630,40 @@ class _TransparencyList extends StatelessWidget {
 
 class _VoteRow extends StatelessWidget {
   final Vote vote;
-  const _VoteRow({required this.vote});
+  final List<ProposalOption> options;
+  const _VoteRow({required this.vote, this.options = const []});
 
   @override
   Widget build(BuildContext context) {
-    final (choiceLabel, choiceColor) = switch (vote.choice) {
-      VoteChoice.YES => ('Ja', Colors.green),
-      VoteChoice.NO => ('Nein', Colors.red),
-      VoteChoice.ABSTAIN => ('Enthaltung', AppColors.surfaceVariant),
-    };
+    // Phase 4.7c3: show option label when selectedOptionId is set.
+    String choiceLabel;
+    Color choiceColor;
+    if (vote.selectedOptionId != null) {
+      ProposalOption? matched;
+      for (final option in options) {
+        if (option.optionId == vote.selectedOptionId) {
+          matched = option;
+          break;
+        }
+      }
+      choiceLabel = matched != null ? matched.label : 'Unbekannte Option';
+      choiceColor = AppColors.gold;
+    } else {
+      switch (vote.choice) {
+        case VoteChoice.YES:
+          choiceLabel = 'Ja';
+          choiceColor = Colors.green;
+          break;
+        case VoteChoice.NO:
+          choiceLabel = 'Nein';
+          choiceColor = Colors.red;
+          break;
+        case VoteChoice.ABSTAIN:
+          choiceLabel = 'Enthaltung';
+          choiceColor = AppColors.surfaceVariant;
+          break;
+      }
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),

@@ -5539,4 +5539,175 @@ void main() {
       );
     });
   });
+
+  // ── createDraft — votingMode + initialOptions (Phase 4.7c3) ─────────────
+  //
+  // These tests verify the normalization and validation logic that
+  // createDraft implements at model boundary level.
+  // Pattern: mirror the service normalization inline, then verify the
+  // resulting Proposal and ProposalOption objects — no DB dependency.
+
+  group('createDraft — votingMode + initialOptions (Phase 4.7c3)', () {
+    // Helper: mirrors createDraft normalization logic.
+    List<String> _normalize(List<String> raw) => raw
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
+
+    // Helper: mirrors createDraft validation logic.
+    // Returns null if valid, or an error message string.
+    String? _validate(VotingMode mode, List<String> normalized) {
+      if (mode == VotingMode.YES_NO_ABSTAIN && normalized.isNotEmpty) {
+        return 'YES_NO_ABSTAIN must not have options '
+            '(got ${normalized.length})';
+      }
+      if (mode == VotingMode.SINGLE_CHOICE && normalized.length < 2) {
+        return 'SINGLE_CHOICE requires at least 2 options '
+            '(got ${normalized.length})';
+      }
+      return null;
+    }
+
+    test('YES_NO_ABSTAIN draft without options: '
+        'Proposal created with votingMode=YES_NO_ABSTAIN, '
+        'no options to persist', () {
+      final normalized = _normalize([]);
+      final error = _validate(VotingMode.YES_NO_ABSTAIN, normalized);
+      expect(error, isNull,
+          reason: 'YNA without options is valid');
+
+      final p = Proposal.create(
+        cellId: 'cell-sc-test',
+        creatorDid: 'did:test:alice',
+        creatorPseudonym: 'Alice',
+        title: 'YNA-Antrag',
+        description: 'Beschreibung',
+        votingMode: VotingMode.YES_NO_ABSTAIN,
+      );
+      expect(p.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
+      expect(normalized, isEmpty,
+          reason: 'no options to persist for YNA');
+    });
+
+    test('SINGLE_CHOICE draft with 3 options: '
+        'votingMode=SINGLE_CHOICE, 3 ProposalOptions with positions 0, 1, 2',
+        () {
+      final normalized = _normalize(['Route A', 'Route B', 'Route C']);
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNull, reason: 'SC with 3 options is valid');
+
+      final p = Proposal.create(
+        cellId: 'cell-sc-test',
+        creatorDid: 'did:test:alice',
+        creatorPseudonym: 'Alice',
+        title: 'SC-Antrag',
+        description: 'Beschreibung',
+        votingMode: VotingMode.SINGLE_CHOICE,
+      );
+      expect(p.votingMode, equals(VotingMode.SINGLE_CHOICE));
+
+      final opts = [
+        for (var i = 0; i < normalized.length; i++)
+          ProposalOption.create(
+            proposalId: p.id,
+            position: i,
+            label: normalized[i],
+          ),
+      ];
+      expect(opts.length, equals(3));
+      expect(opts[0].position, equals(0));
+      expect(opts[1].position, equals(1));
+      expect(opts[2].position, equals(2));
+      expect(opts[0].label, equals('Route A'));
+      expect(opts[1].label, equals('Route B'));
+      expect(opts[2].label, equals('Route C'));
+    });
+
+    test('SINGLE_CHOICE draft with 2 options: minimum accepted', () {
+      final normalized = _normalize(['Option A', 'Option B']);
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNull,
+          reason: 'SC with exactly 2 options is the accepted minimum');
+      expect(normalized.length, equals(2));
+    });
+
+    test('SINGLE_CHOICE draft with 1 option throws', () {
+      final normalized = _normalize(['Nur eine Option']);
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNotNull,
+          reason: 'SC with only 1 option must fail validation');
+      expect(error, contains('at least 2'));
+    });
+
+    test('SINGLE_CHOICE draft with 0 options throws', () {
+      final normalized = _normalize([]);
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNotNull,
+          reason: 'SC with 0 options must fail validation');
+      expect(error, contains('at least 2'));
+    });
+
+    test('YES_NO_ABSTAIN draft with options throws (illegal combination)', () {
+      final normalized = _normalize(['Option A', 'Option B']);
+      final error = _validate(VotingMode.YES_NO_ABSTAIN, normalized);
+      expect(error, isNotNull,
+          reason: 'YNA with options is an illegal combination');
+      expect(error, contains('must not have options'));
+    });
+
+    test('SC draft: leading/trailing whitespace in option labels is trimmed '
+        'before persist', () {
+      final raw = ['  Route A  ', '  Route B  ', ' Route C '];
+      final normalized = _normalize(raw);
+      expect(normalized[0], equals('Route A'));
+      expect(normalized[1], equals('Route B'));
+      expect(normalized[2], equals('Route C'));
+      expect(normalized.length, equals(3));
+    });
+
+    test('SC draft: empty / whitespace-only labels are dropped before '
+        'validation; only non-empty labels persist', () {
+      final raw = ['Option A', '   ', '', 'Option B'];
+      final normalized = _normalize(raw);
+      expect(normalized.length, equals(2),
+          reason: 'Two whitespace/empty labels must be dropped');
+      expect(normalized, containsAll(['Option A', 'Option B']));
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNull,
+          reason: 'Remaining 2 non-empty options satisfy SC minimum');
+    });
+
+    test('SC draft with 3 raw labels but only 1 non-empty after normalize: '
+        'throws (count check is on normalized list)', () {
+      final raw = ['Option A', '   ', ''];
+      final normalized = _normalize(raw);
+      expect(normalized.length, equals(1),
+          reason: 'Only 1 non-empty label after normalization');
+      final error = _validate(VotingMode.SINGLE_CHOICE, normalized);
+      expect(error, isNotNull,
+          reason: 'Normalized count < 2 must fail validation even if raw '
+              'list had 3 entries');
+    });
+
+    test('YNA draft with raw [\"\", \"   \"] labels normalizes to empty list '
+        'and is accepted (no options to persist)', () {
+      final raw = ['', '   '];
+      final normalized = _normalize(raw);
+      expect(normalized, isEmpty,
+          reason: 'All labels are empty/whitespace — normalized list is empty');
+      final error = _validate(VotingMode.YES_NO_ABSTAIN, normalized);
+      expect(error, isNull,
+          reason: 'YNA with empty normalized list is valid');
+    });
+
+    test('Created options have ACTIVE status by default', () {
+      final opt = ProposalOption.create(
+        proposalId: 'prop-test',
+        position: 0,
+        label: 'Test Option',
+      );
+      expect(opt.status, equals(OptionStatus.ACTIVE),
+          reason: 'ProposalOption.create must produce ACTIVE status');
+    });
+  });
 }

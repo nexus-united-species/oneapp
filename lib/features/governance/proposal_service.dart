@@ -387,6 +387,9 @@ class ProposalService {
   }
 
   /// Creates a draft using named parameters (convenience wrapper).
+  ///
+  /// Phase 4.7c3: accepts optional votingMode and initialOptionLabels.
+  /// Labels are normalized (trim + drop empty) before validation.
   Future<Proposal> createDraft({
     required String cellId,
     required String creatorDid,
@@ -395,8 +398,32 @@ class ProposalService {
     required String description,
     String? category,
     ProposalType type = ProposalType.SACHFRAGE,
+    VotingMode votingMode = VotingMode.YES_NO_ABSTAIN,
+    List<String> initialOptionLabels = const <String>[],
   }) async {
-    debugPrint('[PROPOSAL] Creating draft: $title');
+    debugPrint('[PROPOSAL] Creating draft: $title '
+        'mode=${votingMode.name} options=${initialOptionLabels.length}');
+
+    // Normalize: trim whitespace and drop empty entries BEFORE validation.
+    final normalizedOptions = initialOptionLabels
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
+
+    // Mode-aware validation on the normalized list.
+    if (votingMode == VotingMode.YES_NO_ABSTAIN &&
+        normalizedOptions.isNotEmpty) {
+      throw StateError(
+          'YES_NO_ABSTAIN proposal must not have options '
+          '(got ${normalizedOptions.length})');
+    }
+    if (votingMode == VotingMode.SINGLE_CHOICE &&
+        normalizedOptions.length < 2) {
+      throw StateError(
+          'SINGLE_CHOICE proposal requires at least 2 options '
+          '(got ${normalizedOptions.length})');
+    }
+
     final proposal = Proposal.create(
       cellId: cellId,
       creatorDid: creatorDid,
@@ -405,8 +432,25 @@ class ProposalService {
       description: description,
       category: category,
       proposalType: type,
+      votingMode: votingMode,
     );
-    return createProposal(proposal);
+    final created = await createProposal(proposal);
+
+    // Persist normalized options only for non-empty labels.
+    if (normalizedOptions.isNotEmpty) {
+      for (var i = 0; i < normalizedOptions.length; i++) {
+        final opt = ProposalOption.create(
+          proposalId: created.id,
+          position: i,
+          label: normalizedOptions[i],
+        );
+        await PodDatabase.instance.upsertProposalOption(opt.toMap());
+      }
+      debugPrint('[PROPOSAL] Persisted ${normalizedOptions.length} '
+          'options for ${created.id}');
+    }
+
+    return created;
   }
 
   /// Updates a DRAFT proposal (title/description/category changes before publishing).

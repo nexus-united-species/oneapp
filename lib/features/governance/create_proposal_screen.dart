@@ -6,6 +6,7 @@ import '../../shared/widgets/help_icon.dart';
 import 'cell.dart';
 import 'proposal_detail_screen.dart';
 import 'proposal_service.dart';
+import 'voting_mode.dart';
 
 /// Category entry: (internalKey, displayLabel)
 const _kCategories = [
@@ -36,10 +37,20 @@ class _CreateProposalScreenState extends State<CreateProposalScreen> {
   String? _category;
   bool _isSaving = false;
 
+  // Phase 4.7c3: voting mode + options state
+  VotingMode _votingMode = VotingMode.YES_NO_ABSTAIN;
+  List<TextEditingController> _optionCtrls = [
+    TextEditingController(),
+    TextEditingController(),
+  ];
+
   @override
   void dispose() {
     _titleCtrl.dispose();
     _descCtrl.dispose();
+    for (final c in _optionCtrls) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -50,6 +61,28 @@ class _CreateProposalScreenState extends State<CreateProposalScreen> {
 
     try {
       final identity = IdentityService.instance.currentIdentity!;
+
+      // Phase 4.7c3: UI-side pre-check for SC options (service normalizes again).
+      List<String> initialOptions = const <String>[];
+      if (_votingMode == VotingMode.SINGLE_CHOICE) {
+        initialOptions = _optionCtrls
+            .map((c) => c.text.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (initialOptions.length < 2) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Bitte mindestens 2 Optionen angeben.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          setState(() => _isSaving = false);
+          return;
+        }
+      }
+
       final proposal = await ProposalService.instance.createDraft(
         cellId: widget.cell.id,
         creatorDid: identity.did,
@@ -57,6 +90,8 @@ class _CreateProposalScreenState extends State<CreateProposalScreen> {
         title: _titleCtrl.text.trim(),
         description: _descCtrl.text.trim(),
         category: _category,
+        votingMode: _votingMode,
+        initialOptionLabels: initialOptions,
       );
 
       if (!mounted) return;
@@ -228,7 +263,79 @@ class _CreateProposalScreenState extends State<CreateProposalScreen> {
                   .toList(),
               onChanged: (v) => setState(() => _category = v),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+
+            // Voting mode
+            _Label('Abstimmungsart'),
+            DropdownButtonFormField<VotingMode>(
+              value: _votingMode,
+              dropdownColor: AppColors.surface,
+              style: const TextStyle(color: AppColors.onDark),
+              decoration: _inputDeco(''),
+              items: const [
+                DropdownMenuItem(
+                  value: VotingMode.YES_NO_ABSTAIN,
+                  child: Text('Ja / Nein / Enthaltung',
+                      style: TextStyle(color: AppColors.onDark)),
+                ),
+                DropdownMenuItem(
+                  value: VotingMode.SINGLE_CHOICE,
+                  child: Text('Auswahl aus Optionen',
+                      style: TextStyle(color: AppColors.onDark)),
+                ),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _votingMode = v);
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Options block — only for SINGLE_CHOICE
+            if (_votingMode == VotingMode.SINGLE_CHOICE) ...[
+              _Label('Optionen *'),
+              for (var i = 0; i < _optionCtrls.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _optionCtrls[i],
+                          decoration: _inputDeco('Option ${i + 1}'),
+                          style: const TextStyle(color: AppColors.onDark),
+                          maxLength: 80,
+                          buildCounter: (context,
+                                  {required currentLength,
+                                  required isFocused,
+                                  maxLength}) =>
+                              const SizedBox.shrink(),
+                        ),
+                      ),
+                      if (_optionCtrls.length > 2) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline,
+                              color: AppColors.onDark),
+                          onPressed: () => setState(() {
+                            _optionCtrls.removeAt(i).dispose();
+                          }),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: TextButton.icon(
+                  icon: const Icon(Icons.add, color: AppColors.gold),
+                  label: const Text('Option hinzufügen',
+                      style: TextStyle(color: AppColors.gold)),
+                  onPressed: () => setState(() {
+                    _optionCtrls.add(TextEditingController());
+                  }),
+                ),
+              ),
+            ],
 
             // Info card
             Container(
