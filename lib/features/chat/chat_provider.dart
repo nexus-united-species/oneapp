@@ -600,6 +600,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 isUtc: true)
             : null,
         editReason: params['editReason'] as String?,
+        votingMode: params['votingMode'] as String?,
       );
     };
 

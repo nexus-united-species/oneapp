@@ -2037,6 +2037,11 @@ class ProposalService {
       } else {
         // New proposal – create from event.
         final createdAtTs = content['createdAt'] as int? ?? event.createdAt;
+        // Phase 4.7c1: read votingMode from content with parseVotingMode.
+        // Legacy events (pre-4.7c1) lack the key → parseVotingMode(null)
+        // returns YES_NO_ABSTAIN, which matches the historical default
+        // behavior.
+        final votingModeStr = content['votingMode'] as String?;
         final proposal = Proposal(
           id: proposalId,
           cellId: cellId,
@@ -2054,6 +2059,7 @@ class ProposalService {
               createdAtTs * 1000,
               isUtc: true),
           version: version,
+          votingMode: parseVotingMode(votingModeStr),
           votingEndsAt: votingEndsAtStr != null
               ? DateTime.fromMillisecondsSinceEpoch(
                   int.parse(votingEndsAtStr) * 1000,
@@ -2624,6 +2630,7 @@ class ProposalService {
       if (p.votingEndsAt != null)
         'votingEndsAt': p.votingEndsAt!.millisecondsSinceEpoch ~/ 1000,
       if (editReason != null) 'editReason': editReason,
+      'votingMode': p.votingMode.name,
     });
   }
 

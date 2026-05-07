@@ -4821,4 +4821,148 @@ void main() {
           reason: 'Vote ID reference stays intact regardless of option status');
     });
   });
+
+  // ── Proposal wire format — votingMode (Phase 4.7c1) ─────────────────────
+  //
+  // These tests verify the contract at the model boundary that the
+  // _publishProposalToNostr helper satisfies.  They do not instantiate
+  // ProposalService (singleton / DB dependency) but validate:
+  //   • outgoing: p.votingMode.name matches what the params map carries
+  //   • incoming: parseVotingMode(content['votingMode']) produces the
+  //               correct VotingMode (same logic used in handleIncomingProposal)
+  //   • backwards-compat: null / unknown strings default to YES_NO_ABSTAIN
+  //   • edit-path: updating title/status of a proposal leaves votingMode intact
+
+  group('Proposal wire format — votingMode (Phase 4.7c1)', () {
+    // ── helpers ────────────────────────────────────────────────────────────
+
+    Proposal _makeProposal(VotingMode mode) => Proposal.create(
+          cellId: 'cell-test',
+          creatorDid: 'did:test:creator',
+          creatorPseudonym: 'Tester',
+          title: 'Test-Antrag',
+          description: 'Beschreibung',
+          votingMode: mode,
+        );
+
+    Map<String, dynamic> _outgoingParams(Proposal p) => {
+          'proposalId': p.id,
+          'cellId': p.cellId,
+          'type': p.proposalType.name,
+          'status': p.status.name,
+          'title': p.title,
+          'description': p.description,
+          'creatorDid': p.creatorDid,
+          'creatorPseudonym': p.creatorPseudonym,
+          'createdAt': p.createdAt.millisecondsSinceEpoch ~/ 1000,
+          'version': p.version,
+          if (p.category != null) 'category': p.category,
+          if (p.votingEndsAt != null)
+            'votingEndsAt': p.votingEndsAt!.millisecondsSinceEpoch ~/ 1000,
+          'votingMode': p.votingMode.name,
+        };
+
+    // ── Outgoing wire tests ────────────────────────────────────────────────
+
+    test('YES_NO_ABSTAIN proposal: outgoing params include '
+        'votingMode=YES_NO_ABSTAIN', () {
+      final p = _makeProposal(VotingMode.YES_NO_ABSTAIN);
+      final params = _outgoingParams(p);
+      expect(params['votingMode'], equals('YES_NO_ABSTAIN'));
+    });
+
+    test('SINGLE_CHOICE proposal: outgoing params include '
+        'votingMode=SINGLE_CHOICE', () {
+      final p = _makeProposal(VotingMode.SINGLE_CHOICE);
+      final params = _outgoingParams(p);
+      expect(params['votingMode'], equals('SINGLE_CHOICE'));
+    });
+
+    test('CANDIDATE_CHOICE proposal: outgoing params include '
+        'votingMode=CANDIDATE_CHOICE', () {
+      final p = _makeProposal(VotingMode.CANDIDATE_CHOICE);
+      final params = _outgoingParams(p);
+      expect(params['votingMode'], equals('CANDIDATE_CHOICE'));
+    });
+
+    // ── Incoming wire tests ────────────────────────────────────────────────
+
+    test('Incoming proposal with votingMode=SINGLE_CHOICE in content: '
+        'parsed correctly by parseVotingMode', () {
+      // Simulates content map as decoded from the Nostr event JSON.
+      final content = <String, dynamic>{'votingMode': 'SINGLE_CHOICE'};
+      final mode = parseVotingMode(content['votingMode'] as String?);
+      expect(mode, equals(VotingMode.SINGLE_CHOICE));
+    });
+
+    test('Incoming proposal with votingMode=CANDIDATE_CHOICE: '
+        'parsed correctly by parseVotingMode', () {
+      final content = <String, dynamic>{'votingMode': 'CANDIDATE_CHOICE'};
+      final mode = parseVotingMode(content['votingMode'] as String?);
+      expect(mode, equals(VotingMode.CANDIDATE_CHOICE));
+    });
+
+    // ── Backwards-compatibility tests ──────────────────────────────────────
+
+    test('Legacy incoming proposal without votingMode key: '
+        'defaults to YES_NO_ABSTAIN (parseVotingMode(null))', () {
+      // Pre-4.7c1 events lack the key entirely; accessing a missing map key
+      // returns null in Dart.
+      final content = <String, dynamic>{
+        'title': 'Alter Antrag',
+        'description': 'Kein votingMode-Key vorhanden',
+      };
+      final mode = parseVotingMode(content['votingMode'] as String?);
+      expect(mode, equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    test('Incoming proposal with unknown votingMode string ("FOOBAR"): '
+        'falls back to YES_NO_ABSTAIN', () {
+      final content = <String, dynamic>{'votingMode': 'FOOBAR'};
+      final mode = parseVotingMode(content['votingMode'] as String?);
+      expect(mode, equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    // ── YES_NO_ABSTAIN regression ──────────────────────────────────────────
+
+    test('YES_NO_ABSTAIN proposal create + receive: behavior unchanged '
+        'from pre-4.7c1', () {
+      // Create path: votingMode defaults to YES_NO_ABSTAIN.
+      final p = Proposal.create(
+        cellId: 'cell-reg',
+        creatorDid: 'did:test:reg',
+        creatorPseudonym: 'Reg',
+        title: 'Sachfrage',
+        description: 'Standard',
+      );
+      expect(p.votingMode, equals(VotingMode.YES_NO_ABSTAIN));
+
+      // Outgoing: name must be the wire string.
+      expect(p.votingMode.name, equals('YES_NO_ABSTAIN'));
+
+      // Incoming parse: same string must round-trip.
+      final parsed = parseVotingMode('YES_NO_ABSTAIN');
+      expect(parsed, equals(VotingMode.YES_NO_ABSTAIN));
+    });
+
+    // ── Edit-path stability ────────────────────────────────────────────────
+
+    test('Existing proposal edit (version increment): '
+        'votingMode unchanged', () {
+      // Simulate a SINGLE_CHOICE proposal that receives a title edit.
+      // The existing-branch in handleIncomingProposal updates
+      // title/description/version/status but must NOT touch votingMode.
+      final original = _makeProposal(VotingMode.SINGLE_CHOICE);
+      expect(original.votingMode, equals(VotingMode.SINGLE_CHOICE));
+
+      // Apply the same mutations as the existing-branch code
+      // (title update, version bump, status unchanged).
+      original.title = 'Überarbeiteter Titel';
+      original.description = 'Neue Beschreibung';
+      original.version = original.version + 1;
+      // votingMode is NOT touched by the existing-branch — verified here.
+      expect(original.votingMode, equals(VotingMode.SINGLE_CHOICE),
+          reason: 'votingMode must remain SINGLE_CHOICE after a title edit');
+    });
+  });
 }
