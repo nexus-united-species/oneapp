@@ -847,9 +847,9 @@ class NostrTransport implements MessageTransport {
       newStatus = PublishResultStatus.accepted;
       finalStatus = PublishResultStatus.accepted;
     } else if (outcome.acceptedCount > 0) {
-      // At least one relay accepted, but quorum was not reached.
+      // Phase 4.7d: PARTIAL is success — no retry needed.
+      // The event is already in the network via the accepting relay(s).
       newStatus = PublishResultStatus.partial;
-      nextRetryAt = completedAt + 60 * 1000;
     } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
       // All addressed relays responded negatively.
       newStatus = PublishResultStatus.rejected;
@@ -876,6 +876,20 @@ class NostrTransport implements MessageTransport {
     );
     await PublishResultDao.instance.update(updated);
 
+    // Phase 4.7d: differentiated FULL / PARTIAL / FAILED log.
+    final totalRelays = outcome.sentToRelays.length;
+    if (outcome.acceptedCount == totalRelays && totalRelays > 0) {
+      print('[PUBLISH] kind=${event.kind} FULL: '
+          '${outcome.acceptedCount}/$totalRelays accepted');
+    } else if (outcome.acceptedCount > 0) {
+      print('[PUBLISH] kind=${event.kind} PARTIAL: '
+          '${outcome.acceptedCount}/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    } else {
+      print('[PUBLISH] kind=${event.kind} FAILED: '
+          '0/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    }
     print('[PUBLISH-RESULT] kind=${event.kind} '
         'eventId=$shortEventId '
         'status=$newStatus '
@@ -883,7 +897,12 @@ class NostrTransport implements MessageTransport {
         'accepted=${outcome.acceptedCount} '
         'rejected=${outcome.rejectedCount} '
         'timedOut=${outcome.timedOut}');
-    print('[PROPOSAL-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    if (outcome.acceptedCount > 0) {
+      print('[PROPOSAL-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    } else {
+      print('[PROPOSAL-PUB] === FAILED === '
+          '0/$totalRelays accepted: ${event.id.substring(0, 16)}…');
+    }
     return updated;
   }
 
@@ -968,8 +987,9 @@ class NostrTransport implements MessageTransport {
       newStatus = PublishResultStatus.accepted;
       finalStatus = PublishResultStatus.accepted;
     } else if (outcome.acceptedCount > 0) {
+      // Phase 4.7d: PARTIAL is success — no retry needed.
+      // The event is already in the network via the accepting relay(s).
       newStatus = PublishResultStatus.partial;
-      nextRetryAt = completedAt + 60 * 1000;
     } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
       newStatus = PublishResultStatus.rejected;
       finalStatus = PublishResultStatus.rejected;
@@ -994,6 +1014,20 @@ class NostrTransport implements MessageTransport {
     );
     await PublishResultDao.instance.update(updated);
 
+    // Phase 4.7d: differentiated FULL / PARTIAL / FAILED log.
+    final totalRelays = outcome.sentToRelays.length;
+    if (outcome.acceptedCount == totalRelays && totalRelays > 0) {
+      print('[PUBLISH] kind=${event.kind} FULL: '
+          '${outcome.acceptedCount}/$totalRelays accepted');
+    } else if (outcome.acceptedCount > 0) {
+      print('[PUBLISH] kind=${event.kind} PARTIAL: '
+          '${outcome.acceptedCount}/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    } else {
+      print('[PUBLISH] kind=${event.kind} FAILED: '
+          '0/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    }
     print('[PUBLISH-RESULT] kind=${event.kind} '
         'eventId=$shortEventId '
         'status=$newStatus '
@@ -1001,7 +1035,12 @@ class NostrTransport implements MessageTransport {
         'accepted=${outcome.acceptedCount} '
         'rejected=${outcome.rejectedCount} '
         'timedOut=${outcome.timedOut}');
-    print('[VOTE-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    if (outcome.acceptedCount > 0) {
+      print('[VOTE-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    } else {
+      print('[VOTE-PUB] === FAILED === '
+          '0/$totalRelays accepted: ${event.id.substring(0, 16)}…');
+    }
     return updated;
   }
 
@@ -1071,8 +1110,9 @@ class NostrTransport implements MessageTransport {
       newStatus = PublishResultStatus.accepted;
       finalStatus = PublishResultStatus.accepted;
     } else if (outcome.acceptedCount > 0) {
+      // Phase 4.7d: PARTIAL is success — no retry needed.
+      // The event is already in the network via the accepting relay(s).
       newStatus = PublishResultStatus.partial;
-      nextRetryAt = completedAt + 60 * 1000;
     } else if (outcome.rejectedCount > 0 && !outcome.timedOut) {
       newStatus = PublishResultStatus.rejected;
       finalStatus = PublishResultStatus.rejected;
@@ -1097,6 +1137,20 @@ class NostrTransport implements MessageTransport {
     );
     await PublishResultDao.instance.update(updated);
 
+    // Phase 4.7d: differentiated FULL / PARTIAL / FAILED log.
+    final totalRelays = outcome.sentToRelays.length;
+    if (outcome.acceptedCount == totalRelays && totalRelays > 0) {
+      print('[PUBLISH] kind=${event.kind} FULL: '
+          '${outcome.acceptedCount}/$totalRelays accepted');
+    } else if (outcome.acceptedCount > 0) {
+      print('[PUBLISH] kind=${event.kind} PARTIAL: '
+          '${outcome.acceptedCount}/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    } else {
+      print('[PUBLISH] kind=${event.kind} FAILED: '
+          '0/$totalRelays accepted, '
+          '${outcome.rejectedCount} rejected, timedOut=${outcome.timedOut}');
+    }
     print('[PUBLISH-RESULT] kind=${event.kind} '
         'eventId=$shortEventId '
         'status=$newStatus '
@@ -1104,7 +1158,12 @@ class NostrTransport implements MessageTransport {
         'accepted=${outcome.acceptedCount} '
         'rejected=${outcome.rejectedCount} '
         'timedOut=${outcome.timedOut}');
-    print('[DECISION-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    if (outcome.acceptedCount > 0) {
+      print('[DECISION-PUB] === DONE === Published: ${event.id.substring(0, 16)}…');
+    } else {
+      print('[DECISION-PUB] === FAILED === '
+          '0/$totalRelays accepted: ${event.id.substring(0, 16)}…');
+    }
     return updated;
   }
 

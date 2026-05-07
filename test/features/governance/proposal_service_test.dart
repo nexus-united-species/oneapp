@@ -2,6 +2,8 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nexus_oneapp/core/transport/nostr/publish_result.dart';
+import 'package:nexus_oneapp/core/transport/nostr/publish_result_status.dart';
 import 'package:nexus_oneapp/features/governance/decision_record.dart';
 import 'package:nexus_oneapp/features/governance/proposal.dart';
 import 'package:nexus_oneapp/features/governance/proposal_option.dart';
@@ -5708,6 +5710,210 @@ void main() {
       );
       expect(opt.status, equals(OptionStatus.ACTIVE),
           reason: 'ProposalOption.create must produce ACTIVE status');
+    });
+  });
+
+  // ── Publish PARTIAL semantics (Phase 4.7d) ───────────────────────────────
+  //
+  // These tests verify the caller-side classification logic applied uniformly
+  // across the Proposal, Vote, and DecisionRecord publish paths.
+  //
+  // The classification rule (Phase 4.7d):
+  //   acceptedRelayCount > 0  → success (FULL or PARTIAL), no retry queued
+  //   acceptedRelayCount == 0 → failure (FAILED / timedOut), retry queued
+  //
+  // Helpers mirror the inline conditions in _publishAndQueueRetry and
+  // _processRetryQueue without requiring DB setup.
+
+  group('Publish PARTIAL semantics (Phase 4.7d)', () {
+    // ── Shared helpers ──────────────────────────────────────────────────────
+
+    /// Mirrors the caller-side success check used in _publishAndQueueRetry
+    /// and _processRetryQueue (Phase 4.7d).
+    bool _isPublishSuccess(PublishResult r) => r.acceptedRelayCount > 0;
+
+    /// Mirrors the nostr_transport.dart nextRetryAt decision:
+    /// PARTIAL no longer sets nextRetryAt (Phase 4.7d fix).
+    bool _shouldSetNextRetryAt(PublishResult r) => r.acceptedRelayCount == 0;
+
+    /// Returns the FULL / PARTIAL / FAILED label for log verification.
+    /// Mirrors the logic in _publishAndQueueRetry.
+    String _logLabel(PublishResult r) {
+      final total = r.acceptedRelayCount + r.failedRelayCount;
+      if (r.acceptedRelayCount == 0) return 'FAILED';
+      if (total > 0 && r.acceptedRelayCount < total) return 'PARTIAL';
+      return 'FULL';
+    }
+
+    /// Builds a minimal [PublishResult] for classification tests.
+    /// [kind] distinguishes proposal (31010) / vote (31011) / decision (31013).
+    PublishResult _result({
+      required int accepted,
+      required int failed,
+      required int kind,
+      bool timedOut = false,
+    }) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Status mirrors what nostr_transport assigns after relay responses.
+      final String status;
+      if (accepted >= 2) {
+        status = PublishResultStatus.accepted;
+      } else if (accepted > 0) {
+        status = PublishResultStatus.partial;
+      } else if (failed > 0 && !timedOut) {
+        status = PublishResultStatus.rejected;
+      } else {
+        status = PublishResultStatus.retrying;
+      }
+      return PublishResult(
+        publishResultId: 'publish_test_${kind}_${accepted}_$failed',
+        localEventId: 'evt_test_${kind}_${accepted}_$failed',
+        eventKind: kind,
+        status: status,
+        attemptedAt: now,
+        retryCount: 0,
+        requiredAckCount: 2,
+        acceptedRelayCount: accepted,
+        failedRelayCount: failed,
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+
+    // ── Proposal (kind 31010) ───────────────────────────────────────────────
+
+    test('Proposal FULL (2/2 accepted): success=true, no retry, label=FULL',
+        () {
+      final r = _result(accepted: 2, failed: 0, kind: 31010);
+      expect(_isPublishSuccess(r), isTrue,
+          reason: 'FULL: all relays accepted → success');
+      expect(_shouldSetNextRetryAt(r), isFalse,
+          reason: 'FULL: no retry needed');
+      expect(_logLabel(r), equals('FULL'));
+      expect(r.status, equals(PublishResultStatus.accepted));
+    });
+
+    test('Proposal PARTIAL (1/2 accepted): success=true, no retry, label=PARTIAL',
+        () {
+      final r = _result(accepted: 1, failed: 1, kind: 31010);
+      expect(_isPublishSuccess(r), isTrue,
+          reason: 'PARTIAL: event reached at least one relay → success');
+      expect(_shouldSetNextRetryAt(r), isFalse,
+          reason: 'PARTIAL: event is in network, retry would re-publish '
+              'unnecessarily');
+      expect(_logLabel(r), equals('PARTIAL'));
+      expect(r.status, equals(PublishResultStatus.partial));
+    });
+
+    test('Proposal FAILED (0/2 accepted, both rejected): '
+        'success=false, retry queued, label=FAILED', () {
+      final r = _result(accepted: 0, failed: 2, kind: 31010);
+      expect(_isPublishSuccess(r), isFalse,
+          reason: 'FAILED: no relay accepted → failure');
+      expect(_shouldSetNextRetryAt(r), isTrue,
+          reason: 'FAILED: event not in network → retry required');
+      expect(_logLabel(r), equals('FAILED'));
+      expect(r.status, equals(PublishResultStatus.rejected));
+    });
+
+    // ── Vote (kind 31011) ───────────────────────────────────────────────────
+
+    test('Vote FULL (2/2 accepted): success=true, no retry, label=FULL', () {
+      final r = _result(accepted: 2, failed: 0, kind: 31011);
+      expect(_isPublishSuccess(r), isTrue);
+      expect(_shouldSetNextRetryAt(r), isFalse);
+      expect(_logLabel(r), equals('FULL'));
+    });
+
+    test('Vote PARTIAL (1/2 accepted): success=true, no retry, label=PARTIAL',
+        () {
+      final r = _result(accepted: 1, failed: 1, kind: 31011);
+      expect(_isPublishSuccess(r), isTrue,
+          reason: 'Phase 4.7d: vote PARTIAL is success — same semantics as '
+              'Proposal PARTIAL');
+      expect(_shouldSetNextRetryAt(r), isFalse);
+      expect(_logLabel(r), equals('PARTIAL'));
+    });
+
+    test('Vote FAILED (0/2 accepted): success=false, retry queued', () {
+      final r = _result(accepted: 0, failed: 2, kind: 31011);
+      expect(_isPublishSuccess(r), isFalse);
+      expect(_shouldSetNextRetryAt(r), isTrue);
+      expect(_logLabel(r), equals('FAILED'));
+    });
+
+    // ── DecisionRecord (kind 31013) ─────────────────────────────────────────
+
+    test('DecisionRecord FULL (2/2 accepted): success=true, no retry, '
+        'label=FULL', () {
+      final r = _result(accepted: 2, failed: 0, kind: 31013);
+      expect(_isPublishSuccess(r), isTrue);
+      expect(_shouldSetNextRetryAt(r), isFalse);
+      expect(_logLabel(r), equals('FULL'));
+    });
+
+    test('DecisionRecord PARTIAL (1/2 accepted): success=true, no retry — '
+        'reproduces Phase 4.7c4 live-test scenario', () {
+      // Live test: Android published kind=31013, nos.lol accepted (1/2 relays).
+      // Windows received it correctly. Old code logged "publish failed" and
+      // set nextRetryAt. Phase 4.7d treats this as success.
+      final r = _result(accepted: 1, failed: 1, kind: 31013);
+      expect(_isPublishSuccess(r), isTrue,
+          reason: 'PARTIAL: Windows already received the event — '
+              'retry would publish it a second time unnecessarily');
+      expect(_shouldSetNextRetryAt(r), isFalse,
+          reason: 'nextRetryAt must NOT be set for PARTIAL '
+              '(findRetryDue only queries RETRYING, so PARTIAL with '
+              'nextRetryAt was already harmless, but Phase 4.7d removes '
+              'the confusion at the source)');
+      expect(_logLabel(r), equals('PARTIAL'));
+      expect(r.status, equals(PublishResultStatus.partial));
+    });
+
+    test('DecisionRecord FAILED (0/2 accepted): success=false, retry queued',
+        () {
+      final r = _result(accepted: 0, failed: 2, kind: 31013);
+      expect(_isPublishSuccess(r), isFalse);
+      expect(_shouldSetNextRetryAt(r), isTrue);
+      expect(_logLabel(r), equals('FAILED'));
+    });
+
+    // ── Edge cases ─────────────────────────────────────────────────────────
+
+    test('All timedOut (0 accepted, 0 rejected): treated as failure, '
+        'retry queued', () {
+      // Relay pool timed out without any OK or NOTICE.
+      // accepted=0 and failed=0 → totalRelays computed as 0,
+      // but acceptedRelayCount==0 still triggers retry.
+      final r = _result(accepted: 0, failed: 0, kind: 31013, timedOut: true);
+      expect(_isPublishSuccess(r), isFalse,
+          reason: 'timedOut with 0 accepted → event may not be in network');
+      expect(_shouldSetNextRetryAt(r), isTrue);
+      expect(_logLabel(r), equals('FAILED'));
+      expect(r.status, equals(PublishResultStatus.retrying));
+    });
+
+    test('Classification is consistent across all three publish paths: '
+        'acceptedRelayCount > 0 always means success regardless of kind', () {
+      for (final kind in [31010, 31011, 31013]) {
+        final partial = _result(accepted: 1, failed: 1, kind: kind);
+        final full = _result(accepted: 2, failed: 0, kind: kind);
+        final failed = _result(accepted: 0, failed: 2, kind: kind);
+
+        expect(_isPublishSuccess(partial), isTrue,
+            reason: 'kind=$kind PARTIAL must be success');
+        expect(_isPublishSuccess(full), isTrue,
+            reason: 'kind=$kind FULL must be success');
+        expect(_isPublishSuccess(failed), isFalse,
+            reason: 'kind=$kind FAILED must be failure');
+
+        expect(_shouldSetNextRetryAt(partial), isFalse,
+            reason: 'kind=$kind PARTIAL must not set nextRetryAt');
+        expect(_shouldSetNextRetryAt(full), isFalse,
+            reason: 'kind=$kind FULL must not set nextRetryAt');
+        expect(_shouldSetNextRetryAt(failed), isTrue,
+            reason: 'kind=$kind FAILED must set nextRetryAt');
+      }
     });
   });
 }

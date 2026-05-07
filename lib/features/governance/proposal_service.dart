@@ -1529,10 +1529,19 @@ class ProposalService {
       contentHash: record.contentHash,
       previousDecisionHash: record.previousDecisionHash,
     );
-    if (result.status != PublishResultStatus.accepted) {
-      print('[PROPOSAL] Decision record publish failed, queuing retry');
+    // Phase 4.7d: acceptedRelayCount > 0 means the event is in the network.
+    // PARTIAL (some relays accepted) is success — no retry needed.
+    final totalRelays =
+        result.acceptedRelayCount + result.failedRelayCount;
+    if (result.acceptedRelayCount == 0) {
+      final desc = totalRelays > 0 ? '0/$totalRelays accepted' : 'no relays';
+      print('[PROPOSAL] Decision record publish FAILED: $desc, queuing retry');
+    } else if (result.acceptedRelayCount < totalRelays) {
+      print('[PROPOSAL] Decision record publish PARTIAL: '
+          '${result.acceptedRelayCount}/$totalRelays relays accepted');
     } else {
-      print('[PROPOSAL] Decision record published: ${record.recordId}');
+      print('[PROPOSAL] Decision record publish FULL: '
+          '${result.acceptedRelayCount}/$totalRelays relays accepted');
     }
   }
 
@@ -1681,8 +1690,20 @@ class ProposalService {
     );
     final published = voteResult.status == PublishResultStatus.accepted ||
         voteResult.status == PublishResultStatus.partial;
+    // Phase 4.7d: differentiated vote publish log.
+    final voteTotalRelays =
+        voteResult.acceptedRelayCount + voteResult.failedRelayCount;
     if (!published) {
-      print('[PUBLISH-RESULT] Vote queued for retry: ${voteResult.status}');
+      final desc = voteTotalRelays > 0
+          ? '0/$voteTotalRelays accepted'
+          : 'no relays';
+      print('[VOTE] publish FAILED: $desc, queuing retry');
+    } else if (voteResult.acceptedRelayCount < voteTotalRelays) {
+      print('[VOTE] publish PARTIAL: '
+          '${voteResult.acceptedRelayCount}/$voteTotalRelays relays accepted');
+    } else {
+      print('[VOTE] publish FULL: '
+          '${voteResult.acceptedRelayCount}/$voteTotalRelays relays accepted');
     }
 
     await addAuditEntry(AuditLogEntry(
@@ -2611,8 +2632,9 @@ class ProposalService {
       int? nextRetryAt;
       String? finalStatus;
 
-      if (newResult != null &&
-          newResult.status == PublishResultStatus.accepted) {
+      // Phase 4.7d: PARTIAL (acceptedRelayCount > 0) is also success —
+      // the event reached the network and no further retry is needed.
+      if (newResult != null && newResult.acceptedRelayCount > 0) {
         nextStatus = PublishResultStatus.accepted;
         finalStatus = PublishResultStatus.accepted;
         print('[RETRY] SUCCESS after $retryCount attempts: eventId=$shortId');
