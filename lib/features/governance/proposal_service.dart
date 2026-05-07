@@ -113,6 +113,16 @@ class ProposalService {
   static const _tombstonesKey = 'proposal_tombstones';
   static const _tombstoneMigrationKey = 'proposal_tombstones_migrated_to_sqlite';
 
+  /// Phase 4.8: Pseudonym used for auto-created runoff proposals.
+  /// Constant across devices to prevent inadvertent disclosure of which
+  /// device performed the tally, and to make runoff proposals visually
+  /// distinguishable as system-generated.
+  static const String _kRunoffSystemPseudonym = 'Stichwahl-System';
+
+  /// Phase 4.8: SharedPreferences key for the set of original proposal IDs
+  /// for which this device has already created a runoff proposal.
+  static const String _kRunoffCreatedKey = 'runoff_created_for_original_ids';
+
   final _streamCtrl = StreamController<void>.broadcast();
   final _auditCtrl = StreamController<AuditLogEntry>.broadcast();
 
@@ -1090,6 +1100,16 @@ class ProposalService {
       tieOptionIdsJson: tieOptionIdsJson,
     );
 
+    // Phase 4.8: auto-create runoff proposal on TIE_REQUIRES_RUNOFF.
+    // Sender-only: only the device that ran _finalizeSingleChoice reaches
+    // this code path. Other devices receive the runoff via Nostr pipeline.
+    if (record.resultReason == ResultReason.tieRequiresRunoff) {
+      await _createRunoffProposal(
+        originalProposal: p,
+        decisionRecord: record,
+      );
+    }
+
     // 9) Audit-Eintrag
     await addAuditEntry(AuditLogEntry(
       entryId: AuditLogEntry.generateId(),
@@ -1329,6 +1349,16 @@ class ProposalService {
       optionResultsJson: optionResultsJson,
       tieOptionIdsJson: tieOptionIdsJson,
     );
+
+    // Phase 4.8: auto-create runoff proposal on TIE_REQUIRES_RUNOFF.
+    // Sender-only: only the device that ran _finalizeCandidateChoice reaches
+    // this code path. Other devices receive the runoff via Nostr pipeline.
+    if (record.resultReason == ResultReason.tieRequiresRunoff) {
+      await _createRunoffProposal(
+        originalProposal: p,
+        decisionRecord: record,
+      );
+    }
 
     // 9) Audit
     await addAuditEntry(AuditLogEntry(
@@ -3117,6 +3147,157 @@ class ProposalService {
   }
 
   void _notify() => _streamCtrl.add(null);
+
+  // ── Phase 4.8: Runoff auto-creation ──────────────────────────────────────
+
+  /// Phase 4.8: auto-creates a SINGLE_CHOICE runoff proposal for a tied tally.
+  ///
+  /// Sender-only: only the device that performed the tally (and thus reached
+  /// this code path) creates the runoff. Other devices receive the runoff via
+  /// the standard proposal Nostr pipeline (Phase 4.7c2 with proposalOptions).
+  ///
+  /// The runoff is published in DISCUSSION status so it is visible to all
+  /// members but not yet in VOTING. A Founder/Admin starts the runoff vote
+  /// through the normal startVoting flow.
+  Future<void> _createRunoffProposal({
+    required Proposal originalProposal,
+    required DecisionRecord decisionRecord,
+  }) async {
+    final originalId = originalProposal.id;
+
+    // 1) Idempotency: has this device already created a runoff for this
+    //    original? Backed by SharedPreferences (Phase 4.8 Variante 2-Light;
+    //    no DB migration required). Cross-session persistent on this device.
+    if (await _runoffExistsFor(originalId)) {
+      print('[RUNOFF] runoff already exists for $originalId, skipping');
+      return;
+    }
+
+    // 2) Resolve tie option IDs from the DecisionRecord JSON.
+    final tieOptionIds = _parseTieOptionIds(decisionRecord.tieOptionIdsJson);
+    if (tieOptionIds.length < 2) {
+      print('[RUNOFF] WARN unexpected tie size '
+          '(${tieOptionIds.length}) for $originalId — '
+          'aborting runoff creation');
+      return;
+    }
+
+    // 3) Look up the original option labels for the tied IDs.
+    final originalOptionRows =
+        await PodDatabase.instance.listProposalOptions(originalId);
+    final originalOptions =
+        originalOptionRows.map(ProposalOption.fromMap).toList();
+    final tieLabels = <String>[];
+    for (final id in tieOptionIds) {
+      ProposalOption? matched;
+      for (final opt in originalOptions) {
+        if (opt.optionId == id) {
+          matched = opt;
+          break;
+        }
+      }
+      if (matched != null) tieLabels.add(matched.label);
+    }
+    if (tieLabels.length < 2) {
+      print('[RUNOFF] WARN could not resolve tie labels '
+          'for $originalId, aborting');
+      return;
+    }
+
+    // 4) Build title + description.
+    final runoffTitle = 'Stichwahl: ${originalProposal.title}';
+    final runoffDescription = _buildRunoffDescription(
+      original: originalProposal,
+      tieLabels: tieLabels,
+    );
+
+    // 5) Creator identity: must use the local device DID for Nostr signing.
+    //    Pseudonym is the system constant to avoid tally-owner disclosure.
+    final localIdentity = IdentityService.instance.currentIdentity;
+    if (localIdentity == null) {
+      print('[RUNOFF] no local identity — cannot publish, aborting');
+      return;
+    }
+
+    // 6) createDraft → publishToDiscussion.
+    //    SINGLE_CHOICE with exactly the tied option labels preserved.
+    final draft = await createDraft(
+      cellId: originalProposal.cellId,
+      creatorDid: localIdentity.did,
+      creatorPseudonym: _kRunoffSystemPseudonym,
+      title: runoffTitle,
+      description: runoffDescription,
+      category: originalProposal.category,
+      type: originalProposal.proposalType,
+      votingMode: VotingMode.SINGLE_CHOICE,
+      initialOptionLabels: tieLabels,
+    );
+
+    print('[RUNOFF] draft ${draft.id} created for original '
+        '$originalId, advancing to DISCUSSION');
+
+    await publishToDiscussion(draft.id);
+    await _markRunoffCreated(originalId);
+
+    print('[RUNOFF] runoff ${draft.id} published to DISCUSSION '
+        'for original $originalId');
+  }
+
+  /// Phase 4.8: returns true if this device has already created a runoff
+  /// proposal for [originalProposalId].
+  ///
+  /// Backed by SharedPreferences (Variante 2-Light — no DB migration needed).
+  Future<bool> _runoffExistsFor(String originalProposalId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_kRunoffCreatedKey) ?? [];
+    return ids.contains(originalProposalId);
+  }
+
+  /// Phase 4.8: records [originalProposalId] in SharedPreferences so that
+  /// a future call to [_runoffExistsFor] returns true for this ID.
+  Future<void> _markRunoffCreated(String originalProposalId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList(_kRunoffCreatedKey) ?? [];
+    if (!ids.contains(originalProposalId)) {
+      ids.add(originalProposalId);
+      await prefs.setStringList(_kRunoffCreatedKey, ids);
+    }
+  }
+
+  /// Phase 4.8: parses [tieOptionIdsJson] into a list of option ID strings.
+  /// Returns an empty list on null, empty string, or malformed JSON.
+  List<String> _parseTieOptionIds(String? tieOptionIdsJson) {
+    if (tieOptionIdsJson == null || tieOptionIdsJson.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(tieOptionIdsJson);
+      if (decoded is List) return List<String>.from(decoded);
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Phase 4.8: builds the human-readable description for a runoff proposal.
+  /// Embeds the original proposal ID as a plain-text reference for traceability
+  /// (no model field required; UI linkage can be added in a later phase).
+  String _buildRunoffDescription({
+    required Proposal original,
+    required List<String> tieLabels,
+  }) {
+    final buf = StringBuffer();
+    buf.writeln('Diese Stichwahl folgt aus einer unentschiedenen '
+        'Abstimmung im Original-Antrag.');
+    buf.writeln();
+    buf.writeln('Original-Antrag: "${original.title}"');
+    buf.writeln('Original-ID: ${original.id}');
+    buf.writeln();
+    buf.writeln('Zur Auswahl stehen die unentschiedenen '
+        'Kandidaten/Optionen:');
+    for (final label in tieLabels) {
+      buf.writeln('  • $label');
+    }
+    return buf.toString();
+  }
 }
 
 /// DateTimeRange helper (used in getArchivedProposals filter).

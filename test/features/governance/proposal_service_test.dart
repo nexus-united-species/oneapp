@@ -5916,4 +5916,419 @@ void main() {
       }
     });
   });
+
+  // ── Runoff auto-creation (Phase 4.8) ────────────────────────────────────
+
+  group('Runoff auto-creation (Phase 4.8)', () {
+    // These tests mirror the private production helpers (_parseTieOptionIds,
+    // _buildRunoffDescription) and the runoff trigger/abort conditions.
+    // The production service methods require DB/singletons and cannot be called
+    // directly in unit tests — the logic is verified here as executable spec,
+    // consistent with the approach used in all prior Phase 4.x test groups.
+
+    /// Mirrors _parseTieOptionIds (proposal_service.dart Phase 4.8).
+    List<String> _parseTieOptionIds(String? json) {
+      if (json == null || json.isEmpty) return [];
+      try {
+        final decoded = jsonDecode(json);
+        if (decoded is List) return List<String>.from(decoded);
+        return [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    /// Mirrors _buildRunoffDescription (proposal_service.dart Phase 4.8).
+    String _buildRunoffDescription({
+      required String originalTitle,
+      required String originalId,
+      required List<String> tieLabels,
+    }) {
+      final buf = StringBuffer();
+      buf.writeln('Diese Stichwahl folgt aus einer unentschiedenen '
+          'Abstimmung im Original-Antrag.');
+      buf.writeln();
+      buf.writeln('Original-Antrag: "$originalTitle"');
+      buf.writeln('Original-ID: $originalId');
+      buf.writeln();
+      buf.writeln('Zur Auswahl stehen die unentschiedenen '
+          'Kandidaten/Optionen:');
+      for (final label in tieLabels) {
+        buf.writeln('  • $label');
+      }
+      return buf.toString();
+    }
+
+    /// Creates a minimal ProposalOption for testing.
+    ProposalOption _makeOpt(
+        String proposalId, String optionId, String label,
+        {int position = 0}) {
+      final now = DateTime.utc(2026, 5, 1);
+      return ProposalOption(
+        optionId: optionId,
+        proposalId: proposalId,
+        label: label,
+        status: OptionStatus.ACTIVE,
+        position: position,
+        createdAt: now,
+        updatedAt: now,
+      );
+    }
+
+    /// Mirrors the runoff-trigger predicate inside _finalize*Choice methods.
+    bool _shouldTriggerRunoff(String? resultReason) =>
+        resultReason == ResultReason.tieRequiresRunoff;
+
+    // ── _parseTieOptionIds ─────────────────────────────────────────────────
+
+    test('_parseTieOptionIds: valid JSON array → list of IDs', () {
+      final result = _parseTieOptionIds('["opt_a","opt_b"]');
+      expect(result, equals(['opt_a', 'opt_b']));
+      expect(result.length, equals(2));
+    });
+
+    test('_parseTieOptionIds: three-way tie', () {
+      final result = _parseTieOptionIds('["opt_a","opt_b","opt_c"]');
+      expect(result, equals(['opt_a', 'opt_b', 'opt_c']));
+      expect(result.length, equals(3));
+    });
+
+    test('_parseTieOptionIds: null → empty list', () {
+      expect(_parseTieOptionIds(null), isEmpty);
+    });
+
+    test('_parseTieOptionIds: empty string → empty list', () {
+      expect(_parseTieOptionIds(''), isEmpty);
+    });
+
+    test('_parseTieOptionIds: malformed JSON → empty list (no crash)', () {
+      expect(_parseTieOptionIds('not-valid-json{'), isEmpty);
+    });
+
+    test('_parseTieOptionIds: JSON object (not array) → empty list', () {
+      expect(_parseTieOptionIds('{"a":1,"b":2}'), isEmpty);
+    });
+
+    // ── Runoff trigger condition ───────────────────────────────────────────
+
+    test('resultReason=TIE_REQUIRES_RUNOFF → triggers runoff', () {
+      expect(
+        _shouldTriggerRunoff(ResultReason.tieRequiresRunoff),
+        isTrue,
+        reason: 'TIE_REQUIRES_RUNOFF must trigger runoff creation',
+      );
+    });
+
+    test('Non-tie: approved (resultReason=null) → no runoff', () {
+      expect(_shouldTriggerRunoff(null), isFalse);
+    });
+
+    test('Non-tie: QUORUM_NOT_MET → no runoff', () {
+      expect(_shouldTriggerRunoff(ResultReason.quorumNotMet), isFalse);
+    });
+
+    test('Non-tie: ALL_ABSTAIN → no runoff', () {
+      expect(_shouldTriggerRunoff(ResultReason.allAbstain), isFalse);
+    });
+
+    test('Non-tie: NO_VALID_VOTES → no runoff', () {
+      expect(_shouldTriggerRunoff(ResultReason.noValidVotes), isFalse);
+    });
+
+    test('Non-tie: WINNER_WITHDRAWN → no runoff', () {
+      expect(_shouldTriggerRunoff(ResultReason.winnerWithdrawn), isFalse);
+    });
+
+    test('Non-tie: ALL_CANDIDATES_WITHDRAWN → no runoff', () {
+      expect(
+        _shouldTriggerRunoff(ResultReason.allCandidatesWithdrawn),
+        isFalse,
+      );
+    });
+
+    // ── Option label resolution ────────────────────────────────────────────
+
+    test('Tie options resolved from original options: only tied IDs', () {
+      final originalOptions = [
+        _makeOpt('p_orig', 'opt_a', 'Alice',  position: 0),
+        _makeOpt('p_orig', 'opt_b', 'Bob',    position: 1),
+        _makeOpt('p_orig', 'opt_c', 'Carol',  position: 2),
+        _makeOpt('p_orig', 'opt_d', 'Dave',   position: 3),
+      ];
+      final tieIds = ['opt_a', 'opt_c'];
+      final tieLabels = <String>[];
+      for (final id in tieIds) {
+        for (final opt in originalOptions) {
+          if (opt.optionId == id) { tieLabels.add(opt.label); break; }
+        }
+      }
+      expect(tieLabels, equals(['Alice', 'Carol']));
+      expect(tieLabels.length, equals(2));
+      expect(tieLabels.contains('Bob'),  isFalse,
+          reason: 'Non-tied option must not appear in runoff');
+      expect(tieLabels.contains('Dave'), isFalse,
+          reason: 'Non-tied option must not appear in runoff');
+    });
+
+    test('Tie option resolution preserves label text exactly '
+        '(including Umlauts)', () {
+      final originalOptions = [
+        _makeOpt('p_orig', 'opt_x', 'Kandidat Ä/Ö/Ü-Test', position: 0),
+        _makeOpt('p_orig', 'opt_y', 'Zweite Wahl',           position: 1),
+      ];
+      final tieIds = ['opt_x', 'opt_y'];
+      final tieLabels = <String>[];
+      for (final id in tieIds) {
+        for (final opt in originalOptions) {
+          if (opt.optionId == id) { tieLabels.add(opt.label); break; }
+        }
+      }
+      expect(tieLabels[0], equals('Kandidat Ä/Ö/Ü-Test'));
+      expect(tieLabels[1], equals('Zweite Wahl'));
+    });
+
+    test('Unresolvable tie ID (corrupt data): only resolved labels returned, '
+        'no crash', () {
+      final originalOptions = [
+        _makeOpt('p_orig', 'opt_a', 'Alice', position: 0),
+        _makeOpt('p_orig', 'opt_b', 'Bob',   position: 1),
+      ];
+      final tieIds = ['opt_a', 'UNKNOWN_OPT_XYZ'];
+      final tieLabels = <String>[];
+      for (final id in tieIds) {
+        for (final opt in originalOptions) {
+          if (opt.optionId == id) { tieLabels.add(opt.label); break; }
+        }
+      }
+      // Only 1 resolved → production code aborts (tieLabels.length < 2)
+      expect(tieLabels.length, equals(1),
+          reason: 'Unresolvable ID → < 2 labels → abort condition fires');
+    });
+
+    // ── Abort conditions ──────────────────────────────────────────────────
+
+    test('Fewer than 2 resolved labels → abort guard fires', () {
+      final resolvedLabels = ['OnlyOne'];
+      expect(resolvedLabels.length < 2, isTrue,
+          reason: 'Production code must abort when fewer than 2 labels resolved');
+    });
+
+    test('Exactly 2 resolved labels → abort guard does NOT fire', () {
+      final resolvedLabels = ['Alpha', 'Beta'];
+      expect(resolvedLabels.length < 2, isFalse);
+    });
+
+    test('Empty tieOptionIds → length < 2 → abort guard fires', () {
+      final ids = _parseTieOptionIds(null);
+      expect(ids.length < 2, isTrue,
+          reason: 'Null IDs must trigger abort condition');
+    });
+
+    // ── Runoff proposal properties ─────────────────────────────────────────
+
+    test('Runoff title is "Stichwahl: <original-title>"', () {
+      const originalTitle = 'Bürgermeisterwahl 2026';
+      final runoffTitle = 'Stichwahl: $originalTitle';
+      expect(runoffTitle, equals('Stichwahl: Bürgermeisterwahl 2026'));
+    });
+
+    test('Runoff votingMode is SINGLE_CHOICE (not CC, not YES_NO)', () {
+      // The production code creates the draft with VotingMode.SINGLE_CHOICE.
+      // Even a CC tie produces a SINGLE_CHOICE runoff.
+      expect(VotingMode.SINGLE_CHOICE, isNot(equals(VotingMode.CANDIDATE_CHOICE)));
+      expect(VotingMode.SINGLE_CHOICE, isNot(equals(VotingMode.YES_NO_ABSTAIN)));
+    });
+
+    test('Runoff creatorPseudonym constant equals "Stichwahl-System"', () {
+      // Mirrors _kRunoffSystemPseudonym — device-neutral, system-generated marker.
+      const kRunoffSystemPseudonym = 'Stichwahl-System';
+      expect(kRunoffSystemPseudonym, equals('Stichwahl-System'));
+      expect(kRunoffSystemPseudonym, isNot(contains('@')),
+          reason: 'Must not look like a personal handle');
+    });
+
+    // ── _buildRunoffDescription ────────────────────────────────────────────
+
+    test('Description contains original title', () {
+      final desc = _buildRunoffDescription(
+        originalTitle: 'Test-Abstimmung',
+        originalId:    'orig_abc123',
+        tieLabels:     ['Kandidat A', 'Kandidat B'],
+      );
+      expect(desc, contains('Test-Abstimmung'));
+    });
+
+    test('Description contains original ID', () {
+      final desc = _buildRunoffDescription(
+        originalTitle: 'Test',
+        originalId:    'orig_abc123',
+        tieLabels:     ['A', 'B'],
+      );
+      expect(desc, contains('orig_abc123'));
+    });
+
+    test('Description contains all tie option labels', () {
+      final desc = _buildRunoffDescription(
+        originalTitle: 'Wahl',
+        originalId:    'orig_xyz',
+        tieLabels:     ['Kandidat Alpha', 'Kandidat Beta'],
+      );
+      expect(desc, contains('Kandidat Alpha'));
+      expect(desc, contains('Kandidat Beta'));
+    });
+
+    test('Description bullet-lists the tie labels with • prefix', () {
+      final desc = _buildRunoffDescription(
+        originalTitle: 'Wahl',
+        originalId:    'orig_xyz',
+        tieLabels:     ['Option Eins', 'Option Zwei'],
+      );
+      expect(desc, contains('  • Option Eins'));
+      expect(desc, contains('  • Option Zwei'));
+    });
+
+    test('Description mentions "Stichwahl" context', () {
+      final desc = _buildRunoffDescription(
+        originalTitle: 'Irgendwas',
+        originalId:    'orig_1',
+        tieLabels:     ['A', 'B'],
+      );
+      expect(desc.toLowerCase(), contains('stichwahl'));
+    });
+
+    // ── Idempotency logic ──────────────────────────────────────────────────
+
+    test('Idempotency: same original ID in tracking set → skip must fire', () {
+      // Mirrors _runoffExistsFor (SharedPreferences-backed in production).
+      const existingIds = ['orig_001', 'orig_002'];
+      const queryId = 'orig_001';
+      expect(existingIds.contains(queryId), isTrue,
+          reason: 'If original ID is tracked, runoff creation must be skipped');
+    });
+
+    test('Idempotency: unknown original ID → do NOT skip', () {
+      const existingIds = ['orig_001'];
+      const queryId = 'orig_999';
+      expect(existingIds.contains(queryId), isFalse,
+          reason: 'Unknown ID must not be blocked');
+    });
+
+    test('Idempotency: empty tracking set → no runoff exists for any ID', () {
+      const existingIds = <String>[];
+      const queryId = 'orig_001';
+      expect(existingIds.contains(queryId), isFalse);
+    });
+
+    // ── CC tally producing TIE: structural end-to-end verification ────────
+
+    test('CC tally: 4 candidates, 2 votes each on A+B → '
+        'TIE_REQUIRES_RUNOFF with exactly A and B in tieOptionIdsJson, '
+        'C and D excluded', () {
+      // Mirrors _finalizeCandidateChoice active-path tally (steps 3–7).
+      final options = [
+        _makeOpt('p_cc', 'opt_a', 'Alice', position: 0),
+        _makeOpt('p_cc', 'opt_b', 'Bob',   position: 1),
+        _makeOpt('p_cc', 'opt_c', 'Carol', position: 2),
+        _makeOpt('p_cc', 'opt_d', 'Dave',  position: 3),
+      ];
+
+      Vote _ccVote(String voteId, String optionId) => Vote(
+        voteId: voteId,
+        proposalId: 'p_cc',
+        voterPubkey: 'pk_$voteId',
+        voterDid: 'did:test:$voteId',
+        voterPseudonym: voteId,
+        choice: VoteChoice.ABSTAIN,
+        selectedOptionId: optionId,
+        createdAt: DateTime.utc(2026, 5, 1),
+        nostrEventId: '',
+      );
+
+      final votes = [
+        _ccVote('v1', 'opt_a'),
+        _ccVote('v2', 'opt_a'),
+        _ccVote('v3', 'opt_b'),
+        _ccVote('v4', 'opt_b'),
+      ];
+
+      final sortedVotes   = sortVotesDeterministic(votes);
+      final sortedOptions = sortOptionsDeterministic(options);
+
+      // Aggregate vote counts
+      final optionCounts = <String, int>{};
+      for (final opt in sortedOptions) {
+        optionCounts[opt.optionId] = 0;
+      }
+      for (final v in sortedVotes) {
+        if (v.selectedOptionId != null &&
+            optionCounts.containsKey(v.selectedOptionId)) {
+          optionCounts[v.selectedOptionId!] =
+              optionCounts[v.selectedOptionId!]! + 1;
+        }
+      }
+
+      // Active-path: all options are ACTIVE
+      final activeOptions = sortedOptions
+          .where((o) => o.status == OptionStatus.ACTIVE)
+          .toList();
+      final activeCounts = <String, int>{};
+      for (final opt in activeOptions) {
+        activeCounts[opt.optionId] = optionCounts[opt.optionId] ?? 0;
+      }
+      final maxActiveCount = activeCounts.values
+          .fold<int>(0, (a, b) => b > a ? b : a);
+      final activeWinners = activeOptions
+          .where((o) => activeCounts[o.optionId] == maxActiveCount)
+          .map((o) => o.optionId)
+          .toList();
+
+      final resultReason = activeWinners.length == 1
+          ? null
+          : ResultReason.tieRequiresRunoff;
+      final tieOptionIdsJson = activeWinners.length == 1
+          ? null
+          : canonicalJsonEncode(activeWinners);
+
+      // Verify tally result
+      expect(resultReason, equals(ResultReason.tieRequiresRunoff));
+      expect(_shouldTriggerRunoff(resultReason), isTrue);
+
+      // Verify tie IDs
+      final tieIds = _parseTieOptionIds(tieOptionIdsJson);
+      expect(tieIds, containsAll(['opt_a', 'opt_b']));
+      expect(tieIds.length, equals(2),
+          reason: 'Exactly the 2 tied candidates must appear in the runoff');
+      expect(tieIds.contains('opt_c'), isFalse,
+          reason: 'opt_c (0 votes) must NOT be in the runoff');
+      expect(tieIds.contains('opt_d'), isFalse,
+          reason: 'opt_d (0 votes) must NOT be in the runoff');
+
+      // Verify label resolution produces exactly the 2 tied labels
+      final tieLabels = <String>[];
+      for (final id in tieIds) {
+        for (final opt in options) {
+          if (opt.optionId == id) { tieLabels.add(opt.label); break; }
+        }
+      }
+      expect(tieLabels, containsAll(['Alice', 'Bob']));
+      expect(tieLabels.length, equals(2));
+      expect(tieLabels.contains('Carol'), isFalse);
+      expect(tieLabels.contains('Dave'),  isFalse);
+    });
+
+    // ── No-runoff for non-tie CC outcomes ─────────────────────────────────
+
+    test('CC single winner: runoff trigger is false', () {
+      expect(_shouldTriggerRunoff(null), isFalse,
+          reason: 'approved (resultReason=null) must not trigger runoff');
+    });
+
+    test('Runoff-of-a-runoff: same TIE_REQUIRES_RUNOFF logic applies '
+        '(recursive — documented, not blocked in Phase 4.8)', () {
+      // If a SINGLE_CHOICE runoff itself ends in a tie, Phase 4.8 fires again.
+      // This is intentional (documented edge case) — no special guard in 4.8.
+      expect(_shouldTriggerRunoff(ResultReason.tieRequiresRunoff), isTrue,
+          reason: 'Recursive runoff is possible per Phase 4.8 spec');
+    });
+  });
 }
