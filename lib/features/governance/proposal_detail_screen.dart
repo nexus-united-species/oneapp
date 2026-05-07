@@ -2204,6 +2204,19 @@ class _AuditTile extends StatelessWidget {
               'Ergebnis: $result  (Ja: $yes, Nein: $no, Enthaltung: $abstain, Beteiligung: $pct)');
         }(),
       AuditEventType.PROPOSAL_ARCHIVED => ('📦', 'Antrag archiviert'),
+      // Phase G2.1.1a — delegation audit types (displayed starting in G2.1.4).
+      AuditEventType.DELEGATION_CREATED =>
+        ('🔗', '$actor hat eine Delegation erstellt'),
+      AuditEventType.DELEGATION_REVOKED =>
+        ('🔗', '$actor hat eine Delegation widerrufen'),
+      AuditEventType.DELEGATION_REVOKED_BY_DIRECT_VOTE =>
+        ('🔗', '$actor hat eine Delegation durch Direktvote aufgehoben'),
+      AuditEventType.DELEGATION_SUPERSEDED =>
+        ('🔗', '$actor hat eine Delegation durch eine neue ersetzt'),
+      AuditEventType.DELEGATION_EXPIRED =>
+        ('🔗', 'Delegation abgelaufen (Abstimmung nicht mehr aktiv)'),
+      AuditEventType.DELEGATION_INVALIDATED =>
+        ('🔗', 'Delegation ungültig (Delegator kein gültiges Mitglied)'),
     };
   }
 

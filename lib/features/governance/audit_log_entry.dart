@@ -13,6 +13,13 @@ enum AuditEventType {
   VOTE_LATE_REJECTED,
   RESULT_CALCULATED,
   PROPOSAL_ARCHIVED,
+  // Phase G2.1.1a — delegation audit types (emitted starting from G2.1.1b).
+  DELEGATION_CREATED,
+  DELEGATION_REVOKED,
+  DELEGATION_REVOKED_BY_DIRECT_VOTE,
+  DELEGATION_SUPERSEDED,
+  DELEGATION_EXPIRED,
+  DELEGATION_INVALIDATED,
 }
 
 /// An immutable audit trail entry for a governance event.
@@ -57,11 +64,20 @@ class AuditLogEntry {
         'nostr_event_id': nostrEventId,
       };
 
-  factory AuditLogEntry.fromMap(Map<String, dynamic> map) => AuditLogEntry(
+  factory AuditLogEntry.fromMap(Map<String, dynamic> map) {
+    AuditEventType eventType;
+    try {
+      eventType = AuditEventType.values.byName(map['event_type'] as String);
+    } catch (_) {
+      // Defensive fallback: unknown event_type values (e.g. from a future
+      // schema version read by older code) do not crash the app.
+      eventType = AuditEventType.PROPOSAL_CREATED;
+    }
+    return AuditLogEntry(
         entryId: map['entry_id'] as String,
         proposalId: map['proposal_id'] as String,
         cellId: map['cell_id'] as String,
-        eventType: AuditEventType.values.byName(map['event_type'] as String),
+        eventType: eventType,
         actorDid: map['actor_did'] as String,
         actorPseudonym: map['actor_pseudonym'] as String,
         timestamp: DateTime.fromMillisecondsSinceEpoch(
@@ -70,4 +86,5 @@ class AuditLogEntry {
         payload: jsonDecode(map['payload'] as String) as Map<String, dynamic>,
         nostrEventId: map['nostr_event_id'] as String?,
       );
+  }
 }

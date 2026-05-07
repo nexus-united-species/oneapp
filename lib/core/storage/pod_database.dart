@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 22,
+      version: 23,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -475,6 +475,45 @@ class PodDatabase {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_status ON publish_results(status)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_next_retry ON publish_results(next_retry_at)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_publish_results_local_event ON publish_results(local_event_id)');
+
+    // v23: delegations — Liquid Democracy per G2 spec v1.4 §31.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS delegations (
+        delegation_id  TEXT PRIMARY KEY,
+        delegator_did  TEXT NOT NULL,
+        delegate_did   TEXT NOT NULL,
+        proposal_id    TEXT NOT NULL,
+        cell_id        TEXT NOT NULL,
+        status         TEXT NOT NULL DEFAULT 'ACTIVE',
+        nostr_event_id TEXT NOT NULL DEFAULT '',
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_delegations_proposal '
+      'ON delegations(proposal_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_delegations_delegator '
+      'ON delegations(delegator_did)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_delegations_delegate '
+      'ON delegations(delegate_did)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_delegations_status '
+      'ON delegations(status)',
+    );
+    // Plan-A Partial Unique Index: enforces one ACTIVE delegation per
+    // (delegator, proposal). REVOKED and SUPERSEDED rows are unaffected.
+    // Verification: smoke test in delegation_dao_test.dart (G2.1.1a D6).
+    await db.execute('''
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_active_delegation_per_proposal
+        ON delegations(delegator_did, proposal_id)
+        WHERE status = 'ACTIVE'
+    ''');
   }
 
   /// Returns true if [table] exists in the database.
@@ -1006,6 +1045,51 @@ class PodDatabase {
         );
       }
       print('[DB-MIGRATION-22] proposals.eligible_voters_json added');
+    }
+
+    if (oldVersion < 23) {
+      // Phase G2.1.1a: delegations table for Liquid Democracy (G2 spec v1.4 §31).
+      // ACTIVE / REVOKED / SUPERSEDED are persisted here.
+      // EXPIRED / INVALID are tally-time states only — not written to this table
+      // (D9 Variante A).
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS delegations (
+          delegation_id  TEXT PRIMARY KEY,
+          delegator_did  TEXT NOT NULL,
+          delegate_did   TEXT NOT NULL,
+          proposal_id    TEXT NOT NULL,
+          cell_id        TEXT NOT NULL,
+          status         TEXT NOT NULL DEFAULT 'ACTIVE',
+          nostr_event_id TEXT NOT NULL DEFAULT '',
+          created_at     INTEGER NOT NULL,
+          updated_at     INTEGER NOT NULL
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delegations_proposal '
+        'ON delegations(proposal_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delegations_delegator '
+        'ON delegations(delegator_did)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delegations_delegate '
+        'ON delegations(delegate_did)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_delegations_status '
+        'ON delegations(status)',
+      );
+      // Plan-A Partial Unique Index: one ACTIVE delegation per
+      // (delegator_did, proposal_id). Does not constrain REVOKED /
+      // SUPERSEDED rows. Verified by smoke test in delegation_dao_test.dart.
+      await db.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_active_delegation_per_proposal
+          ON delegations(delegator_did, proposal_id)
+          WHERE status = 'ACTIVE'
+      ''');
+      print('[DB-MIGRATION-23] delegations table + 5 indexes created');
     }
   }
 
@@ -2263,6 +2347,79 @@ class PodDatabase {
       'proposal_audit_log',
       where: 'proposal_id = ?',
       whereArgs: [proposalId],
+    );
+  }
+
+  // ── Delegations (Phase G2.1.1a) ───────────────────────────────────────────
+
+  /// Inserts or replaces a delegation row. Idempotent on [delegation_id].
+  ///
+  /// The Partial Unique Index [ux_active_delegation_per_proposal] enforces
+  /// that at most one ACTIVE delegation exists per (delegator_did, proposal_id).
+  /// A second INSERT with status='ACTIVE' for the same pair will throw a
+  /// [DatabaseException] (Plan-A, D6). The service layer (G2.1.1b) must
+  /// transition old ACTIVE rows to REVOKED/SUPERSEDED before inserting a new
+  /// ACTIVE row.
+  Future<void> upsertDelegation(Map<String, dynamic> data) async {
+    await _database.insert(
+      'delegations',
+      data,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Returns a single delegation row by [delegationId], or null if not found.
+  Future<Map<String, dynamic>?> getDelegation(String delegationId) async {
+    final rows = await _database.query(
+      'delegations',
+      where: 'delegation_id = ?',
+      whereArgs: [delegationId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Returns ALL delegations for a proposal (any status), ordered
+  /// deterministically by [created_at] ASC, [delegation_id] ASC.
+  ///
+  /// Used by audit views and re-computation paths (G2.1.3).
+  Future<List<Map<String, dynamic>>> listDelegationsForProposal(
+      String proposalId) async {
+    return _database.query(
+      'delegations',
+      where: 'proposal_id = ?',
+      whereArgs: [proposalId],
+      orderBy: 'created_at ASC, delegation_id ASC',
+    );
+  }
+
+  /// Returns only ACTIVE delegations for a proposal, ordered
+  /// deterministically by [created_at] ASC, [delegation_id] ASC.
+  ///
+  /// Used by the tally engine (G2.1.3) and uniqueness pre-checks in
+  /// the service layer (G2.1.1b).
+  Future<List<Map<String, dynamic>>> listActiveDelegationsForProposal(
+      String proposalId) async {
+    return _database.query(
+      'delegations',
+      where: "proposal_id = ? AND status = 'ACTIVE'",
+      whereArgs: [proposalId],
+      orderBy: 'created_at ASC, delegation_id ASC',
+    );
+  }
+
+  /// Returns all delegations created by [delegatorDid] across all proposals,
+  /// ordered by [updated_at] DESC, [delegation_id] ASC.
+  ///
+  /// Used by the personal delegation overview UI (G2.1.4).
+  Future<List<Map<String, dynamic>>> listDelegationsByDelegator(
+      String delegatorDid) async {
+    return _database.query(
+      'delegations',
+      where: 'delegator_did = ?',
+      whereArgs: [delegatorDid],
+      orderBy: 'updated_at DESC, delegation_id ASC',
     );
   }
 
