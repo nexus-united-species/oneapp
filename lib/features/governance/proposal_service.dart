@@ -834,28 +834,40 @@ class ProposalService {
     // Load votes directly from DB – the in-memory cache may be incomplete if
     // votes arrived on other devices while this device was offline.
     final voteRows = await PodDatabase.instance.listVotes(proposalId);
-    final votes = voteRows.map(Vote.fromMap).toList();
+    List<Vote> votes = voteRows.map(Vote.fromMap).toList();
     print('[PROPOSAL] finalizeProposal: ${votes.length} votes loaded from DB');
-    // Sync the cache so UI reflects the same data.
+    // Sync the cache with direct votes (synthetic delegated votes are RAM-only).
     _votes[proposalId] = votes;
 
-    final yes = votes.where((v) => v.choice == VoteChoice.YES).length;
-    final no = votes.where((v) => v.choice == VoteChoice.NO).length;
-    final abstain = votes.where((v) => v.choice == VoteChoice.ABSTAIN).length;
-    print('[PROPOSAL] Counted: Y=$yes N=$no A=$abstain');
-
     // ── Phase 4.2b: eligibleVoters-Snapshot ───────────────────
+    final Set<String> eligibleVoterSet;
     final int eligibleCount;
     if (p.eligibleVoters != null) {
+      eligibleVoterSet = p.eligibleVoters!.toSet();
       eligibleCount = p.eligibleVoters!.length;
     } else {
       // Fallback: no snapshot present (legacy data before v22).
-      eligibleCount = await CellService.instance.getMemberCount(p.cellId);
+      eligibleVoterSet = await _loadEligibleVoterSet(p.cellId);
+      eligibleCount = eligibleVoterSet.length;
       print('[TALLY-FALLBACK] Proposal $proposalId has no '
           'eligibleVoters snapshot, using current cell_members count: '
           '$eligibleCount');
     }
     // ──────────────────────────────────────────────────────────
+
+    // ── Phase G2.1.3: Delegation-Aggregation ─────────────────
+    votes = await _aggregateVotesWithDelegations(
+      directVotes: votes,
+      proposalId: proposalId,
+      cellId: p.cellId,
+      eligibleVoters: eligibleVoterSet,
+    );
+    // ── Ende Phase G2.1.3 ────────────────────────────────────
+
+    final yes = votes.where((v) => v.choice == VoteChoice.YES).length;
+    final no = votes.where((v) => v.choice == VoteChoice.NO).length;
+    final abstain = votes.where((v) => v.choice == VoteChoice.ABSTAIN).length;
+    print('[PROPOSAL] Counted: Y=$yes N=$no A=$abstain');
 
     final participation = eligibleCount > 0
         ? (yes + no + abstain) / eligibleCount
@@ -973,30 +985,41 @@ class ProposalService {
 
     // 1) Votes + Options laden
     final voteRows = await PodDatabase.instance.listVotes(p.id);
-    final votes = voteRows.map(Vote.fromMap).toList();
+    List<Vote> votes = voteRows.map(Vote.fromMap).toList();
     final optionRows =
         await PodDatabase.instance.listProposalOptions(p.id);
     final options = optionRows.map(ProposalOption.fromMap).toList();
     print('[TALLY-INPUT] ${p.id} votes=${votes.length} '
         'options=${options.length}');
 
-    // Cache sync — analog YES_NO_ABSTAIN-Pfad
+    // Cache sync — analog YES_NO_ABSTAIN-Pfad (direct votes only)
     _votes[p.id] = votes;
 
-    // 2) Deterministisch sortieren
-    final sortedVotes = sortVotesDeterministic(votes);
-    final sortedOptions = sortOptionsDeterministic(options);
-
-    // 3) eligibleVoters-Snapshot
+    // 2a) eligibleVoters-Snapshot — needed before delegation aggregation
+    final Set<String> eligibleVoterSet;
     final int eligibleCount;
     if (p.eligibleVoters != null) {
+      eligibleVoterSet = p.eligibleVoters!.toSet();
       eligibleCount = p.eligibleVoters!.length;
     } else {
-      eligibleCount =
-          await CellService.instance.getMemberCount(p.cellId);
+      eligibleVoterSet = await _loadEligibleVoterSet(p.cellId);
+      eligibleCount = eligibleVoterSet.length;
       print('[TALLY-FALLBACK] ${p.id} eligibleVoters snapshot '
           'missing, using current cell_members: $eligibleCount');
     }
+
+    // ── Phase G2.1.3: Delegation-Aggregation ─────────────────
+    votes = await _aggregateVotesWithDelegations(
+      directVotes: votes,
+      proposalId: p.id,
+      cellId: p.cellId,
+      eligibleVoters: eligibleVoterSet,
+    );
+    // ── Ende Phase G2.1.3 ────────────────────────────────────
+
+    // 2b) Deterministisch sortieren (über augmented votes)
+    final sortedVotes = sortVotesDeterministic(votes);
+    final sortedOptions = sortOptionsDeterministic(options);
 
     // 4) Aggregation
     final optionCounts = <String, int>{};
@@ -3501,6 +3524,182 @@ class ProposalService {
     await _saveAuditEntryToDb(entry);
     _auditCtrl.add(entry);
     debugPrint('[AUDIT] Saving entry: ${entry.eventType}');
+  }
+
+  // ── Phase G2.1.3: Liquid Democracy tally aggregation ──────────────────────
+
+  /// Loads eligible voter DIDs for a cell directly from the DB.
+  /// Used as fallback when [Proposal.eligibleVoters] snapshot is null
+  /// (legacy data pre-v22).
+  Future<Set<String>> _loadEligibleVoterSet(String cellId) async {
+    final rows = await PodDatabase.instance.listCellMembers(cellId);
+    final members = rows.map(CellMember.fromJson).toList();
+    return members.map((m) => m.did).toSet();
+  }
+
+  /// Phase G2.1.3: Augments [directVotes] with the effect of ACTIVE
+  /// delegations for this proposal.
+  ///
+  /// Per §31.3 (Sender-only) this runs only on the tally-owner device.
+  /// EXPIRED and INVALID classifications are RAM-only (D9 Variante A):
+  /// the underlying delegation row is NEVER mutated. Audit entries
+  /// DELEGATION_EXPIRED and DELEGATION_INVALIDATED are written for
+  /// affected delegations.
+  ///
+  /// Returns a new list containing:
+  ///   - all original direct votes (unchanged)
+  ///   - plus synthetic [Vote] objects for each successfully aggregated
+  ///     delegation, with [Vote.isDelegated]=true and
+  ///     [Vote.delegatedFrom]=<delegateDid> (the delegate who voted directly).
+  ///
+  /// E4 (non-transitive): A's delegation to B counts only when B votes
+  /// directly. B's own delegation to C does NOT propagate A's vote to C.
+  Future<List<Vote>> _aggregateVotesWithDelegations({
+    required List<Vote> directVotes,
+    required String proposalId,
+    required String cellId,
+    required Set<String> eligibleVoters,
+  }) async {
+    // Step 1: Load ACTIVE delegations for this proposal.
+    // listActiveDelegationsForProposal already orders by
+    // (created_at ASC, delegation_id ASC) — deterministic per A.5.
+    final delegationRows = await PodDatabase.instance
+        .listActiveDelegationsForProposal(proposalId);
+
+    // Step 2: Fast path — no delegations.
+    if (delegationRows.isEmpty) {
+      print('[TALLY-DELEGATION] proposalId=$proposalId '
+          'activeDelegationsCount=0 aggregatedCount=0 '
+          'expiredCount=0 invalidCount=0 ignoredByDirectVoteCount=0');
+      return directVotes;
+    }
+
+    final activeDelegations =
+        delegationRows.map(Delegation.fromMap).toList();
+
+    // Step 3: Build direct voter DID set for O(1) lookup.
+    final directVoterDids = directVotes.map((v) => v.voterDid).toSet();
+
+    // Step 4: Iterate deterministically (already sorted by DB query).
+    final syntheticVotes = <Vote>[];
+    int expiredCount = 0;
+    int invalidCount = 0;
+    int ignoredByDirectVoteCount = 0;
+
+    for (final d in activeDelegations) {
+      // Step 5a: INVALID — delegator not in eligibleVoters.
+      if (!eligibleVoters.contains(d.delegatorDid)) {
+        await addAuditEntry(AuditLogEntry(
+          entryId: AuditLogEntry.generateId(),
+          proposalId: proposalId,
+          cellId: cellId,
+          eventType: AuditEventType.DELEGATION_INVALIDATED,
+          actorDid: 'SYSTEM',
+          actorPseudonym: '',
+          timestamp: DateTime.now().toUtc(),
+          payload: {
+            'delegationId': d.delegationId,
+            'reason': 'DELEGATOR_NOT_ELIGIBLE',
+            'delegatorDid': d.delegatorDid,
+          },
+        ));
+        print('[TALLY-DELEGATION-INVALID] delegationId=${d.delegationId} '
+            'reason=delegator-not-eligible');
+        invalidCount++;
+        continue;
+      }
+
+      // Step 5b: INVALID — delegate not in eligibleVoters.
+      if (!eligibleVoters.contains(d.delegateDid)) {
+        await addAuditEntry(AuditLogEntry(
+          entryId: AuditLogEntry.generateId(),
+          proposalId: proposalId,
+          cellId: cellId,
+          eventType: AuditEventType.DELEGATION_INVALIDATED,
+          actorDid: 'SYSTEM',
+          actorPseudonym: '',
+          timestamp: DateTime.now().toUtc(),
+          payload: {
+            'delegationId': d.delegationId,
+            'reason': 'DELEGATE_NOT_ELIGIBLE',
+            'delegateDid': d.delegateDid,
+          },
+        ));
+        print('[TALLY-DELEGATION-INVALID] delegationId=${d.delegationId} '
+            'reason=delegate-not-eligible');
+        invalidCount++;
+        continue;
+      }
+
+      // Step 5c: Direct-vote-overrides-delegation consistency.
+      // Delegator has already cast a direct vote (e.g. multi-device race
+      // or auto-revoke not yet propagated). The direct vote wins.
+      // No audit entry — this is a normal consistency path.
+      if (directVoterDids.contains(d.delegatorDid)) {
+        print('[TALLY-DELEGATION-IGNORED] delegationId=${d.delegationId} '
+            'reason=direct-vote-by-delegator');
+        ignoredByDirectVoteCount++;
+        continue;
+      }
+
+      // Step 5d: EXPIRED — delegate did not cast a direct vote.
+      if (!directVoterDids.contains(d.delegateDid)) {
+        await addAuditEntry(AuditLogEntry(
+          entryId: AuditLogEntry.generateId(),
+          proposalId: proposalId,
+          cellId: cellId,
+          eventType: AuditEventType.DELEGATION_EXPIRED,
+          actorDid: 'SYSTEM',
+          actorPseudonym: '',
+          timestamp: DateTime.now().toUtc(),
+          payload: {
+            'delegationId': d.delegationId,
+            'reason': 'DELEGATE_DID_NOT_VOTE',
+            'delegateDid': d.delegateDid,
+          },
+        ));
+        print('[TALLY-DELEGATION-EXPIRED] delegationId=${d.delegationId}');
+        expiredCount++;
+        continue;
+      }
+
+      // Step 5e: Success — synthesise a vote for the delegator using
+      // the delegate's choice/weight/selectedOptionId.
+      final delegateVote =
+          directVotes.firstWhere((v) => v.voterDid == d.delegateDid);
+      final syntheticVote = Vote(
+        voteId: 'delegated-${d.delegationId}',
+        proposalId: proposalId,
+        voterPubkey: '',
+        voterDid: d.delegatorDid,
+        voterPseudonym: '',
+        choice: delegateVote.choice,
+        weight: delegateVote.weight,
+        voiceCredits: delegateVote.voiceCredits,
+        reasoning: null,
+        createdAt: delegateVote.createdAt,
+        isDelegated: true,
+        delegatedFrom: d.delegateDid,
+        nostrEventId: '',
+        selectedOptionId: delegateVote.selectedOptionId,
+      );
+      print('[TALLY-DELEGATION-AGGREGATED] delegationId=${d.delegationId} '
+          'from=${d.delegatorDid} via=${d.delegateDid} '
+          'choice=${delegateVote.choice.name}');
+      syntheticVotes.add(syntheticVote);
+    }
+
+    // Step 6: Summary log.
+    print('[TALLY-DELEGATION] proposalId=$proposalId '
+        'activeDelegationsCount=${activeDelegations.length} '
+        'aggregatedCount=${syntheticVotes.length} '
+        'expiredCount=$expiredCount '
+        'invalidCount=$invalidCount '
+        'ignoredByDirectVoteCount=$ignoredByDirectVoteCount');
+
+    // Return directVotes + synthetic votes.
+    // No re-sort here — callers apply sortVotesDeterministic when needed.
+    return [...directVotes, ...syntheticVotes];
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
