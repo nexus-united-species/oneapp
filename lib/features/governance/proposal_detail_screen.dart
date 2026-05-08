@@ -1497,6 +1497,31 @@ class _GracePeriodBanner extends StatelessWidget {
 //   (phase-consistent; synthetic visibility on recipients deferred to a later
 //    phase that would transmit allVotes over the wire)
 
+/// Builds the participation line from a [DecisionRecord].
+///
+/// Source of Truth: yesVotes + noVotes + abstainVotes aus dem DecisionRecord.
+/// Denominator wird aus [DecisionRecord.participation] rückgerechnet, da
+/// eligibleVotersCount kein Modell-Feld ist und nicht im Wire transportiert wird.
+@visibleForTesting
+String buildParticipationText(DecisionRecord dr) {
+  final num = dr.yesVotes + dr.noVotes + dr.abstainVotes;
+  if (num == 0) return 'Keine Stimmen abgegeben';
+
+  final participation = dr.participation;
+  final pct = (participation * 100).round();
+
+  if (participation <= 0) return 'Beteiligung: $pct%';
+
+  final den = (num / participation).round();
+  if (den == 0) return 'Beteiligung: $pct%';
+
+  final stimmenLabel = num == 1 ? 'Stimme' : 'Stimmen';
+  if (den == 1) {
+    return 'Beteiligung: $pct% ($num $stimmenLabel von 1 stimmberechtigten Person)';
+  }
+  return 'Beteiligung: $pct% ($num $stimmenLabel von $den Stimmberechtigten)';
+}
+
 class _ResultSection extends StatefulWidget {
   final Proposal proposal;
   final List<Vote> votes;
@@ -1516,6 +1541,7 @@ class _ResultSectionState extends State<_ResultSection> {
   // null  = still loading
   // non-null = loaded; may be empty if record not found or allVotes empty
   List<Vote>? _decisionVotes;
+  DecisionRecord? _decisionRecord;
 
   @override
   void initState() {
@@ -1532,7 +1558,10 @@ class _ResultSectionState extends State<_ResultSection> {
       // Sort deterministically by createdAt ASC (matches tally order).
       final sorted = List<Vote>.from(record.allVotes)
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      setState(() => _decisionVotes = sorted);
+      setState(() {
+        _decisionVotes = sorted;
+        _decisionRecord = record;
+      });
     } else {
       setState(() => _decisionVotes = const []);
     }
@@ -1554,9 +1583,6 @@ class _ResultSectionState extends State<_ResultSection> {
     final yes = p.resultYes ?? 0;
     final no = p.resultNo ?? 0;
     final abstain = p.resultAbstain ?? 0;
-    final participation = p.resultParticipation ?? 0.0;
-    final members = CellService.instance.membersOf(p.cellId);
-    final confirmedCount = members.where((m) => m.isConfirmed).length;
 
     // Variante A: use allVotes from DecisionRecord when non-empty,
     // otherwise fall back to direct votes from ProposalService cache.
@@ -1613,8 +1639,11 @@ class _ResultSectionState extends State<_ResultSection> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Beteiligung: ${(participation * 100).round()}%'
-                ' (${(participation * confirmedCount).round()} von $confirmedCount Mitgliedern)',
+                _decisionRecord != null
+                    ? buildParticipationText(_decisionRecord!)
+                    : _decisionVotes == null
+                        ? 'Beteiligung wird geladen …'
+                        : 'Beteiligung nicht verfügbar',
                 style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.6),
                   fontSize: 12,
