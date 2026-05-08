@@ -2750,6 +2750,46 @@ class ProposalService {
         nostrEventId: event.id,
       ));
 
+      // ── Phase G2.1.6: Multi-device delegation auto-revoke on incoming
+      //    direct vote. Closes the wire-order gap left by G2.1.1b: if an
+      //    ACTIVE delegation for the same voterDid still exists locally
+      //    (Kind-31012-Revoke not yet received), revoke it immediately.
+      //    Sender-only pattern §31.3: DB + Audit only, NO wire re-publish.
+      //    Idempotency is natural: listActiveDelegationsForProposal filters
+      //    out REVOKED/SUPERSEDED, so repeated vote arrivals find no ACTIVE
+      //    delegation and skip silently.
+      final incomingActiveDelegations = await PodDatabase.instance
+          .listActiveDelegationsForProposal(proposalId);
+      final incomingOwnActive = incomingActiveDelegations
+          .where((m) => m['delegator_did'] == vote.voterDid)
+          .toList();
+      if (incomingOwnActive.isNotEmpty) {
+        final oldDel = Delegation.fromMap(incomingOwnActive.first);
+        final revokedDel = oldDel.copyWith(
+          status: DelegationStatus.REVOKED,
+          updatedAt: DateTime.now().toUtc(),
+        );
+        await PodDatabase.instance.upsertDelegation(revokedDel.toMap());
+        await addAuditEntry(AuditLogEntry(
+          entryId: AuditLogEntry.generateId(),
+          proposalId: proposalId,
+          cellId: oldDel.cellId,
+          eventType: AuditEventType.DELEGATION_REVOKED_BY_DIRECT_VOTE,
+          actorDid: vote.voterDid,
+          actorPseudonym: '',
+          timestamp: DateTime.now().toUtc(),
+          payload: {
+            'delegationId': oldDel.delegationId,
+            'previousDelegateDid': oldDel.delegateDid,
+            'reason': 'DIRECT_VOTE_CAST',
+          },
+        ));
+        print('[DELEGATION] G2.1.6 auto-revoked on incoming vote: '
+            'delegationId=${oldDel.delegationId} '
+            'voter=${vote.voterDid}');
+      }
+      // ── Ende Phase G2.1.6 ─────────────────────────────────────────────────
+
       _notify();
     } catch (e) {
       print('[VOTE] handleIncomingVote error: $e');
