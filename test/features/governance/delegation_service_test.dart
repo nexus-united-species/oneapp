@@ -765,16 +765,20 @@ void main() {
     });
 
     test('revokeDelegation updates updatedAt', () async {
-      final before = DateTime.now().toUtc();
+      // Compare at millisecond precision: the DB stores updatedAt as
+      // millisecondsSinceEpoch, truncating microseconds. Comparing
+      // full-precision DateTime values is flaky when both sides fall
+      // within the same millisecond (truncated value < microsecond value).
+      final beforeMs = DateTime.now().toUtc().millisecondsSinceEpoch;
       await ProposalService.instance.revokeDelegation(delegationId);
-      final after = DateTime.now().toUtc();
+      final afterMs = DateTime.now().toUtc().millisecondsSinceEpoch;
 
       final row = await PodDatabase.instance.getDelegation(delegationId);
       final d = Delegation.fromMap(row!);
-      expect(d.updatedAt.isAfter(before) || d.updatedAt.isAtSameMomentAs(before),
-          isTrue);
-      expect(d.updatedAt.isBefore(after) || d.updatedAt.isAtSameMomentAs(after),
-          isTrue);
+      expect(
+        d.updatedAt.millisecondsSinceEpoch,
+        allOf(greaterThanOrEqualTo(beforeMs), lessThanOrEqualTo(afterMs)),
+      );
     });
 
     test('revokeDelegation writes DELEGATION_REVOKED audit', () async {
