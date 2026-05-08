@@ -217,6 +217,22 @@ class HelpTexts {
       '— dort gilt: 1 Mensch = 1 Stimme.',
     ),
 
+    // ── Phase G2.1.4b: Eingehende Delegationen (Delegate-Sicht) ─────────────
+
+    'proposal_voting_incoming_delegation': HelpEntry(
+      'Eingehende Delegationen',
+      'Andere Cell-Mitglieder haben dir ihre Stimme delegiert. '
+      'Wenn du in dieser Abstimmung selbst direkt abstimmst, '
+      'zählt deine Stimme auch für die delegierten Personen.\n\n'
+      'Wichtige Regeln:\n'
+      '• Wenn du nicht selbst abstimmst, verfallen die '
+      'delegierten Stimmen.\n'
+      '• Du kannst die Delegation nicht widerrufen — das '
+      'kann nur die Person, die delegiert hat.\n'
+      '• Du kannst trotz Delegation deine eigene Wahl '
+      'treffen — das delegierte Mitglied stimmt mit dir.',
+    ),
+
     'grundstimmrecht': HelpEntry(
       'Grundstimm-Recht',
       'Bei fundamentalen Fragen — zum Beispiel Änderungen der '

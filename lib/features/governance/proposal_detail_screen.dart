@@ -10,6 +10,7 @@ import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/help_icon.dart';
 import 'audit_log_entry.dart';
 import 'cell_service.dart';
+import 'decision_record.dart';
 import 'delegate_select_sheet.dart';
 import 'delegation.dart';
 import 'edit_history_screen.dart';
@@ -603,6 +604,13 @@ class _DetailsTab extends StatelessWidget {
             proposal: p,
             myExistingVote: myExistingVote,
           ),
+        ],
+
+        // ── Eingehende Delegationen (G2.1.4b: Delegate-Sicht) ────────────
+        if (p.status == ProposalStatus.VOTING &&
+            p.votingMode != VotingMode.CANDIDATE_CHOICE) ...[
+          const SizedBox(height: 8),
+          _IncomingDelegationsBlock(proposal: p),
         ],
 
         // ── Superadmin Force-Button (nur Voting + Superadmin) ─────────────
@@ -1477,8 +1485,19 @@ class _GracePeriodBanner extends StatelessWidget {
 }
 
 // ── Result section (DECIDED / ARCHIVED) ──────────────────────────────────────
+//
+// G2.1.4b: Reads from DecisionRecord.allVotes when available so that synthetic
+// votes (liquid-democracy delegations) are visible in the result list.
+// Falls back to ProposalService.getVotes() when allVotes is empty — this is
+// the case on recipient devices because handleIncomingDecisionRecord sets
+// allVotes: const [] (Phase 4.5c scope-cut).
+//
+// Tally-Owner  → allVotes has direct + synthetic votes   → full list shown
+// Recipient    → allVotes empty → fallback to getVotes() → direct votes only
+//   (phase-consistent; synthetic visibility on recipients deferred to a later
+//    phase that would transmit allVotes over the wire)
 
-class _ResultSection extends StatelessWidget {
+class _ResultSection extends StatefulWidget {
   final Proposal proposal;
   final List<Vote> votes;
   final List<ProposalOption> options;
@@ -1490,11 +1509,41 @@ class _ResultSection extends StatelessWidget {
   });
 
   @override
+  State<_ResultSection> createState() => _ResultSectionState();
+}
+
+class _ResultSectionState extends State<_ResultSection> {
+  // null  = still loading
+  // non-null = loaded; may be empty if record not found or allVotes empty
+  List<Vote>? _decisionVotes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDecisionVotes();
+  }
+
+  Future<void> _loadDecisionVotes() async {
+    final row =
+        await PodDatabase.instance.getDecisionRecord(widget.proposal.id);
+    if (!mounted) return;
+    if (row != null) {
+      final record = DecisionRecord.fromMap(row);
+      // Sort deterministically by createdAt ASC (matches tally order).
+      final sorted = List<Vote>.from(record.allVotes)
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      setState(() => _decisionVotes = sorted);
+    } else {
+      setState(() => _decisionVotes = const []);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final p = proposal;
+    final p = widget.proposal;
     final result = p.resultSummary ?? 'invalid';
 
-    final (bannerText, bannerColor, bannerIcon) = switch (result) {
+    final (bannerText, bannerColor, _) = switch (result) {
       'approved' => ('✅ ANGENOMMEN', Colors.green, Icons.check_circle),
       'rejected' => ('❌ ABGELEHNT', Colors.red, Icons.cancel),
       _ => ('⚠️ UNGÜLTIG — Quorum nicht erreicht',
@@ -1508,6 +1557,16 @@ class _ResultSection extends StatelessWidget {
     final participation = p.resultParticipation ?? 0.0;
     final members = CellService.instance.membersOf(p.cellId);
     final confirmedCount = members.where((m) => m.isConfirmed).length;
+
+    // Variante A: use allVotes from DecisionRecord when non-empty,
+    // otherwise fall back to direct votes from ProposalService cache.
+    final displayVotes = (_decisionVotes != null && _decisionVotes!.isNotEmpty)
+        ? _decisionVotes!
+        : () {
+            final fallback = List<Vote>.from(widget.votes)
+              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            return fallback;
+          }();
 
     return Column(
       children: [
@@ -1555,7 +1614,7 @@ class _ResultSection extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 'Beteiligung: ${(participation * 100).round()}%'
-                ' (${ (participation * confirmedCount).round() } von $confirmedCount Mitgliedern)',
+                ' (${(participation * confirmedCount).round()} von $confirmedCount Mitgliedern)',
                 style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.6),
                   fontSize: 12,
@@ -1566,9 +1625,8 @@ class _ResultSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
 
-        // Transparency list
-        if (votes.isNotEmpty)
-          _TransparencyList(votes: votes, options: options),
+        // Transparency list: always rendered (shows empty-state if no votes)
+        _TransparencyList(votes: displayVotes, options: widget.options),
       ],
     );
   }
@@ -1634,7 +1692,17 @@ class _TransparencyList extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          ...votes.map((v) => _VoteRow(vote: v, options: options)),
+          if (votes.isEmpty)
+            Text(
+              'Keine abgegebenen Stimmen.',
+              style: TextStyle(
+                color: AppColors.onDark.withValues(alpha: 0.45),
+                fontSize: 13,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else
+            ...votes.map((v) => _VoteRow(vote: v, options: options)),
         ],
       ),
     );
@@ -2538,5 +2606,132 @@ class _DelegationBlockState extends State<_DelegationBlock> {
     } finally {
       if (mounted) setState(() => _isActing = false);
     }
+  }
+}
+
+// ── Eingehende Delegationen (Phase G2.1.4b) ───────────────────────────────────
+//
+// Shown during VOTING when other cell members have delegated to the current
+// user.  Only visible in YNA and SC modes (CC excluded, same guard as
+// _DelegationBlock).
+//
+// Data source: PodDatabase.listActiveDelegationsForProposal, filtered
+// client-side to delegate_did == myDid.  No new DB API needed.
+
+class _IncomingDelegationsBlock extends StatefulWidget {
+  final Proposal proposal;
+
+  const _IncomingDelegationsBlock({required this.proposal});
+
+  @override
+  State<_IncomingDelegationsBlock> createState() =>
+      _IncomingDelegationsBlockState();
+}
+
+class _IncomingDelegationsBlockState
+    extends State<_IncomingDelegationsBlock> {
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadIncoming();
+  }
+
+  String get _myDid =>
+      IdentityService.instance.currentIdentity?.did ?? '';
+
+  Future<List<Map<String, dynamic>>> _loadIncoming() async {
+    if (_myDid.isEmpty) return const [];
+    final all = await PodDatabase.instance
+        .listActiveDelegationsForProposal(widget.proposal.id);
+    return all.where((m) => m['delegate_did'] == _myDid).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // CC-Ausschluss (defense-in-depth — Caller-Guard ist primär).
+    if (widget.proposal.votingMode == VotingMode.CANDIDATE_CHOICE) {
+      return const SizedBox.shrink();
+    }
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snapshot) {
+        // Still loading: render nothing to avoid flicker.
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+        final incoming = snapshot.data ?? const [];
+        if (incoming.isEmpty) return const SizedBox.shrink();
+
+        final count = incoming.length;
+        final countText = count == 1
+            ? 'Dir wurde 1 Stimme delegiert.'
+            : 'Dir wurden $count Stimmen delegiert.';
+
+        // Optional: Delegatoren-Pseudonyme (A.5).
+        final names = incoming
+            .map((m) => ContactService.instance
+                .getDisplayName(m['delegator_did'] as String))
+            .join(', ');
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border:
+                Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.how_to_vote,
+                      color: Colors.blue.shade300, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      countText,
+                      style: const TextStyle(
+                        color: AppColors.onDark,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  const HelpIcon(
+                      contextId: 'proposal_voting_incoming_delegation',
+                      size: 15),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Wenn du in dieser Abstimmung selbst direkt abstimmst, '
+                'zählt deine Stimme auch für die delegierten Personen.',
+                style: TextStyle(
+                  color: AppColors.onDark.withValues(alpha: 0.75),
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+              if (names.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Von: $names',
+                  style: TextStyle(
+                    color: AppColors.onDark.withValues(alpha: 0.55),
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
   }
 }
