@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/contacts/contact_service.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../services/role_service.dart';
@@ -9,6 +10,8 @@ import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/help_icon.dart';
 import 'audit_log_entry.dart';
 import 'cell_service.dart';
+import 'delegate_select_sheet.dart';
+import 'delegation.dart';
 import 'edit_history_screen.dart';
 import 'proposal.dart';
 import 'proposal_edit_screen.dart';
@@ -591,6 +594,16 @@ class _DetailsTab extends StatelessWidget {
         else if (p.status == ProposalStatus.DECIDED ||
             p.status == ProposalStatus.ARCHIVED)
           _ResultSection(proposal: p, votes: votes, options: options),
+
+        // ── Delegations-Block (VOTING + YNA/SC, kein CC) ─────────────────
+        if (p.status == ProposalStatus.VOTING &&
+            p.votingMode != VotingMode.CANDIDATE_CHOICE) ...[
+          const SizedBox(height: 12),
+          _DelegationBlock(
+            proposal: p,
+            myExistingVote: myExistingVote,
+          ),
+        ],
 
         // ── Superadmin Force-Button (nur Voting + Superadmin) ─────────────
         if (p.status == ProposalStatus.VOTING && isSuperadmin) ...[
@@ -2248,5 +2261,282 @@ class _AuditTile extends StatelessWidget {
         '${dt.month.toString().padLeft(2, '0')}.\n'
         '${dt.hour.toString().padLeft(2, '0')}:'
         '${dt.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+// ── Delegations-Block (Phase G2.1.4) ─────────────────────────────────────────
+//
+// Shown only when:
+//   - proposal.status == VOTING
+//   - proposal.votingMode != CANDIDATE_CHOICE  (enforced by caller + guard here)
+//   - user has NOT cast a direct vote yet
+//
+// Three states:
+//   1. No active delegation → "Stimme delegieren" button
+//   2. Active delegation exists → status text + "Widerrufen" button
+//   3. User has voted directly → SizedBox.shrink() (no block)
+
+class _DelegationBlock extends StatefulWidget {
+  final Proposal proposal;
+  final Vote? myExistingVote;
+
+  const _DelegationBlock({
+    required this.proposal,
+    required this.myExistingVote,
+  });
+
+  @override
+  State<_DelegationBlock> createState() => _DelegationBlockState();
+}
+
+class _DelegationBlockState extends State<_DelegationBlock> {
+  late Future<Delegation?> _future;
+  bool _isActing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadOwnDelegation();
+  }
+
+  String get _myDid =>
+      IdentityService.instance.currentIdentity?.did ?? '';
+
+  Future<Delegation?> _loadOwnDelegation() async {
+    if (_myDid.isEmpty) return null;
+    final rows = await PodDatabase.instance
+        .listActiveDelegationsForProposal(widget.proposal.id);
+    final own =
+        rows.where((m) => m['delegator_did'] == _myDid).toList();
+    if (own.isEmpty) return null;
+    return Delegation.fromMap(own.first);
+  }
+
+  void _reload() =>
+      setState(() => _future = _loadOwnDelegation());
+
+  @override
+  Widget build(BuildContext context) {
+    // CC-Ausschluss (defense-in-depth — Caller-Guard ist primär).
+    if (widget.proposal.votingMode == VotingMode.CANDIDATE_CHOICE) {
+      return const SizedBox.shrink();
+    }
+    // Direktvote-Ausschluss: wer bereits abgestimmt hat, sieht keinen Block.
+    if (widget.myExistingVote != null) {
+      return const SizedBox.shrink();
+    }
+
+    return FutureBuilder<Delegation?>(
+      future: _future,
+      builder: (context, snapshot) {
+        // Still loading: render nothing to avoid flicker.
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+        final delegation = snapshot.data;
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.4)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title row with help icon
+              Row(
+                children: [
+                  const Text('🤝', style: TextStyle(fontSize: 14)),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Liquid Democracy',
+                    style: TextStyle(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const HelpIcon(
+                      contextId: 'proposal_voting_delegation',
+                      size: 15),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (delegation != null)
+                _buildActiveDelegation(context, delegation)
+              else
+                _buildDelegateButton(context),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ── Active delegation: status text + revoke button ────────────────────────
+
+  Widget _buildActiveDelegation(
+      BuildContext context, Delegation delegation) {
+    final name =
+        ContactService.instance.getDisplayName(delegation.delegateDid);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.link, color: Colors.blue.shade300, size: 16),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'Du hast deine Stimme an $name delegiert.',
+                style: TextStyle(
+                  color: AppColors.onDark.withValues(alpha: 0.85),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: _isActing
+              ? null
+              : () => _confirmRevoke(context, delegation, name),
+          icon: const Icon(Icons.link_off, size: 16),
+          label: const Text('Widerrufen'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.orange,
+            side: const BorderSide(color: Colors.orange),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8)),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── No delegation: delegate button ────────────────────────────────────────
+
+  Widget _buildDelegateButton(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: _isActing ? null : () => _openDelegateSheet(context),
+      icon: const Icon(Icons.person_add_outlined, size: 16),
+      label: const Text('Stimme delegieren'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.gold,
+        side: BorderSide(
+            color: AppColors.gold.withValues(alpha: 0.7)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      ),
+    );
+  }
+
+  // ── Revoke flow ──────────────────────────────────────────────────────────
+
+  Future<void> _confirmRevoke(
+    BuildContext context,
+    Delegation delegation,
+    String name,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Delegation widerrufen?',
+            style: TextStyle(color: AppColors.onDark)),
+        content: Text(
+          'Delegation an $name widerrufen?',
+          style: TextStyle(
+              color: AppColors.onDark.withValues(alpha: 0.8)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Abbrechen',
+                style: TextStyle(
+                    color: AppColors.onDark.withValues(alpha: 0.6))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Widerrufen',
+                style: TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _isActing = true);
+    try {
+      await ProposalService.instance
+          .revokeDelegation(delegation.delegationId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Delegation widerrufen.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _reload();
+      }
+    } on StateError catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.message), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isActing = false);
+    }
+  }
+
+  // ── Delegate-Sheet flow ───────────────────────────────────────────────────
+
+  Future<void> _openDelegateSheet(BuildContext context) async {
+    final selectedDid = await DelegateSelectSheet.show(
+      context,
+      cellId: widget.proposal.cellId,
+      myDid: _myDid,
+    );
+    if (selectedDid == null || !mounted) return;
+    setState(() => _isActing = true);
+    try {
+      await ProposalService.instance.createDelegation(
+        delegatorDid: _myDid,
+        delegateDid: selectedDid,
+        proposalId: widget.proposal.id,
+      );
+      if (mounted) {
+        final name =
+            ContactService.instance.getDisplayName(selectedDid);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Stimme an $name delegiert.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _reload();
+      }
+    } on StateError catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.message), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isActing = false);
+    }
   }
 }

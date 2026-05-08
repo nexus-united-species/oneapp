@@ -200,6 +200,23 @@ class HelpTexts {
       'Du kannst die Delegation jederzeit widerrufen.',
     ),
 
+    'proposal_voting_delegation': HelpEntry(
+      'Liquid Democracy',
+      'Du kannst deine Stimme zu diesem Antrag an ein anderes '
+      'Cell-Mitglied delegieren. Das Mitglied stimmt dann auch in '
+      'deinem Namen ab — mit derselben Wahl, die es selbst trifft.\n\n'
+      'Wichtige Regeln:\n'
+      '• Delegation gilt nur für diesen einen Antrag.\n'
+      '• Du kannst die Delegation jederzeit während der Abstimmung '
+      'widerrufen.\n'
+      '• Wenn du dich entscheidest, doch selbst direkt abzustimmen, '
+      'wird deine Delegation automatisch aufgehoben.\n'
+      '• Wenn dein Delegierter selbst nicht abstimmt, verfällt '
+      'deine Stimme — sie wird nicht weitergeleitet.\n'
+      '• Bei Kandidatenwahlen ist Delegation nicht möglich '
+      '— dort gilt: 1 Mensch = 1 Stimme.',
+    ),
+
     'grundstimmrecht': HelpEntry(
       'Grundstimm-Recht',
       'Bei fundamentalen Fragen — zum Beispiel Änderungen der '
