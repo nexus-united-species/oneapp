@@ -205,7 +205,7 @@ class _RequestCard extends StatelessWidget {
           ] else ...[
             const SizedBox(height: 4),
             Text(
-              'Noch in keiner Zelle',
+              'Noch in keiner Gemeinschaft',
               style: TextStyle(
                 color: AppColors.onDark.withValues(alpha: 0.4),
                 fontSize: 12,

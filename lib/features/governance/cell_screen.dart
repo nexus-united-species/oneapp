@@ -89,10 +89,10 @@ class _CellScreenState extends State<CellScreen>
           context: context,
           builder: (ctx) => AlertDialog(
             backgroundColor: AppColors.surface,
-            title: const Text('Zelle verlassen nicht möglich',
+            title: const Text('Gemeinschaft verlassen nicht möglich',
                 style: TextStyle(color: AppColors.onDark)),
             content: const Text(
-              'Du bist das einzige Mitglied. Lösche die Zelle statt sie zu verlassen.',
+              'Du bist das einzige Mitglied. Lösche die Gemeinschaft statt sie zu verlassen.',
               style: TextStyle(color: AppColors.onDark),
             ),
             actions: [
@@ -117,7 +117,7 @@ class _CellScreenState extends State<CellScreen>
               style: TextStyle(color: AppColors.onDark)),
           content: Text(
             'Möchtest du …${successor.did.substring(successor.did.length > 12 ? successor.did.length - 12 : 0)} '
-            'zum neuen Gründer ernennen und die Zelle verlassen?',
+            'zum neuen Gründer ernennen und die Gemeinschaft verlassen?',
             style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
           ),
           actions: [
@@ -149,10 +149,10 @@ class _CellScreenState extends State<CellScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Zelle verlassen',
+        title: const Text('Gemeinschaft verlassen',
             style: TextStyle(color: AppColors.onDark)),
         content: Text(
-          'Möchtest du die Zelle "${_cell.name}" wirklich verlassen?',
+          'Möchtest du die Gemeinschaft "${_cell.name}" wirklich verlassen?',
           style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.8)),
         ),
         actions: [
@@ -243,7 +243,7 @@ class _CellScreenState extends State<CellScreen>
                           Icon(Icons.settings_outlined,
                               color: AppColors.gold, size: 18),
                           SizedBox(width: 10),
-                          Text('Zelle bearbeiten',
+                          Text('Gemeinschaft bearbeiten',
                               style: TextStyle(color: AppColors.onDark)),
                         ]),
                       ),
@@ -253,7 +253,7 @@ class _CellScreenState extends State<CellScreen>
                         Icon(Icons.exit_to_app,
                             color: Colors.redAccent, size: 18),
                         SizedBox(width: 10),
-                        Text('Zelle verlassen',
+                        Text('Gemeinschaft verlassen',
                             style: TextStyle(color: Colors.redAccent)),
                       ]),
                     ),
@@ -514,10 +514,10 @@ class _MessageBubble extends StatelessWidget {
   bool get _isCellSystem {
     if (msg.metadata?['is_cell_system'] == true) return true;
     final b = msg.body;
-    return b.contains('ist der Zelle beigetreten') ||
-        b.contains('hat die Zelle verlassen') ||
+    return b.contains('ist der Gemeinschaft beigetreten') ||
+        b.contains('hat die Gemeinschaft verlassen') ||
         b.contains('wurde entfernt') ||
-        b.contains('Willkommen in der Zelle');
+        b.contains('Willkommen in der Gemeinschaft');
   }
 
   @override
@@ -695,7 +695,7 @@ class _BulletinTab extends StatelessWidget {
       channel: bulletin,
       canPost: canPost,
       emptyMessage: 'Noch keine Ankündigungen.\n'
-          'Hier posten Gründer und Moderatoren wichtige Neuigkeiten für die Zelle.',
+          'Hier posten Gründer und Moderatoren wichtige Neuigkeiten für die Gemeinschaft.',
       emptyHelpContextId: 'cell_bulletin',
     );
   }
@@ -726,7 +726,7 @@ class _DiscussionTab extends StatelessWidget {
     return _CellChannelView(
       channel: discussion,
       canPost: true,
-      emptyMessage: 'Noch keine Nachrichten.\nSchreib als Erste — sag der Zelle Hallo! 👋',
+      emptyMessage: 'Noch keine Nachrichten.\nSchreib als Erste — sag der Gemeinschaft Hallo! 👋',
       emptyHelpContextId: 'cell_discussion',
     );
   }
@@ -778,7 +778,7 @@ class _AgoraTab extends StatelessWidget {
                     child: Text(
                       'Noch keine Anträge. Anträge sind Vorschläge, '
                       'die du oder andere Mitglieder einbringen können. '
-                      'Die Zelle stimmt dann gemeinsam darüber ab.',
+                      'Die Gemeinschaft stimmt dann gemeinsam darüber ab.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: AppColors.onDark.withValues(alpha: 0.5),
@@ -987,7 +987,7 @@ void _confirmRemove(
       title: const Text('Mitglied entfernen',
           style: TextStyle(color: Colors.redAccent)),
       content: Text(
-        'Möchtest du $shortDid aus der Zelle "${cell.name}" entfernen?',
+        'Möchtest du $shortDid aus der Gemeinschaft "${cell.name}" entfernen?',
         style:
             TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
       ),
@@ -1009,7 +1009,7 @@ void _confirmRemove(
       await context
           .read<ChatProvider>()
           .postCellSystemMessage(
-              cell.id, '$shortDid wurde aus der Zelle entfernt.');
+              cell.id, '$shortDid wurde aus der Gemeinschaft entfernt.');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('$shortDid wurde entfernt.'),

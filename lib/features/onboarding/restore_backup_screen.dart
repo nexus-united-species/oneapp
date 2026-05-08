@@ -159,7 +159,7 @@ class _RestoreBackupScreenState extends State<RestoreBackupScreen> {
                     const Divider(height: 1),
                     _summaryRow(
                         Icons.groups_outlined,
-                        'Zellen',
+                        'Gemeinschaften',
                         '${best.cellCount}'),
                     const Divider(height: 1),
                     _summaryRow(
@@ -267,7 +267,7 @@ class _RestoreBackupScreenState extends State<RestoreBackupScreen> {
               Text(
                 '${result.restoredContacts} Kontakte, '
                 '${result.restoredChannels} Kanäle und '
-                '${result.restoredCells} Zellen wiederhergestellt.',
+                '${result.restoredCells} Gemeinschaften wiederhergestellt.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                     color: AppColors.onDark, fontSize: 15, height: 1.5),

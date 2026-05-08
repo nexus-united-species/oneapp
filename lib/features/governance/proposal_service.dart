@@ -1903,10 +1903,10 @@ class ProposalService {
     }
     if (!memberDids.contains(delegatorDid)) {
       throw StateError(
-          'Du bist kein stimmberechtigtes Mitglied dieser Zelle');
+          'Du bist kein stimmberechtigtes Mitglied dieser Gemeinschaft');
     }
     if (!memberDids.contains(delegateDid)) {
-      throw StateError('Delegierter ist kein Mitglied dieser Zelle');
+      throw StateError('Delegierter ist kein Mitglied dieser Gemeinschaft');
     }
 
     // 7. Direct-Vote-Check: delegator hat schon direkt abgestimmt?

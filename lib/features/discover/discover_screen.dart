@@ -44,7 +44,7 @@ const _mainTiles = <_TileItem>[
   _TileItem(
     icon: Icons.group_work,
     iconColor: AppColors.gold,
-    label: 'Meine Zelle',
+    label: 'Gemeinschaften',
     route: '/cell-hub',
   ),
   _TileItem(

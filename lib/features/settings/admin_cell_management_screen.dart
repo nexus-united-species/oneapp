@@ -333,12 +333,12 @@ class _AdminCellManagementScreenState
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         title: Text(
-          'Zelle "${cell.name}" löschen?',
+          'Gemeinschaft "${cell.name}" löschen?',
           style: const TextStyle(color: Colors.redAccent),
         ),
         content: Text(
           'ID: ${cell.id}\n\n'
-          'Die Zelle wird aus der lokalen Datenbank gelöscht und ein '
+          'Die Gemeinschaft wird aus der lokalen Datenbank gelöscht und ein '
           'Kind-5 Nostr-Dissolution-Event wird als Superadmin gesendet.',
           style: const TextStyle(color: AppColors.onDark),
         ),
@@ -375,7 +375,7 @@ class _AdminCellManagementScreenState
       setState(() => _cells.removeWhere((c) => c.id == cell.id));
       messenger.showSnackBar(
         SnackBar(
-          content: Text('Zelle "${cell.name}" gelöscht · Kind-5 gesendet.'),
+          content: Text('Gemeinschaft "${cell.name}" gelöscht · Kind-5 gesendet.'),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -402,7 +402,7 @@ class _AdminCellManagementScreenState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Zellen verwalten'),
+        title: const Text('Gemeinschaften verwalten'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -434,7 +434,7 @@ class _AdminCellManagementScreenState
                         horizontal: 16, vertical: 10),
                     color: AppColors.surfaceVariant,
                     child: Text(
-                      '${_cells.length} Zellen gesamt'
+                      '${_cells.length} Gemeinschaften gesamt'
                       '${orphanCount > 0 ? ' · $orphanCount verwaist' : ''}',
                       style: TextStyle(
                         fontSize: 13,
@@ -458,7 +458,7 @@ class _AdminCellManagementScreenState
                                 size: 48, color: Colors.grey[700]),
                             const SizedBox(height: 12),
                             const Text(
-                              'Keine Zellen in der Datenbank.',
+                              'Keine Gemeinschaften in der Datenbank.',
                               style: TextStyle(color: Colors.grey),
                             ),
                           ],
@@ -480,7 +480,7 @@ class _AdminCellManagementScreenState
                         final orphaned = _isOrphaned(cell);
                         final isOwn = cell.createdBy == myDid;
                         final founderLabel = isOwn
-                            ? 'Ich (eigene Zelle)'
+                            ? 'Ich (eigene Gemeinschaft)'
                             : cell.createdBy.length > 28
                                 ? '${cell.createdBy.substring(0, 20)}…'
                                 : cell.createdBy;
@@ -552,7 +552,7 @@ class _AdminCellManagementScreenState
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_outline,
                                 color: Colors.redAccent),
-                            tooltip: 'Zelle löschen',
+                            tooltip: 'Gemeinschaft löschen',
                             onPressed: () => _deleteCell(context, cell),
                           ),
                           isThreeLine: true,

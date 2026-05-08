@@ -178,7 +178,7 @@ class _CreateProposalScreenState extends State<CreateProposalScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Zelle: ${widget.cell.name}',
+                      'Gemeinschaft: ${widget.cell.name}',
                       style: const TextStyle(
                         color: AppColors.gold,
                         fontWeight: FontWeight.w600,

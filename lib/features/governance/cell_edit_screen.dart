@@ -141,7 +141,7 @@ class _CellEditScreenState extends State<CellEditScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Zelle aktualisiert ✓'),
+            content: Text('Gemeinschaft aktualisiert ✓'),
             backgroundColor: Colors.green,
           ),
         );
@@ -163,7 +163,7 @@ class _CellEditScreenState extends State<CellEditScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Zelle bearbeiten'),
+        title: const Text('Gemeinschaft bearbeiten'),
         backgroundColor: AppColors.deepBlue,
       ),
       backgroundColor: AppColors.deepBlue,
@@ -173,7 +173,7 @@ class _CellEditScreenState extends State<CellEditScreen> {
           padding: const EdgeInsets.all(20),
           children: [
             // Name
-            _Label('Zellenname *'),
+            _Label('Name der Gemeinschaft *'),
             TextFormField(
               controller: _nameCtrl,
               decoration: _deco('z. B. Hamburg Altona'),
@@ -190,7 +190,7 @@ class _CellEditScreenState extends State<CellEditScreen> {
             _Label('Beschreibung (optional)'),
             TextFormField(
               controller: _descCtrl,
-              decoration: _deco('Worum geht es in dieser Zelle?'),
+              decoration: _deco('Worum geht es in dieser Gemeinschaft?'),
               style: const TextStyle(color: AppColors.onDark),
               maxLines: 3,
               maxLength: 500,

@@ -189,7 +189,7 @@ class _DorfplatzScreenState extends State<DorfplatzScreen>
   Future<void> _showVisibilityPicker(FeedPost post) async {
     final options = [
       (FeedVisibility.contacts, Icons.people_outline, 'Meine Kontakte'),
-      (FeedVisibility.cell,     Icons.group_work_outlined, 'Meine Zelle'),
+      (FeedVisibility.cell,     Icons.group_work_outlined, 'Meine Gemeinschaft'),
       (FeedVisibility.public,   Icons.public,  'Öffentlich'),
     ];
 
@@ -249,7 +249,7 @@ class _DorfplatzScreenState extends State<DorfplatzScreen>
     // Confirmation dialog – this action is irreversible.
     final visLabel = switch (chosen) {
       FeedVisibility.contacts => 'Meine Kontakte',
-      FeedVisibility.cell     => 'Meine Zelle',
+      FeedVisibility.cell     => 'Meine Gemeinschaft',
       FeedVisibility.public   => 'Öffentlich',
     };
     final confirmed = await showDialog<bool>(
@@ -333,7 +333,7 @@ class _DorfplatzScreenState extends State<DorfplatzScreen>
           unselectedLabelColor: AppColors.onDark,
           tabs: const [
             Tab(text: 'Kontakte'),
-            Tab(text: 'Meine Zelle'),
+            Tab(text: 'Meine Gemeinschaft'),
             Tab(text: 'Entdecken'),
           ],
         ),
@@ -357,7 +357,7 @@ class _DorfplatzScreenState extends State<DorfplatzScreen>
                 ),
                 const _ComingSoonTab(
                   message:
-                      'Deine Zelle ist noch nicht aktiv.\nTritt einer Zelle bei, um lokale Beiträge zu sehen.',
+                      'Deine Gemeinschaft ist noch nicht aktiv.\nTritt einer Gemeinschaft bei, um lokale Beiträge zu sehen.',
                 ),
                 _FeedList(
                   key: const PageStorageKey('feed_entdecken'),

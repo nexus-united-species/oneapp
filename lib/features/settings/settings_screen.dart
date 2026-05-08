@@ -686,7 +686,7 @@ class _AdminSection extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.cleaning_services, color: Colors.grey),
             title: const Text(
-              '🧹 Alle Zellen-Daten zurücksetzen',
+              '🧹 Alle Gemeinschaftsdaten zurücksetzen',
               style: TextStyle(color: Colors.grey),
             ),
             subtitle: const Text('Testdaten bereinigen',
@@ -740,11 +740,11 @@ class _AdminSection extends StatelessWidget {
             leading:
                 const Icon(Icons.hexagon_outlined, color: Colors.redAccent),
             title: const Text(
-              'Zellen verwalten',
+              'Gemeinschaften verwalten',
               style: TextStyle(color: Colors.redAccent),
             ),
             subtitle: const Text(
-                'Verwaiste Zellen löschen · Kind-5 Dissolution senden'),
+                'Verwaiste Gemeinschaften löschen · Kind-5 Dissolution senden'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -766,7 +766,7 @@ class _AdminSection extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
             title: const Text(
-              '☢️ Alle Zellen löschen (Nuclear Wipe)',
+              '☢️ Alle Gemeinschaften löschen (Nuclear Wipe)',
               style: TextStyle(color: Colors.redAccent),
             ),
             subtitle: const Text(
@@ -892,10 +892,10 @@ class _AdminSection extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('☢️ Alle Zellen löschen?',
+        title: const Text('☢️ Alle Gemeinschaften löschen?',
             style: TextStyle(color: Colors.redAccent)),
         content: const Text(
-          'Achtung: Diese Aktion löscht ALLE Zellen-Daten '
+          'Achtung: Diese Aktion löscht ALLE Gemeinschaftsdaten '
           'unwiderruflich. Bist du sicher?',
         ),
         actions: [
@@ -916,7 +916,7 @@ class _AdminSection extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Wirklich alle Zellen löschen?',
+        title: const Text('Wirklich alle Gemeinschaften löschen?',
             style: TextStyle(color: Colors.redAccent)),
         content: const Text(
           'Dies kann nicht rückgängig gemacht werden.',
@@ -939,7 +939,7 @@ class _AdminSection extends StatelessWidget {
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('☢️ Alle Zellen-Daten gelöscht.')),
+        const SnackBar(content: Text('☢️ Alle Gemeinschaftsdaten gelöscht.')),
       );
     }
   }
@@ -949,10 +949,10 @@ class _AdminSection extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Zellen-Daten zurücksetzen?',
+        title: const Text('Gemeinschaftsdaten zurücksetzen?',
             style: TextStyle(color: Colors.grey)),
         content: const Text(
-          'Alle Zellen, Zell-Kanäle und offene Beitrittsanfragen '
+          'Alle Gemeinschaften, Gemeinschaftskanäle und offene Beitrittsanfragen '
           'werden lokal gelöscht. Dieser Vorgang kann nicht '
           'rückgängig gemacht werden.',
           style: TextStyle(color: AppColors.onDark),
@@ -1084,7 +1084,7 @@ class _AdminSection extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Zellen-Daten zurückgesetzt'
+              'Gemeinschaftsdaten zurückgesetzt'
               '${founderCells.isNotEmpty ? ' · ${founderCells.length} Delete-Events gesendet' : ''}',
             ),
             backgroundColor: Colors.grey,

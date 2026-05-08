@@ -485,13 +485,13 @@ class _VisibilitySelector extends StatelessWidget {
 
   String _labelFor(FeedVisibility v) => switch (v) {
         FeedVisibility.contacts => 'Kontakte',
-        FeedVisibility.cell => 'Meine Zelle',
+        FeedVisibility.cell => 'Meine Gemeinschaft',
         FeedVisibility.public => 'Öffentlich',
       };
 
   String _descFor(FeedVisibility v) => switch (v) {
         FeedVisibility.contacts => 'Nur deine Kontakte sehen diesen Beitrag',
-        FeedVisibility.cell => 'Alle Zellen-Mitglieder sehen diesen Beitrag',
+        FeedVisibility.cell => 'Alle Gemeinschaftsmitglieder sehen diesen Beitrag',
         FeedVisibility.public => 'Alle NEXUS-Nutzer sehen diesen Beitrag',
       };
 }

@@ -298,9 +298,9 @@ class CellFoundingPermitService extends ChangeNotifier {
           final typeLabel =
               permit.cellType == CellType.local ? 'lokale' : 'thematische';
           await NotificationService.instance.showGenericNotification(
-            title: 'Neuer Zellgründungsantrag',
+            title: 'Neuer Gründungsantrag',
             body:
-                '${permit.requesterPseudonym} möchte eine $typeLabel Zelle gründen.',
+                '${permit.requesterPseudonym} möchte eine $typeLabel Gemeinschaft gründen.',
             payload: 'cell_founding_permit:${permit.id}',
           );
         }

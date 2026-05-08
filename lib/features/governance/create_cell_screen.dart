@@ -98,7 +98,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
         setState(() {
           _fetchingLocation = false;
           _locationStatus =
-              'Ohne Standort wird deine Zelle nicht in der Nähe-Suche angezeigt.';
+              'Ohne Standort wird deine Gemeinschaft nicht in der Nähe-Suche angezeigt.';
         });
         return;
       }
@@ -118,7 +118,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
       setState(() {
         _fetchingLocation = false;
         _locationStatus =
-            'Ohne Standort wird deine Zelle nicht in der Nähe-Suche angezeigt.';
+            'Ohne Standort wird deine Gemeinschaft nicht in der Nähe-Suche angezeigt.';
       });
     }
   }
@@ -170,7 +170,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content:
-                Text('Die Freigabe gilt nicht für diesen Zelltyp.'),
+                Text('Die Freigabe gilt nicht für diesen Gemeinschaftstyp.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -265,7 +265,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Zelle "${cell.name}" gegründet!'),
+            content: Text('Gemeinschaft "${cell.name}" gegründet!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -287,7 +287,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Zelle gründen'),
+        title: const Text('Gemeinschaft gründen'),
         backgroundColor: AppColors.deepBlue,
       ),
       backgroundColor: AppColors.deepBlue,
@@ -328,7 +328,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
             ],
 
             // Name
-            _SectionLabel('Zellenname *'),
+            _SectionLabel('Name der Gemeinschaft *'),
             TextFormField(
               controller: _nameCtrl,
               decoration: _inputDecoration('z. B. Hamburg Altona'),
@@ -345,7 +345,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
             _SectionLabel('Beschreibung (optional)'),
             TextFormField(
               controller: _descCtrl,
-              decoration: _inputDecoration('Worum geht es in dieser Zelle?'),
+              decoration: _inputDecoration('Worum geht es in dieser Gemeinschaft?'),
               style: const TextStyle(color: AppColors.onDark),
               maxLines: 3,
               maxLength: 500,
@@ -353,7 +353,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
             const SizedBox(height: 16),
 
             // Cell type
-            _SectionLabel('Zellen-Typ *'),
+            _SectionLabel('Gemeinschaftstyp *'),
             Row(
               children: [
                 Expanded(
@@ -562,7 +562,7 @@ class _CreateCellScreenState extends State<CreateCellScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text(
-                        'Zelle gründen',
+                        'Gemeinschaft gründen',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
               ),

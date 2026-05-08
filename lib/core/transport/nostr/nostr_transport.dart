@@ -596,7 +596,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.deletion,
-      content: 'Zelle "$cellName" wurde aufgelöst.',
+      content: 'Gemeinschaft "$cellName" wurde aufgelöst.',
       tags: [
         ['a', aTag],
         ['t', 'nexus-cell'], // keep for backward-compat with older clients

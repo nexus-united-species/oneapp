@@ -21,33 +21,33 @@ class HelpTexts {
     // ── Zellen ──────────────────────────────────────────────────────────────
 
     'cell_general': HelpEntry(
-      'Was ist eine Zelle?',
-      'Eine Zelle ist deine Gemeinschaft innerhalb der Menschheitsfamilie — '
-      'wie ein digitales Dorf. Du kannst einer lokalen Zelle in deiner '
-      'Nachbarschaft beitreten oder einer thematischen Zelle mit '
+      'Was ist eine Gemeinschaft?',
+      'Eine Gemeinschaft ist dein Zuhause innerhalb der Menschheitsfamilie — '
+      'wie ein digitales Dorf. Du kannst einer lokalen Gemeinschaft in deiner '
+      'Nachbarschaft beitreten oder einer thematischen Gemeinschaft mit '
       'Gleichgesinnten aus aller Welt. Zusammen trefft ihr Entscheidungen, '
       'teilt Neuigkeiten und unterstützt euch gegenseitig.',
     ),
 
     'cell_local': HelpEntry(
-      'Lokale Zelle',
-      'Eine lokale Zelle verbindet Menschen an einem bestimmten Ort — '
+      'Lokale Gemeinschaft',
+      'Eine lokale Gemeinschaft verbindet Menschen an einem bestimmten Ort — '
       'zum Beispiel in deiner Nachbarschaft, deinem Dorf oder deiner Stadt. '
-      'N.E.X.U.S. nutzt GPS, um Zellen in deiner Nähe zu finden. '
+      'N.E.X.U.S. nutzt GPS, um Gemeinschaften in deiner Nähe zu finden. '
       'So entsteht echte Gemeinschaft dort, wo du lebst.',
     ),
 
     'cell_thematic': HelpEntry(
-      'Thematische Zelle',
-      'Eine thematische Zelle verbindet Menschen über ein gemeinsames Thema — '
+      'Thematische Gemeinschaft',
+      'Eine thematische Gemeinschaft verbindet Menschen über ein gemeinsames Thema — '
       'unabhängig davon, wo sie auf der Welt leben. '
       'Ob Nachhaltigkeit, Bildung, Musik oder Handwerk: '
-      'Thematische Zellen bringen Gleichgesinnte zusammen.',
+      'Thematische Gemeinschaften bringen Gleichgesinnte zusammen.',
     ),
 
     'cell_bulletin': HelpEntry(
       'Pinnwand',
-      'Die Pinnwand ist der offizielle Kanal der Zelle. '
+      'Die Pinnwand ist der offizielle Kanal der Gemeinschaft. '
       'Nur Gründer und Moderatoren können hier posten — '
       'für wichtige Ankündigungen, Termine und Neuigkeiten. '
       'Alle Mitglieder können lesen und mit Emojis reagieren.',
@@ -55,7 +55,7 @@ class HelpTexts {
 
     'cell_discussion': HelpEntry(
       'Diskussion',
-      'Die Diskussion ist der offene Austausch aller Zellenmitglieder. '
+      'Die Diskussion ist der offene Austausch aller Gemeinschaftsmitglieder. '
       'Hier kann jedes Mitglied schreiben — Fragen stellen, Ideen teilen, '
       'sich kennenlernen oder einfach plaudern. '
       'Wie ein Gemeinschaftsraum, der immer offen ist.',
@@ -63,7 +63,7 @@ class HelpTexts {
 
     'cell_join_policy': HelpEntry(
       'Beitrittsregel',
-      'Die Beitrittsregel legt fest, wie neue Mitglieder in die Zelle kommen. '
+      'Die Beitrittsregel legt fest, wie neue Mitglieder in die Gemeinschaft kommen. '
       '"Anfrage erforderlich" bedeutet: Interessierte schicken eine Anfrage, '
       'die Gründer oder Moderatoren bestätigen müssen. '
       '"Nur auf Einladung" bedeutet: Neue Mitglieder kommen ausschließlich '
@@ -74,9 +74,9 @@ class HelpTexts {
       'Mindest-Vertrauensstufe',
       'Du kannst festlegen, wie gut neue Mitglieder dich (oder andere) '
       'bereits kennen müssen, um beizutreten. '
-      '"Keine Einschränkung" steht die Zelle für alle offen. '
+      '"Keine Einschränkung" steht die Gemeinschaft für alle offen. '
       '"Kontakt eines Mitglieds" bedeutet: Die Person muss jemanden '
-      'in der Zelle als Kontakt haben. So wächst die Gemeinschaft '
+      'in der Gemeinschaft als Kontakt haben. So wächst die Gemeinschaft '
       'durch echte Beziehungen.',
     ),
 
@@ -93,7 +93,7 @@ class HelpTexts {
 
     'proposal_general': HelpEntry(
       'Was ist ein Antrag?',
-      'Ein Antrag ist ein Vorschlag, über den die Zelle gemeinsam entscheidet. '
+      'Ein Antrag ist ein Vorschlag, über den die Gemeinschaft gemeinsam entscheidet. '
       'Jedes Mitglied kann einen Antrag einbringen — '
       'zum Beispiel für eine neue Regel, ein gemeinsames Projekt '
       'oder eine wichtige Entscheidung. '
@@ -137,7 +137,7 @@ class HelpTexts {
     'proposal_voting_transparency': HelpEntry(
       'Transparente Abstimmung',
       'In der Menschheitsfamilie ist jede Abstimmung transparent: '
-      'Wer wie abgestimmt hat, ist für alle Zellenmitglieder sichtbar. '
+      'Wer wie abgestimmt hat, ist für alle Gemeinschaftsmitglieder sichtbar. '
       'Das schafft Vertrauen und verhindert Manipulation. '
       'Deine Begründung hilft anderen, deine Entscheidung zu verstehen.',
     ),
@@ -203,7 +203,7 @@ class HelpTexts {
     'proposal_voting_delegation': HelpEntry(
       'Liquid Democracy',
       'Du kannst deine Stimme zu diesem Antrag an ein anderes '
-      'Cell-Mitglied delegieren. Das Mitglied stimmt dann auch in '
+      'Gemeinschaftsmitglied delegieren. Das Mitglied stimmt dann auch in '
       'deinem Namen ab — mit derselben Wahl, die es selbst trifft.\n\n'
       'Wichtige Regeln:\n'
       '• Delegation gilt nur für diesen einen Antrag.\n'
@@ -221,7 +221,7 @@ class HelpTexts {
 
     'proposal_voting_incoming_delegation': HelpEntry(
       'Eingehende Delegationen',
-      'Andere Cell-Mitglieder haben dir ihre Stimme delegiert. '
+      'Andere Gemeinschaftsmitglieder haben dir ihre Stimme delegiert. '
       'Wenn du in dieser Abstimmung selbst direkt abstimmst, '
       'zählt deine Stimme auch für die delegierten Personen.\n\n'
       'Wichtige Regeln:\n'
@@ -255,7 +255,7 @@ class HelpTexts {
     'dorfplatz_visibility': HelpEntry(
       'Wer sieht deinen Beitrag?',
       '"Kontakte" — nur Menschen, die du als Kontakt hast, sehen den Beitrag. '
-      '"Meine Zelle" — alle Mitglieder deiner Zelle sehen ihn. '
+      '"Meine Gemeinschaft" — alle Mitglieder deiner Gemeinschaft sehen ihn. '
       '"Öffentlich" — alle in der Menschheitsfamilie können ihn sehen. '
       'Du kannst die Sichtbarkeit jederzeit vor dem Posten ändern.',
     ),

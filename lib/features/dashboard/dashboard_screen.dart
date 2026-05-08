@@ -425,14 +425,14 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     final String subtitle;
     if (!isInCell) {
-      subtitle = 'Noch keine Zelle — Entdecke Zellen in deiner Nähe';
+      subtitle = 'Noch keine Gemeinschaft — Entdecke Gemeinschaften in deiner Nähe';
     } else {
       final totalMembers = myCells.fold<int>(
         0,
         (sum, c) => sum + CellService.instance.membersOf(c.id).length,
       );
       subtitle = [
-        '${myCells.length} Zelle${myCells.length == 1 ? '' : 'n'} · $totalMembers Mitglied${totalMembers == 1 ? '' : 'er'}',
+        '${myCells.length} Gemeinschaft${myCells.length == 1 ? '' : 'en'} · $totalMembers Mitglied${totalMembers == 1 ? '' : 'er'}',
         if (pendingRequests > 0)
           '+$pendingRequests Beitrittsanfrage${pendingRequests == 1 ? '' : 'n'}',
       ].join(' · ');
@@ -441,7 +441,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     return _FeatureCard(
       key: const Key('cell_card'),
       icon: Icons.groups_outlined,
-      title: 'Meine Zellen',
+      title: 'Meine Gemeinschaften',
       subtitle: subtitle,
       badgeCount: pendingRequests > 0 ? pendingRequests : null,
       onTap: () => Navigator.of(context, rootNavigator: true).push(
@@ -461,7 +461,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     final pendingRequests = CellService.instance.totalPendingRequests;
 
     final subtitle = !isInCell
-        ? 'Tritt einer Zelle bei, um mitzumachen.'
+        ? 'Tritt einer Gemeinschaft bei, um mitzumachen.'
         : [
             if (activeProposals > 0)
               '$activeProposals ${activeProposals == 1 ? 'aktiver Antrag' : 'aktive Anträge'}',

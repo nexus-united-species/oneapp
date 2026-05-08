@@ -180,7 +180,7 @@ class _NoCellState extends StatelessWidget {
                 size: 64, color: AppColors.onDark.withValues(alpha: 0.3)),
             const SizedBox(height: 16),
             const Text(
-              'Um an Abstimmungen teilzunehmen,\ntritt zuerst einer Zelle bei.',
+              'Um an Abstimmungen teilzunehmen,\ntritt zuerst einer Gemeinschaft bei.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: AppColors.onDark,
@@ -204,7 +204,7 @@ class _NoCellState extends StatelessWidget {
                 ),
               ),
               icon: const Icon(Icons.group_work),
-              label: const Text('Zelle finden'),
+              label: const Text('Gemeinschaft finden'),
             ),
           ],
         ),
@@ -235,7 +235,7 @@ class _CellSelector extends StatelessWidget {
         dropdownColor: AppColors.surface,
         style: const TextStyle(color: AppColors.onDark),
         decoration: InputDecoration(
-          labelText: 'Zelle',
+          labelText: 'Gemeinschaft',
           labelStyle: TextStyle(color: AppColors.onDark.withValues(alpha: 0.6)),
           filled: true,
           fillColor: AppColors.surface,
@@ -275,7 +275,7 @@ class _ProposalList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (cellId.isEmpty) {
       return const Center(
-        child: Text('Keine Zelle ausgewählt.',
+        child: Text('Keine Gemeinschaft ausgewählt.',
             style: TextStyle(color: AppColors.surfaceVariant)),
       );
     }
@@ -499,7 +499,7 @@ class _EmptyActiveState extends StatelessWidget {
                 color: AppColors.onDark.withValues(alpha: 0.25)),
             const SizedBox(height: 16),
             Text(
-              'Aktuell gibt es keine offenen Anträge in dieser Zelle.\n'
+              'Aktuell gibt es keine offenen Anträge in dieser Gemeinschaft.\n'
               'Sei der erste und stelle einen Antrag!',
               textAlign: TextAlign.center,
               style: TextStyle(

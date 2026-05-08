@@ -320,7 +320,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Wire up callback so approved members get a welcome post.
       CellService.instance.onMemberApproved =
           (cellId, pseudonym) async {
-        final msg = '$pseudonym ist der Zelle beigetreten! 🌱';
+        final msg = '$pseudonym ist der Gemeinschaft beigetreten! 🌱';
         debugPrint('[CELL] Welcome message posted in discussion: $pseudonym');
         await postCellSystemMessage(cellId, msg);
       };
@@ -428,7 +428,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Post farewell message before leaving.
     final pseudonym =
         IdentityService.instance.currentIdentity?.pseudonym ?? 'Jemand';
-    await postCellSystemMessage(cellId, '$pseudonym hat die Zelle verlassen.');
+    await postCellSystemMessage(cellId, '$pseudonym hat die Gemeinschaft verlassen.');
 
     final channels = GroupChannelService.instance.cellChannelsFor(cellId);
     for (final ch in channels) {
@@ -795,8 +795,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     print('[CELL-DEL] Removing cell + channels from local DB: $cellId');
 
     await NotificationService.instance.showGenericNotification(
-      title: 'Zelle aufgelöst',
-      body: 'Die Zelle "$cellName" wurde aufgelöst.',
+      title: 'Gemeinschaft aufgelöst',
+      body: 'Die Gemeinschaft "$cellName" wurde aufgelöst.',
       payload: 'cell_deleted:$cellId',
     );
   }
@@ -820,8 +820,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // I was kicked — leave the cell-internal channels silently (no farewell msg).
       await deleteCellChannels(cellId);
       await NotificationService.instance.showGenericNotification(
-        title: 'Aus Zelle entfernt',
-        body: 'Du wurdest aus einer Zelle entfernt.',
+        title: 'Aus Gemeinschaft entfernt',
+        body: 'Du wurdest aus einer Gemeinschaft entfernt.',
         payload: 'cell_removed:$cellId',
       );
       print('[CELL] Removed from cell $cellId — channels cleaned up, notification shown');

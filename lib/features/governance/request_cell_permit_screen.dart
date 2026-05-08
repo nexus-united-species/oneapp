@@ -152,7 +152,7 @@ class _RequestCellPermitScreenState extends State<RequestCellPermitScreen> {
           padding: const EdgeInsets.all(20),
           children: [
             // Cell type
-            _Label('Zelltyp *'),
+            _Label('Gemeinschaftstyp *'),
             Row(
               children: [
                 Expanded(
@@ -199,7 +199,7 @@ class _RequestCellPermitScreenState extends State<RequestCellPermitScreen> {
             _Label('Kurzbeschreibung (optional)'),
             TextFormField(
               controller: _descCtrl,
-              decoration: _deco('Worum geht es in dieser Zelle?'),
+              decoration: _deco('Worum geht es in dieser Gemeinschaft?'),
               style: const TextStyle(color: AppColors.onDark),
               maxLines: 3,
               maxLength: 200,
@@ -217,7 +217,7 @@ class _RequestCellPermitScreenState extends State<RequestCellPermitScreen> {
                 validator: (v) {
                   if (_cellType == CellType.local &&
                       (v == null || v.trim().isEmpty)) {
-                    return 'Regions-Hinweis ist für lokale Zellen Pflichtfeld.';
+                    return 'Regions-Hinweis ist für lokale Gemeinschaften Pflichtfeld.';
                   }
                   return null;
                 },
@@ -254,7 +254,7 @@ class _RequestCellPermitScreenState extends State<RequestCellPermitScreen> {
             TextFormField(
               controller: _motivationCtrl,
               decoration:
-                  _deco('Warum möchtest du diese Zelle gründen?'),
+                  _deco('Warum möchtest du diese Gemeinschaft gründen?'),
               style: const TextStyle(color: AppColors.onDark),
               maxLines: 4,
               maxLength: 500,
@@ -272,7 +272,7 @@ class _RequestCellPermitScreenState extends State<RequestCellPermitScreen> {
               child: Text(
                 'Dein Antrag wird an den N.E.X.U.S.-Administrator gesendet. '
                 'Nach Genehmigung erhältst du eine Freigabe und kannst die '
-                'Zelle selbst auf deinem Gerät gründen.',
+                'Gemeinschaft selbst auf deinem Gerät gründen.',
                 style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.7),
                   fontSize: 13,

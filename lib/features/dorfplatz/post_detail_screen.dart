@@ -226,7 +226,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   Future<void> _showVisibilityPicker(BuildContext context) async {
     final options = [
       (FeedVisibility.contacts, Icons.people_outline, 'Meine Kontakte'),
-      (FeedVisibility.cell, Icons.group_work_outlined, 'Meine Zelle'),
+      (FeedVisibility.cell, Icons.group_work_outlined, 'Meine Gemeinschaft'),
       (FeedVisibility.public, Icons.public, 'Öffentlich'),
     ];
 
@@ -285,7 +285,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
     final visLabel = switch (chosen) {
       FeedVisibility.contacts => 'Meine Kontakte',
-      FeedVisibility.cell => 'Meine Zelle',
+      FeedVisibility.cell => 'Meine Gemeinschaft',
       FeedVisibility.public => 'Öffentlich',
     };
     final confirmed = await showDialog<bool>(

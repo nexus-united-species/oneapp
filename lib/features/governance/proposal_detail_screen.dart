@@ -181,7 +181,7 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
 
   Future<void> _publishToDiscussion() => _confirmAndRun(
         'Zur Diskussion stellen',
-        'Der Antrag wird für alle Zellenmitglieder sichtbar.',
+        'Der Antrag wird für alle Gemeinschaftsmitglieder sichtbar.',
         'Veröffentlichen',
         () async {
           await ProposalService.instance.publishToDiscussion(_proposal.id);

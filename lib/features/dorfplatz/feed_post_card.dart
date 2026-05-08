@@ -312,7 +312,7 @@ class _VisibilityIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (icon, tooltip) = switch (visibility) {
       FeedVisibility.contacts => (Icons.people_outline, 'Kontakte'),
-      FeedVisibility.cell => (Icons.group_work_outlined, 'Meine Zelle'),
+      FeedVisibility.cell => (Icons.group_work_outlined, 'Meine Gemeinschaft'),
       FeedVisibility.public => (Icons.public, 'Öffentlich'),
     };
     return Tooltip(

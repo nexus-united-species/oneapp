@@ -138,7 +138,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Meine Zellen'),
+        title: const Text('Meine Gemeinschaften'),
         backgroundColor: AppColors.deepBlue,
         actions: [
           IconButton(
@@ -182,7 +182,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'Lokale Zellen (${localCells.length}):',
+                          'Lokale Gemeinschaften (${localCells.length}):',
                           style: TextStyle(
                             color: AppColors.onDark.withValues(alpha: 0.6),
                             fontSize: 12,
@@ -232,7 +232,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
               backgroundColor: AppColors.gold,
               foregroundColor: Colors.black,
               icon: const Icon(Icons.add),
-              label: const Text('Zelle gründen'),
+              label: const Text('Gemeinschaft gründen'),
             )
           : activePermit != null
               ? FloatingActionButton.extended(
@@ -240,7 +240,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
                   backgroundColor: AppColors.gold,
                   foregroundColor: Colors.black,
                   icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Jetzt Zelle gründen'),
+                  label: const Text('Jetzt Gemeinschaft gründen'),
                 )
               : FloatingActionButton.extended(
                   onPressed: _openRequestPermit,
@@ -353,9 +353,9 @@ class _EmptyState extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Du bist noch in keiner Zelle. Eine Zelle ist deine lokale '
-                  'oder thematische Gemeinschaft — wie ein digitales Dorf. '
-                  'Entdecke Zellen in deiner Nähe oder gründe eine eigene!',
+                  'Du bist noch in keiner Gemeinschaft. Eine Gemeinschaft ist dein lokales '
+                  'oder thematisches Zuhause — wie ein digitales Dorf. '
+                  'Entdecke Gemeinschaften in deiner Nähe oder gründe eine eigene!',
                   style: TextStyle(
                     color: AppColors.onDark.withValues(alpha: 0.7),
                     height: 1.5,
@@ -385,7 +385,7 @@ class _EmptyState extends StatelessWidget {
         ],
 
         // Thematic cells with category chips + search
-        _SectionHeader(title: 'Thematische Zellen'),
+        _SectionHeader(title: 'Thematische Gemeinschaften'),
         SliverToBoxAdapter(
           child: SizedBox(
             height: 44,
@@ -429,9 +429,9 @@ class _EmptyState extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               child: Text(
                 allKnownCells.isEmpty
-                    ? 'Noch keine Zellen entdeckt. Sobald Zellen im NEXUS-Netzwerk '
+                    ? 'Noch keine Gemeinschaften entdeckt. Sobald Gemeinschaften im NEXUS-Netzwerk '
                         'bekannt sind, erscheinen sie hier.'
-                    : 'Keine thematischen Zellen in dieser Kategorie gefunden.',
+                    : 'Keine thematischen Gemeinschaften in dieser Kategorie gefunden.',
                 style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.5),
                   fontSize: 13,
@@ -459,7 +459,7 @@ class _EmptyState extends StatelessWidget {
                 Divider(color: AppColors.surfaceVariant),
                 const SizedBox(height: 12),
                 Text(
-                  'Keine passende Zelle gefunden?',
+                  'Keine passende Gemeinschaft gefunden?',
                   style: TextStyle(
                     color: AppColors.onDark.withValues(alpha: 0.7),
                     fontSize: 13,
@@ -482,7 +482,7 @@ class _EmptyState extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.add),
-                      label: const Text('Neue Zelle gründen',
+                      label: const Text('Neue Gemeinschaft gründen',
                           style:
                               TextStyle(fontWeight: FontWeight.bold)),
                     ),
@@ -530,7 +530,7 @@ class _EmptyState extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.add),
-                      label: const Text('Jetzt Zelle gründen',
+                      label: const Text('Jetzt Gemeinschaft gründen',
                           style:
                               TextStyle(fontWeight: FontWeight.bold)),
                     ),
@@ -562,7 +562,7 @@ class _EmptyState extends StatelessWidget {
                 // ZUSTAND 3: Kein Permit — Antrag stellen
                 else ...[
                   Text(
-                    'Du benötigst eine Genehmigung, um eine Zelle zu gründen.',
+                    'Du benötigst eine Genehmigung, um eine Gemeinschaft zu gründen.',
                     style: TextStyle(
                       color: AppColors.onDark.withValues(alpha: 0.6),
                       fontSize: 12,
@@ -668,7 +668,7 @@ class _FilledState extends StatelessWidget {
     return CustomScrollView(
       slivers: [
         // My cells section
-        _SectionHeader(title: 'Meine Zellen'),
+        _SectionHeader(title: 'Meine Gemeinschaften'),
         SliverList(
           delegate: SliverChildBuilderDelegate(
             (context, i) => _MyCellTile(
@@ -679,8 +679,8 @@ class _FilledState extends StatelessWidget {
           ),
         ),
 
-        // "Weitere Zellen entdecken" divider
-        _SectionHeader(title: 'Weitere Zellen entdecken'),
+        // "Weitere Gemeinschaften entdecken" divider
+        _SectionHeader(title: 'Weitere Gemeinschaften entdecken'),
 
         // Nearby section (GPS-based)
         _NearbySection(
@@ -701,7 +701,7 @@ class _FilledState extends StatelessWidget {
         ],
 
         // Thematic cells with category chips
-        _SectionHeader(title: 'Thematische Zellen'),
+        _SectionHeader(title: 'Thematische Gemeinschaften'),
         SliverToBoxAdapter(
           child: SizedBox(
             height: 44,
@@ -745,7 +745,7 @@ class _FilledState extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                'Keine thematischen Zellen in dieser Kategorie entdeckt.',
+                'Keine thematischen Gemeinschaften in dieser Kategorie entdeckt.',
                 style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.5),
                 ),
@@ -778,7 +778,7 @@ class _FilledState extends StatelessWidget {
                   ),
                 ),
                 icon: const Icon(Icons.add),
-                label: const Text('Neue Zelle gründen',
+                label: const Text('Neue Gemeinschaft gründen',
                     style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ),
@@ -833,7 +833,7 @@ class _FilledState extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.add),
-                      label: const Text('Jetzt Zelle gründen',
+                      label: const Text('Jetzt Gemeinschaft gründen',
                           style:
                               TextStyle(fontWeight: FontWeight.bold)),
                     ),
@@ -876,7 +876,7 @@ class _FilledState extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Du benötigst eine Genehmigung, um eine Zelle zu gründen.',
+                    'Du benötigst eine Genehmigung, um eine Gemeinschaft zu gründen.',
                     style: TextStyle(
                       color: AppColors.onDark.withValues(alpha: 0.6),
                       fontSize: 12,
@@ -1001,7 +1001,7 @@ class _NearbySection extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Aktiviere GPS um Zellen in deiner Nähe zu finden.',
+                  'Aktiviere GPS um Gemeinschaften in deiner Nähe zu finden.',
                   style: TextStyle(
                     color: AppColors.onDark.withValues(alpha: 0.5),
                     fontSize: 12,
@@ -1025,7 +1025,7 @@ class _NearbySection extends StatelessWidget {
 
     return SliverMainAxisGroup(
       slivers: [
-        _SectionHeader(title: 'Zellen in deiner Nähe'),
+        _SectionHeader(title: 'Gemeinschaften in deiner Nähe'),
         SliverList(
           delegate: SliverChildBuilderDelegate(
             (context, i) => _DiscoveredCellTile(cell: nearbyCells[i]),
@@ -1599,7 +1599,7 @@ class _DiscoveredCellTile extends StatelessWidget {
       return ElevatedButton(
         onPressed: null,
         style: disabledStyle,
-        child: const Text('Zelle ist voll'),
+        child: const Text('Gemeinschaft ist voll'),
       );
     }
     if (cell.joinPolicy == JoinPolicy.inviteOnly) {

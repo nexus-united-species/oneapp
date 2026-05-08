@@ -117,10 +117,10 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Zelle löschen',
+        title: const Text('Gemeinschaft löschen',
             style: TextStyle(color: Colors.red)),
         content: Text(
-          'Zelle "${_cell.name}" wirklich löschen? '
+          'Gemeinschaft "${_cell.name}" wirklich löschen? '
           'Alle Mitglieder werden entfernt. '
           'Das kann nicht rückgängig gemacht werden.',
           style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
@@ -144,14 +144,14 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Zellenname bestätigen',
+        title: const Text('Name der Gemeinschaft bestätigen',
             style: TextStyle(color: AppColors.onDark)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Tippe den Namen der Zelle ein, um die Löschung zu bestätigen:',
+              'Tippe den Namen der Gemeinschaft ein, um die Löschung zu bestätigen:',
               style: TextStyle(
                   color: AppColors.onDark.withValues(alpha: 0.8)),
             ),
@@ -210,7 +210,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Die Zelle "$cellName" wurde aufgelöst.'),
+          content: Text('Die Gemeinschaft "$cellName" wurde aufgelöst.'),
           duration: const Duration(seconds: 3),
         ),
       );
@@ -230,10 +230,10 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
           context: context,
           builder: (ctx) => AlertDialog(
             backgroundColor: AppColors.surface,
-            title: const Text('Zelle verlassen nicht möglich',
+            title: const Text('Gemeinschaft verlassen nicht möglich',
                 style: TextStyle(color: AppColors.onDark)),
             content: const Text(
-              'Du bist das einzige Mitglied. Lösche die Zelle statt sie zu verlassen.',
+              'Du bist das einzige Mitglied. Lösche die Gemeinschaft statt sie zu verlassen.',
               style: TextStyle(color: AppColors.onDark),
             ),
             actions: [
@@ -258,7 +258,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
               style: TextStyle(color: AppColors.onDark)),
           content: Text(
             'Möchtest du …${successor.did.substring(successor.did.length > 12 ? successor.did.length - 12 : 0)} '
-            'zum neuen Gründer von "${_cell.name}" ernennen und die Zelle verlassen?',
+            'zum neuen Gründer von "${_cell.name}" ernennen und die Gemeinschaft verlassen?',
             style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
           ),
           actions: [
@@ -289,10 +289,10 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Zelle verlassen',
+        title: const Text('Gemeinschaft verlassen',
             style: TextStyle(color: AppColors.onDark)),
         content: Text(
-          'Möchtest du die Zelle "${_cell.name}" wirklich verlassen?',
+          'Möchtest du die Gemeinschaft "${_cell.name}" wirklich verlassen?',
           style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.8)),
         ),
         actions: [
@@ -368,7 +368,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
         title: const Text('Mitglied entfernen',
             style: TextStyle(color: Colors.redAccent)),
         content: Text(
-          'Möchtest du $shortDid aus der Zelle "${_cell.name}" entfernen? '
+          'Möchtest du $shortDid aus der Gemeinschaft "${_cell.name}" entfernen? '
           'Die Person verliert sofort den Zugang.',
           style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
         ),
@@ -392,13 +392,13 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
       if (mounted) {
         await context
             .read<ChatProvider>()
-            .postCellSystemMessage(_cell.id, '$shortDid wurde aus der Zelle entfernt.');
+            .postCellSystemMessage(_cell.id, '$shortDid wurde aus der Gemeinschaft entfernt.');
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('$shortDid wurde aus der Zelle entfernt.'),
+            content: Text('$shortDid wurde aus der Gemeinschaft entfernt.'),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -591,7 +591,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
           if (_isFounder) ...[
             _ActionTile(
               icon: Icons.edit,
-              label: 'Zelle bearbeiten',
+              label: 'Gemeinschaft bearbeiten',
               iconColor: AppColors.gold,
               onTap: () async {
                 await Navigator.of(context, rootNavigator: true).push(
@@ -650,7 +650,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
           // Danger zone
           _ActionTile(
             icon: Icons.exit_to_app,
-            label: 'Zelle verlassen',
+            label: 'Gemeinschaft verlassen',
             iconColor: Colors.red,
             textColor: Colors.red,
             onTap: _leaveCell,
@@ -659,7 +659,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
             const SizedBox(height: 8),
             _ActionTile(
               icon: Icons.delete_forever,
-              label: 'Zelle löschen',
+              label: 'Gemeinschaft löschen',
               iconColor: Colors.red,
               textColor: Colors.red,
               onTap: _deleteCell,
