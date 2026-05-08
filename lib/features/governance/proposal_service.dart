@@ -11,6 +11,7 @@ import '../../core/transport/nostr/nostr_event.dart';
 import '../../core/transport/nostr/publish_result.dart';
 import '../../core/transport/nostr/publish_result_dao.dart';
 import '../../core/transport/nostr/publish_result_status.dart';
+import '../../core/contacts/contact_service.dart';
 import '../../services/notification_service.dart';
 import 'audit_log_entry.dart';
 import 'cell_member.dart';
@@ -3664,18 +3665,23 @@ class ProposalService {
       }
 
       // Step 5e: Success — synthesise a vote for the delegator using
-      // the delegate's choice/weight/selectedOptionId.
+      // the delegate's choice/selectedOptionId.
+      // G2.1.4a: voterPseudonym resolved via ContactService; weight and
+      // voiceCredits are always 1 (Liquid Democracy: one vote per delegator,
+      // no weight amplification regardless of the delegate's own weight).
       final delegateVote =
           directVotes.firstWhere((v) => v.voterDid == d.delegateDid);
+      final delegatorPseudonym =
+          _resolveDelegatorPseudonym(d.delegatorDid);
       final syntheticVote = Vote(
         voteId: 'delegated-${d.delegationId}',
         proposalId: proposalId,
         voterPubkey: '',
         voterDid: d.delegatorDid,
-        voterPseudonym: '',
+        voterPseudonym: delegatorPseudonym,
         choice: delegateVote.choice,
-        weight: delegateVote.weight,
-        voiceCredits: delegateVote.voiceCredits,
+        weight: 1,
+        voiceCredits: 1,
         reasoning: null,
         createdAt: delegateVote.createdAt,
         isDelegated: true,
@@ -3684,7 +3690,7 @@ class ProposalService {
         selectedOptionId: delegateVote.selectedOptionId,
       );
       print('[TALLY-DELEGATION-AGGREGATED] delegationId=${d.delegationId} '
-          'from=${d.delegatorDid} via=${d.delegateDid} '
+          'from=${d.delegatorDid}:$delegatorPseudonym via=${d.delegateDid} '
           'choice=${delegateVote.choice.name}');
       syntheticVotes.add(syntheticVote);
     }
@@ -3700,6 +3706,25 @@ class ProposalService {
     // Return directVotes + synthetic votes.
     // No re-sort here — callers apply sortVotesDeterministic when needed.
     return [...directVotes, ...syntheticVotes];
+  }
+
+  /// Phase G2.1.4a: Resolve the display name of a delegator for the
+  /// synthetic vote's voterPseudonym field.
+  ///
+  /// ContactService.getDisplayName returns the stored pseudonym for known
+  /// contacts, or a 12-character DID fragment as a fallback for unknown
+  /// ones. Both are acceptable per Joachim's Variante-A decision (recon R2).
+  /// The cell_members fallback was dropped after recon R3 — CellMember has
+  /// no pseudonym field.
+  ///
+  /// voterPseudonym is NOT part of the contentHash input (recon R4), so
+  /// different values across devices cause no hash divergence.
+  static String _resolveDelegatorPseudonym(String delegatorDid) {
+    try {
+      return ContactService.instance.getDisplayName(delegatorDid);
+    } catch (_) {
+      return '';
+    }
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────

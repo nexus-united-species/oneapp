@@ -1,6 +1,8 @@
 // ignore_for_file: avoid_print
 //
 // G2.1.3 — Delegation tally aggregation tests.
+// G2.1.4a — Synthetic-Vote data-quality tests (voterPseudonym, weight=1,
+//            voiceCredits=1).
 //
 // Tests verify that _aggregateVotesWithDelegations is called correctly from
 // finalizeProposal (YNA path) and _finalizeSingleChoice (SC path), and that
@@ -9,10 +11,11 @@
 // D9 Variante A is enforced throughout: the delegations table is NEVER mutated
 // during tally — expired/invalid delegations remain ACTIVE in the DB.
 //
-// Coverage: D.1–D.10 (26 tests).
+// Coverage: D.1–D.10 (26 tests G2.1.3) + G2.1.4a (5 new tests).
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nexus_oneapp/core/contacts/contact_service.dart';
 import 'package:nexus_oneapp/core/identity/identity.dart';
 import 'package:nexus_oneapp/core/identity/identity_service.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
@@ -461,7 +464,7 @@ void main() {
     test('A→B, B votes YES → A counts as YES (yesVotes=2)', () async {
       _injectYnaProposal();
       await _insertYnaVote(_propYna, _bDid, VoteChoice.YES);
-      await _insertDelegation(_propYna, _aDid, _bDid);
+      final d = await _insertDelegation(_propYna, _aDid, _bDid);
 
       await ProposalService.instance.finalizeProposal(_propYna);
 
@@ -471,30 +474,60 @@ void main() {
           reason: 'A delegates to B who voted YES → A counted as YES');
       expect(rec['no_votes'], equals(0));
       expect(rec['abstain_votes'], equals(0));
+
+      // G2.1.4a: synthetic vote data quality.
+      final dr = await ProposalService.instance.getDecisionRecord(_propYna);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${d.delegationId}');
+      expect(synth.weight, equals(1),
+          reason: 'G2.1.4a: synthetic vote weight must be 1');
+      expect(synth.voiceCredits, equals(1),
+          reason: 'G2.1.4a: synthetic vote voiceCredits must be 1');
+      expect(synth.voterPseudonym, isNotEmpty,
+          reason: 'G2.1.4a: voterPseudonym must not be empty '
+              '(ContactService returns DID fragment as minimum)');
+      expect(synth.isDelegated, isTrue);
+      expect(synth.delegatedFrom, equals(_bDid));
     });
 
     test('A→B, B votes NO → A counts as NO (noVotes=2)', () async {
       _injectYnaProposal();
       await _insertYnaVote(_propYna, _bDid, VoteChoice.NO);
-      await _insertDelegation(_propYna, _aDid, _bDid);
+      final d = await _insertDelegation(_propYna, _aDid, _bDid);
 
       await ProposalService.instance.finalizeProposal(_propYna);
 
       final rec = await _readRecord(_propYna);
       expect(rec!['no_votes'], equals(2));
       expect(rec['yes_votes'], equals(0));
+
+      // G2.1.4a: synthetic vote data quality.
+      final dr = await ProposalService.instance.getDecisionRecord(_propYna);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${d.delegationId}');
+      expect(synth.weight, equals(1));
+      expect(synth.voiceCredits, equals(1));
+      expect(synth.voterPseudonym, isNotEmpty);
     });
 
     test('A→B, B votes ABSTAIN → A counts as ABSTAIN (abstainVotes=2)',
         () async {
       _injectYnaProposal();
       await _insertYnaVote(_propYna, _bDid, VoteChoice.ABSTAIN);
-      await _insertDelegation(_propYna, _aDid, _bDid);
+      final d = await _insertDelegation(_propYna, _aDid, _bDid);
 
       await ProposalService.instance.finalizeProposal(_propYna);
 
       final rec = await _readRecord(_propYna);
       expect(rec!['abstain_votes'], equals(2));
+
+      // G2.1.4a: synthetic vote data quality.
+      final dr = await ProposalService.instance.getDecisionRecord(_propYna);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${d.delegationId}');
+      expect(synth.weight, equals(1));
+      expect(synth.voiceCredits, equals(1));
+      expect(synth.voterPseudonym, isNotEmpty);
     });
   });
 
@@ -508,7 +541,7 @@ void main() {
 
       // B votes for opt1; A delegates to B.
       await _insertScVote(_propSc, _bDid, 'opt1');
-      await _insertDelegation(_propSc, _aDid, _bDid);
+      final d = await _insertDelegation(_propSc, _aDid, _bDid);
 
       await ProposalService.instance.finalizeProposal(_propSc);
 
@@ -521,6 +554,15 @@ void main() {
       // verify via the result (opt1 wins with 2 vs 0).
       expect(rec['result'], equals('approved'),
           reason: 'opt1 wins with 2/5 votes, quorum=0.0 → approved');
+
+      // G2.1.4a: synthetic vote data quality.
+      final dr = await ProposalService.instance.getDecisionRecord(_propSc);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${d.delegationId}');
+      expect(synth.weight, equals(1));
+      expect(synth.voiceCredits, equals(1));
+      expect(synth.voterPseudonym, isNotEmpty);
+      expect(synth.selectedOptionId, equals('opt1'));
     });
   });
 
@@ -1034,6 +1076,194 @@ void main() {
       expect(syntheticVote.voteId, equals('delegated-${d.delegationId}'));
       expect(syntheticVote.delegatedFrom, equals(_bDid));
       expect(syntheticVote.voterDid, equals(_aDid));
+      // G2.1.4a: data-quality assertions.
+      expect(syntheticVote.weight, equals(1),
+          reason: 'G2.1.4a: weight must be 1, not inherited from delegate');
+      expect(syntheticVote.voiceCredits, equals(1),
+          reason: 'G2.1.4a: voiceCredits must be 1, not inherited from delegate');
+      expect(syntheticVote.voterPseudonym, isNotEmpty,
+          reason: 'G2.1.4a: voterPseudonym must be resolved via ContactService');
+    });
+  });
+
+  // ── G2.1.4a — Synthetic-Vote data-quality ────────────────────────────────
+  //
+  // ContactService has no visibleForTesting hook (recon B.4). Tests that need
+  // a "known" delegator call ContactService.instance.addContact() directly
+  // with a unique DID not used in other groups. Tests that need a "DID-fragment"
+  // result simply use a DID that is never registered in ContactService.
+  //
+  // Note: ContactService._contacts is a shared singleton and is not cleared
+  // between tests (no clearForTest hook exists). DIDs used here are unique to
+  // the G2.1.4a group to avoid interference. Adding a clearForTest hook would
+  // require touching a third file and is deferred to a future mini-patch.
+
+  group('G2.1.4a synthetic-vote data-quality', () {
+    // Unique proposal ID for this group to avoid collision with D.* groups.
+    const _prop4a = 'prop_dt_4a';
+
+    // Helper: inject a fresh YNA proposal with [eligibleVoters].
+    Proposal _inject4aProposal(List<String> eligibleVoters) {
+      final p = Proposal(
+        id: _prop4a,
+        cellId: _cellId,
+        creatorDid: _bDid,
+        creatorPseudonym: 'Tester',
+        title: 'G2.1.4a Testantrag',
+        description: '',
+        createdAt: DateTime.utc(2026, 1, 1),
+        status: ProposalStatus.VOTING_ENDED,
+        votingMode: VotingMode.YES_NO_ABSTAIN,
+        votingEndsAt: DateTime.utc(2026, 1, 2),
+        quorumRequired: 0.0,
+        eligibleVoters: eligibleVoters,
+      );
+      ProposalService.instance.injectProposalForTest(p);
+      return p;
+    }
+
+    test(
+        'G2.1.4a: synthetic vote weight is always 1 even when '
+        'delegate voted with weight > 1 (future-proof for QV)', () async {
+      // Insert a delegate vote with weight=5 directly — bypassing the
+      // _insertYnaVote helper which uses default weight=1.
+      const delegateDid = 'did:key:z6MkDelegateQV';
+      const delegatorDid = 'did:key:z6MkDelegatorQV';
+      _inject4aProposal([delegateDid, delegatorDid]);
+
+      final now = DateTime.utc(2026, 1, 1, 12);
+      await db.insert('proposal_votes', {
+        'vote_id': 'v-qv-delegate',
+        'proposal_id': _prop4a,
+        'voter_pubkey': delegateDid,
+        'voter_did': delegateDid,
+        'voter_pseudonym': 'QV-Delegate',
+        'choice': 'YES',
+        'weight': 5, // deliberately > 1
+        'voice_credits': 25, // deliberately > 1
+        'reasoning': null,
+        'created_at': now.millisecondsSinceEpoch,
+        'is_delegated': 0,
+        'delegated_from': null,
+        'nostr_event_id': '',
+        'selected_option_id': null,
+      });
+      final del = await _insertDelegation(_prop4a, delegatorDid, delegateDid);
+
+      await ProposalService.instance.finalizeProposal(_prop4a);
+
+      final dr = await ProposalService.instance.getDecisionRecord(_prop4a);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${del.delegationId}');
+      expect(synth.weight, equals(1),
+          reason: 'G2.1.4a: weight is always 1, not inherited from delegate '
+              '(delegate had weight=5)');
+      expect(synth.voiceCredits, equals(1),
+          reason: 'G2.1.4a: voiceCredits is always 1, not inherited from '
+              'delegate (delegate had voiceCredits=25)');
+    });
+
+    test(
+        'G2.1.4a: synthetic vote voterPseudonym = '
+        'ContactService displayName for known delegator ("Alice")', () async {
+      // Use unique DIDs for this test to avoid ContactService state bleed.
+      const aliceDid = 'did:key:z6MkAliceDT4a';
+      const aliceDelegateDid = 'did:key:z6MkBobDT4a';
+      _inject4aProposal([aliceDid, aliceDelegateDid]);
+
+      // Register Alice in ContactService (in-memory + persisted to test DB).
+      await ContactService.instance.addContact(aliceDid, 'Alice');
+
+      await _insertYnaVote(_prop4a, aliceDelegateDid, VoteChoice.YES);
+      final del = await _insertDelegation(_prop4a, aliceDid, aliceDelegateDid);
+
+      await ProposalService.instance.finalizeProposal(_prop4a);
+
+      final dr = await ProposalService.instance.getDecisionRecord(_prop4a);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${del.delegationId}');
+      expect(synth.voterPseudonym, equals('Alice'),
+          reason: 'G2.1.4a: ContactService returns "Alice" for known delegator');
+      expect(synth.weight, equals(1));
+      expect(synth.voiceCredits, equals(1));
+      expect(synth.isDelegated, isTrue);
+      expect(synth.delegatedFrom, equals(aliceDelegateDid));
+      expect(synth.voterDid, equals(aliceDid));
+    });
+
+    test(
+        'G2.1.4a: synthetic vote voterPseudonym = DID fragment '
+        'when delegator is not in ContactService', () async {
+      // Use a DID not registered anywhere in the test suite.
+      const unknownDid = 'did:key:z6MkFragDT4b';
+      const unknownDelegate = 'did:key:z6MkFDelDT4b';
+      _inject4aProposal([unknownDid, unknownDelegate]);
+
+      await _insertYnaVote(_prop4a, unknownDelegate, VoteChoice.NO);
+      final del = await _insertDelegation(_prop4a, unknownDid, unknownDelegate);
+
+      await ProposalService.instance.finalizeProposal(_prop4a);
+
+      final dr = await ProposalService.instance.getDecisionRecord(_prop4a);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${del.delegationId}');
+      // ContactService returns the last 12 chars of the DID for unknown DIDs.
+      final expectedFragment = unknownDid.length > 12
+          ? unknownDid.substring(unknownDid.length - 12)
+          : unknownDid;
+      expect(synth.voterPseudonym, equals(expectedFragment),
+          reason: 'G2.1.4a: ContactService DID-fragment fallback for unknown '
+              'delegator: "$expectedFragment"');
+      expect(synth.voterPseudonym, isNotEmpty);
+    });
+
+    test(
+        'G2.1.4a: DecisionRecord.allVotes JSON contains non-empty '
+        'voterPseudonym for the delegated entry', () async {
+      // Unique DIDs to avoid ContactService state from other tests.
+      const delegatorDid = 'did:key:z6MkDeleRecDT';
+      const delegateDid = 'did:key:z6MkDelegDRecDT';
+      _inject4aProposal([delegatorDid, delegateDid]);
+
+      // Register delegator as "Bob" so pseudonym is deterministic.
+      await ContactService.instance.addContact(delegatorDid, 'Bob');
+
+      await _insertYnaVote(_prop4a, delegateDid, VoteChoice.YES);
+      await _insertDelegation(_prop4a, delegatorDid, delegateDid);
+
+      await ProposalService.instance.finalizeProposal(_prop4a);
+
+      // Read directly from PodDatabase to verify the persisted JSON.
+      final row = await PodDatabase.instance.getDecisionRecord(_prop4a);
+      expect(row, isNotNull);
+      final allVotesJson = row!['all_votes'] as String;
+      // The persisted all_votes JSON contains voterPseudonym for every vote.
+      // After G2.1.4a, the delegated entry must have non-empty pseudonym.
+      expect(allVotesJson, contains('"voter_pseudonym":"Bob"'),
+          reason: 'G2.1.4a: persisted all_votes JSON must contain '
+              '"voter_pseudonym":"Bob" for the delegated vote');
+    });
+
+    test(
+        'G2.1.4a: synthetic vote isDelegated=true and '
+        'delegatedFrom=delegateDid remain correct', () async {
+      _injectYnaProposal();
+      await _insertYnaVote(_propYna, _bDid, VoteChoice.YES);
+      final d = await _insertDelegation(_propYna, _aDid, _bDid);
+
+      await ProposalService.instance.finalizeProposal(_propYna);
+
+      final dr = await ProposalService.instance.getDecisionRecord(_propYna);
+      final synth = dr!.allVotes.firstWhere(
+        (v) => v.voteId == 'delegated-${d.delegationId}',
+        orElse: () => throw TestFailure('No synthetic vote found'),
+      );
+      expect(synth.isDelegated, isTrue,
+          reason: 'G2.1.4a: isDelegated must remain true');
+      expect(synth.delegatedFrom, equals(_bDid),
+          reason: 'G2.1.4a: delegatedFrom must be the delegate DID');
+      expect(synth.voterDid, equals(_aDid),
+          reason: 'G2.1.4a: voterDid must be the delegator DID');
     });
   });
 }
