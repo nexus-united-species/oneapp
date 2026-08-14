@@ -1,12 +1,36 @@
-# G2-Spezifikation für die N.E.X.U.S. OneApp — v1.3
+# G2-Spezifikation für die N.E.X.U.S. OneApp — v1.5
 
 ## Version
 
 ```text
 Spezifikation: G2 Governance
-Stand: Arbeitsfassung v1.3
-Ziel: Umsetzbare Grundlage für Claude Code / Opus
+Stand: Konsolidierte Arbeitsfassung v1.5, 15. Juli 2026
+Ist-Anker: G2.1.6 / Liquid Democracy abgeschlossen; Release-Härtung läuft
+Ziel: Normative Grundlage für die weitere Governance-Umsetzung
 Technische Zielplattform: Flutter / Dart / SQLite Proto-POD / Nostr / BLE / LAN
+```
+
+---
+
+# Änderungsstand v1.5
+
+v1.5 konsolidiert die Spezifikation nach Abschluss des ersten nutzbaren
+G2-Teilblocks Liquid Democracy. Die Abschnitte 1 bis 30 bleiben die normative
+fachliche Grundlage. §31 dokumentiert historische Präzisierungen aus Phase 4.
+§32 enthält den aktuellen Implementierungs- und Release-Anker und hat bei
+Status- oder Reihenfolgeaussagen Vorrang vor älteren Passagen.
+
+Wesentliche Änderungen:
+
+```text
+- Liquid Democracy pro Proposal ist bis G2.1.6 implementiert
+- Delegation bleibt nicht-transitiv und ist bei Candidate Choice ausgeschlossen
+- Release-Härtung wird vor Quadratic Voting eingeschoben
+- bestätigte Audit-Funde F-001 bis F-003 werden Release-Blocker
+- Empfangsverifikation und Senderautorisierung werden Voraussetzung
+  für Nutzung außerhalb eines vertrauten Alpha-Kreises
+- Quadratic Voting bleibt Teil von G2, ist aber noch nicht implementiert
+- AETHER, Intercell-Governance und Superadmin-Recall bleiben offen
 ```
 
 ---
@@ -3387,8 +3411,10 @@ Wichtig:
 - Intercell: 1 Zelle = 1 Stimme
 - Superadmin Recall: 1 Mensch = 1 Stimme, kein QV, keine Delegation
 ```
-# Anhang an: G2-Spezifikation für die N.E.X.U.S. OneApp — v1.3
-# Neuer Abschnitt §31 — v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung
+# Historischer Anhang: v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung
+
+> Dieser Abschnitt bleibt als Implementierungsprotokoll erhalten. Seine
+> Status- und Reihenfolgeaussagen werden durch §32 ersetzt.
 
 > **Hinweis zur Form:** Dieser Abschnitt wird **direkt an v1.3** angehängt. v1.3 bleibt vollständig gültig. Wo v1.4 von v1.3 abweicht, ist das in der jeweiligen Sub-Sektion explizit als „Abweichung" oder „Pragmatik" gekennzeichnet. Alle anderen v1.3-Inhalte gelten unverändert weiter.
 
@@ -3953,121 +3979,109 @@ Strukturelle Klarstellungen in §31.6/§31.8:        Punkte 22, 24
                                                     Begründung
 ```
 
-Phase 4 hat damit den Tally-/DecisionRecord-/Stichwahl-Block der DoD weitgehend abgedeckt. Die offenen G2-Blöcke (Liquid Democracy, Quadratic Voting, Expertenprofile, Statementpflicht, Intercell-Governance, Superadmin-Abwahl, Hybrid-Encryption) sind die nächsten großen Implementierungs-Schritte.
+Phase 4 hat damit den Tally-/DecisionRecord-/Stichwahl-Block der DoD weitgehend
+abgedeckt. Die damalige Aussage, Liquid Democracy sei noch offen, ist durch
+G2.1.6 überholt. Der folgende §32 ersetzt diese Statusaussage.
 
 ---
 
-# Kurzform für Claude Code — Stand nach Phase 4
+# 32. v1.5 – Stand nach G2.1.6
 
-> Dieser Block ist **kein** Teil der formalen Spezifikation. Er dient als kompakter Onboarding-Kontext für Claude Code beim Start eines neuen G2-Implementierungs-Schritts.
+## 32.0 Release-Anker nach Liquid Democracy
 
-## Wo wir stehen
+Nach Abschluss von G2.1.6 gilt Liquid Democracy als erster vollständig
+nutzbarer G2-Teilblock. Vor dem Einstieg in Quadratic Voting und
+Grundstimm-Recht wird ein Release-Stabilisierungsblock eingeschoben.
 
-Phase 4 ist abgeschlossen und live verifiziert. Der Tally-/DecisionRecord-Pfad funktioniert für YNA + SC + CC end-to-end, inkl. automatischer Stichwahl-Anlage bei Tie. SC-UI ist live cross-device getestet. PARTIAL-Publish-Semantik ist korrigiert.
+Dieser Block dient:
 
-## Was Claude Code wissen muss, bevor G2-Code geschrieben wird
+- der Bereinigung oder Dokumentation relevanter Tech-Debts,
+- der Verbesserung der Ergebnisanzeige und Cross-Device-Konsistenz,
+- der Einführung einfacher Delegations-/Expertise-Profile,
+- der Erstellung von Bedienungs- und Erklärmaterial,
+- der Vorbereitung eines Alpha-Releases für Pioniere.
+
+Quadratic Voting und Grundstimm-Recht bleiben Teil von G2, werden aber nach
+dem Liquid-Democracy-Release-Anker umgesetzt.
+
+## 32.1 Implementierter Umfang von Liquid Democracy
+
+Für `YES_NO_ABSTAIN` und `SINGLE_CHOICE` gilt:
 
 ```text
-1. Wire-Format-Konvention (verbindlich, §31.2):
-   - JSON-content nutzt camelCase
-   - inhaltliche Felder reisen im content, nicht als Tags
-   - ProposalOption-Wire-Key heißt 'label', nicht 'displayText'
-   - createdAt/updatedAt sind lokal, reisen nicht
-   - JSON-Zahlen defensiv via num.toInt() parsen
-
-2. Sender-only Pattern (verbindlich, §31.3):
-   - Auto-Aktionen werden nur vom auslösenden Gerät durchgeführt
-   - handleIncoming<X>-Pfade triggern KEINE Auto-Aktionen
-   - Cross-Device-Idempotenz ist strukturell durch dieses
-     Pattern gegeben
-
-3. PARTIAL-Publish-Semantik (verbindlich, §31.4):
-   - acceptedRelayCount > 0 ist Erfolg
-   - Retry nur bei acceptedRelayCount == 0
-   - keine 'publish failed'-Logs bei PARTIAL
-
-4. Idempotenz-Pattern (§31.5):
-   - DB-Existing-Record-Guard wo möglich (wie Phase 4.6)
-   - SharedPreferences-Tracking als Fallback (wie Phase 4.8)
-
-5. Stichwahl-Pragmatik (§31.6):
-   - Proposal.previousProposalId existiert NICHT als
-     Modell-Feld
-   - Wenn Cross-Verkettung nötig: über
-     description-Marker oder via DecisionRecord-Felder
-
-6. Tally-Reasons (Phase 4.4, verbindliche Reihenfolge):
-   NO_VALID_VOTES → QUORUM_NOT_MET → ALL_ABSTAIN
-   → ALL_CANDIDATES_WITHDRAWN → WINNER_WITHDRAWN
-   → TIE_REQUIRES_RUNOFF → approved
+- genau eine aktive Delegation pro Person und Proposal
+- nur an bestätigte Mitglieder derselben Zelle
+- Widerruf während der Abstimmungsphase
+- eigene direkte Stimme hebt die eigene Delegation auf
+- Delegierter ohne direkte Stimme lässt delegierte Stimmen verfallen
+- keine transitive Weitergabe
+- synthetische delegierte Stimme hat Gewicht 1
+- Candidate Choice erlaubt keine Delegation
+- Delegations-Events werden über Nostr synchronisiert
 ```
 
-## Was Claude Code NICHT tun soll, ohne Joachim zu fragen
+## 32.2 Bestätigte Release-Blocker
+
+Vor dem nächsten breiteren Alpha-Paket sind mindestens folgende Punkte zu
+beheben und mit Android↔Windows zu prüfen:
 
 ```text
-- DB-Migrationen einführen
-- Modell-Felder ergänzen (insbesondere Proposal.*)
-- Öffentliche Signaturen ändern
-  (publishProposalEvent / publishVoteEvent /
-   publishDecisionRecord, castVote, createDraft, ...)
-- Wire-Format-Tags ändern
-- Mock-Frameworks einführen
-- 'flutter clean' / 'adb uninstall' ausführen
-- Mehr als die freigegebenen Dateien anfassen
-- Auto-Commits durchführen
+F-001  Reaktionen/Löschungen/Kanal-Metadaten dürfen keine UUID
+       als Nostr-e-Tag senden.
+F-002  eligibleVoters muss beim Start der Abstimmung eingefroren
+       und persistiert werden.
+F-003  DecisionRecord-Retry muss denselben vollständigen Inhalt
+       wie der Erstversand publizieren.
 ```
 
-## Nächste G2-Blöcke (in Reihenfolge der Empfehlung)
+Die technische Detailquelle ist `docs/audits/2026-07/AUDIT_LAUF_A.md`.
+
+## 32.3 Vertrauensgrenze für produktive Governance
+
+Die vorhandene Hash-Kette allein begründet noch keine garantierte
+Manipulationssicherheit. Vor einer Nutzung außerhalb eines vertrauten
+Alpha-Kreises gelten zusätzlich als Voraussetzungen:
 
 ```text
-G2-Block 1: Delegation (zell-intern, pro Proposal)
-  - Delegation-Modell (Delegator, Delegate, ProposalId, Status)
-  - Delegation-Wire (Kind 31014?)
-  - Tally-Engine-Erweiterung: delegierte Stimmen werden
-    transitiv NICHT gefolgt, aber direkt zugerechnet
-  - Widerruf jederzeit möglich
-  - CC ist explizit ausgenommen (1-Mensch=1-Stimme)
-  - UI: Delegations-Manager im Proposal-Detail-Screen
-  - Sender-only-Pattern für jede Auto-Aktion (z.B. Tally-
-    Berücksichtigung)
-
-G2-Block 2: Quadratic Voting
-  - Voice-Credit-Pool pro Quartal (100 Credits, kein Übertrag)
-  - QV-aware Vote-Modell + Wire
-  - Tally-Engine-Erweiterung: kostbasiertes Gewicht
-  - Membership-Maturity-Check (14 Tage Default)
-  - QV-Quartalsreset: sender-only über Scheduler-Tick
-  - CC ist auch hier explizit ausgenommen
-
-G2-Block 3: Superadmin-Abwahl via Grundstimm-Recht
-  - Sonder-Proposal-Typ
-  - 2/3-Quorum
-  - Keine Delegation, kein QV (1-Mensch=1-Stimme)
-  - Übergangsphase mit definiertem Sub-State
-  - Auto-Ausführung der Abwahl bei Erreichen des Quorums
-    (sender-only)
-
-G2-Block 4: Expertenprofile + AURA + Statementpflicht
-  - eher konzeptionell-strukturell als datenmodell-schwer
-  - kommt nach den drei harten Voting-Mechanismus-Blöcken
+- eingehende Nostr-Events kryptografisch verifizieren
+- fachliche Absenderberechtigung vor Zustandsänderung prüfen
+- Zellauflösung nur vom berechtigten Gründer-Pubkey akzeptieren
+- Votes und Anträge nur von bestätigten Stimmberechtigten akzeptieren
+- DecisionRecord-Hash beim Empfang neu berechnen und prüfen
+- Öffentlichkeit von Governance-Daten bewusst entscheiden
 ```
 
-## Workflow-Erinnerung
+Bis dahin werden Anträge, Stimmen, Ergebnisse und Delegationen als öffentlich
+lesbare Nostr-Daten behandelt und in der Nutzerkommunikation so benannt.
+
+## 32.4 Nächste G2-Reihenfolge
 
 ```text
-- Jeder Block startet mit Recon-Pflicht und STOP-Bedingungen
-- Vier Dateien als Richtwert pro Block (Service + Tests +
-  ggf. UI + ggf. Wire). Mehr nur mit Begründung.
-- Tests OHNE Mock-Framework — Capture-Callbacks und
-  kontrollierte Test-Stubs
-- Live-Test nach jedem inhaltlich abgeschlossenen Block
-  (Pattern aus Phase 4.7c4 / 4.8)
-- Commit-Vorschlag im Bericht, kein Auto-Commit
-- Phase-4-Abschlussdokument als Referenz für „so machen wir
-  Mini-Phasen sauber"
+0. Release-Härtung nach §32.2 und §32.3
+1. einfache Delegations-/Expertise-Profile für den Alpha-Kontext
+2. Quadratic Voting und quartalsgebundene Voice Credits
+3. Superadmin-Abwahl über Grundstimm-Recht
+4. Expertenprofile, AURA und Statementpflicht
+5. Intercell-Governance und weitergehende Vertraulichkeit
+```
+
+Die Reihenfolge darf nach der Alpha-Auswertung neu priorisiert werden. Kein
+Punkt dieser Liste gilt allein durch seine Aufnahme in die Spezifikation als
+implementiert.
+
+## 32.5 Weiterhin verbindliche Implementierungsmuster
+
+```text
+- JSON-content nutzt camelCase; interne UUIDs gehören in Custom-Tags
+- e-Tags enthalten ausschließlich gültige 64-Hex-Nostr-Event-IDs
+- Auto-Aktionen folgen dem Sender-only-Pattern
+- acceptedRelayCount > 0 gilt als Publish-Erfolg
+- Retry nur bei acceptedRelayCount == 0
+- persistierter Zustand wird vor dem ersten await synchron im RAM gelockt
+- Idempotenz bevorzugt strukturelle DB-Guards statt Geräte-Flags
+- Tally-Eingaben und Hash-Payloads werden deterministisch sortiert
 ```
 
 ---
 
-*Ende von §31 — v1.4-Präzisierungen aus Phase-4-Implementierungserfahrung.*
-*Nächste Spec-Aktualisierung erwartet: nach Abschluss von G2-Block 1 (Delegation), als §32 — v1.5-Präzisierungen.*
+*Ende der konsolidierten Arbeitsfassung v1.5.*

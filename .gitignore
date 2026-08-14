@@ -80,6 +80,11 @@ nuget.exe
 *_backup*.md
 CLAUDE_backup*.md
 
+# Intentional historical AI-context documents inside the docs archive
+!/docs/archive/ai-context/
+!/docs/archive/ai-context/CLAUDE_Backup.md
+!/docs/archive/ai-context/CLAUDE_backup2.md
+
 # Test outputs and run logs
 test_phase*.txt
 test_phase*_*.txt
@@ -93,3 +98,6 @@ NEXUS_OneApp_Implementierungsplan*.md
 # Codebase audit/dump artifacts (large, regenerable)
 nexus_codebase_audit*.txt
 codebase_dump*.txt
+
+# Generated documentation PDFs
+/docs/generated/pdf/*.pdf

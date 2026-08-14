@@ -1,225 +1,154 @@
 # N.E.X.U.S. OneApp
 
-### Das Cockpit der Souveränität — Eine dezentrale App für die Menschheitsfamilie
+### Das Cockpit der Souveränität – eine dezentrale Alpha für die Menschheitsfamilie
 
-![Version](https://img.shields.io/badge/version-v0.1.8--alpha-gold)
+![Version](https://img.shields.io/badge/version-v0.2.0--alpha-gold)
 ![Lizenz](https://img.shields.io/badge/lizenz-AGPL%20v3-blue)
 ![Plattform](https://img.shields.io/badge/plattform-Android%20%7C%20Windows-lightgrey)
 
----
-
-> ⚠️ **Rechtliche Hinweise & Haftungsausschluss**  
-> Diese Software befindet sich in aktiver Alpha-Entwicklung. Vor der Nutzung bitte den vollständigen **[DISCLAIMER.md](DISCLAIMER.md)** lesen. Die Nutzung erfolgt auf eigene Verantwortung.
-
----
+> **Alpha-Hinweis:** Die App befindet sich in aktiver Entwicklung. Sie ist für
+> Tests mit informierten Pionieren gedacht und noch nicht für schutzbedürftige
+> oder sicherheitskritische Kommunikation freigegeben. Bitte den
+> [Haftungsausschluss](DISCLAIMER.md) lesen.
 
 ## Was ist die OneApp?
 
-Die N.E.X.U.S. OneApp ist eine dezentrale Kommunikations- und Selbstverwaltungs-App — ohne zentralen Server, ohne Konzernkontrolle, ohne Zensur. Sie ist die Basis des Bauplan der N.E.X.U.S. Infrastruktur und bringt den Bauplan Schritt für Schritt in die Realität.
+Die N.E.X.U.S. OneApp verbindet selbstbestimmte Identität, Kommunikation,
+Gemeinschaften und demokratische Entscheidungswerkzeuge in einer Flutter-App.
+Sie arbeitet offline-first und nutzt je nach Situation Nostr, LAN und BLE als
+Transportwege. Der Quellcode steht unter AGPL v3.
 
-Der gesamte Quellcode ist Open Source (AGPL v3). Alle Nachrichten sind Ende-zu-Ende-verschlüsselt. Du besitzt deine Identität, deine Daten und deine Schlüssel — niemand sonst.
+Das langfristige Ziel ist eine dezentrale Infrastruktur ohne Abhängigkeit von
+einer einzelnen Plattform. Die heutige Alpha erreicht dieses Ziel noch nicht
+vollständig: Für Kommunikation über das Internet werden öffentliche
+Nostr-Relays genutzt, und es existieren administrative Rollen.
 
-Den vollständigen Bauplan des N.E.X.U.S.-Projekts findest du auf **[nexus-terminal.org](https://nexus-terminal.org)**.
+## Aktueller Funktionsstand (v0.2.0-alpha)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W7W71XP24H)
----
-
-## Was funktioniert bereits? (v0.1.8-alpha)
-
-| Bereich | Feature |
+| Bereich | Stand |
 |---|---|
-| **Identität** | Self-Sovereign Identity via Seed Phrase (BIP-39), DID (W3C-Standard), Pseudonym |
-| **Chat** | Ende-zu-Ende-verschlüsselter Direkt-Chat (X25519 + AES-256-GCM) |
-| **Transport** | BLE Mesh, LAN (lokal) + Nostr (Internet-Fallback) |
-| **Nachrichten** | Text, Bilder (JPEG), Sprachnachrichten (AAC/WAV), Emojis, Reaktionen |
-| **Chat-Features** | Antworten/Zitieren (Swipe), Nachrichtensuche, Weiterleiten, Favoriten |
-| **Kanäle** | Öffentliche & private Kanäle (NIP-28/44), Gruppen, Ankündigungs-Kanäle |
-| **Kontakte** | 4 Vertrauensstufen (Entdeckt → Kontakt → Vertrauensperson → Bürge) |
-| **Zellen** | Lokale & thematische Gemeinschaften mit GPS-Geohash, Beitrittsanfragen, Mitgliederverwaltung |
-| **Zellen-Leben** | Pinnwand, Diskussion, Agora (Abstimmungen), Mitglieder — 4 Tabs pro Zelle |
-| **Agora** | Direkte Demokratie: Anträge erstellen, diskutieren, abstimmen (Ja/Nein/Enthaltung) |
-| **Abstimmungs-Sync** | Echtzeit-Synchronisation zwischen allen Geräten via Nostr (NIP-01) |
-| **Dorfplatz** | Dezentraler sozialer Feed: Posts, Reposts, Kommentare, Umfragen, Reaktionen |
-| **Dorfplatz-Sync** | Reposts & Löschungen synchronisieren sich geräteübergreifend (NIP-18, NIP-09) |
-| **Sicherheit** | Blockier-System, Schlüssel-Verifizierung (QR + Fingerprint), Selective Disclosure |
-| **Dashboard** | Live-Radar (lokale Peers), N.E.X.U.S.-Node-Zähler |
-| **Grundsätze** | Bewusster Onboarding-Flow mit den Grundsätzen der Menschheitsfamilie |
-| **Push** | Benachrichtigungen ohne Google/Firebase (eigene Implementierung) |
-| **Updates** | Automatischer Update-Checker via GitHub Releases |
-| **Backup** | Automatisches Backup, Export & Wiederherstellung |
+| Identität | BIP-39-Seed, deterministische Schlüssel und DID, Pseudonym |
+| Chat | Direktnachrichten, Kanäle, Text, Bilder, Audio, Antworten, Suche, Reaktionen |
+| Transport | Nostr, lokales Netzwerk und BLE |
+| Kontakte | vier Vertrauensstufen, QR-Verifizierung und Selective Disclosure |
+| Zellen | lokale/thematische Gemeinschaften, Beitritts- und Mitgliederverwaltung |
+| Dorfplatz | Posts, Reposts, Kommentare, Umfragen, Reaktionen und Löschpfade |
+| Governance | Anträge, Diskussion, drei Abstimmungsmodi, Tally, Decision Records und Stichwahlpfade |
+| Liquid Democracy | antragsbezogene, nicht-transitive Delegation mit Widerruf und Auto-Revoke |
+| Backup/Updates | lokale Backup-Funktionen und Update-Prüfung |
 
----
+Quadratic Voting, AETHER, interzelluläre Governance und die
+Superadmin-Abwahl sind noch nicht fertig implementiert.
 
-## Screenshots
+## Sicherheits- und Datenschutzstand
 
-> Screenshots folgen mit dem ersten öffentlichen Beta-Release.
+- Direktnachrichten über den aktuellen Nostr-Pfad verwenden NIP-04. NIP-44 ist
+  noch nicht implementiert.
+- Governance-Events wie Anträge, Stimmen, Ergebnisse und Delegationen werden
+  derzeit als Klartext über öffentliche Relays verteilt. Sie sind nicht als
+  private Kommunikation zu behandeln.
+- Die App besitzt lokale Hash- und Signaturmechanismen. Eingehende
+  Nostr-Events werden im heutigen Produktivpfad jedoch noch nicht durchgängig
+  kryptografisch verifiziert und gegen Absenderberechtigungen geprüft.
+- Backups sichern ausgewählte Identitäts-, Kontakt-, Kanal-, Zell- und
+  Einstellungsdaten, nicht automatisch den vollständigen Nachrichtenverlauf.
 
----
+Die bestätigten Risiken und die Reihenfolge der Härtung stehen im
+[Projektstatus](docs/current/PROJECT_STATUS.md) und in der
+[Release-Checkliste](docs/current/RELEASE_READINESS.md).
 
 ## Installation
 
 ### Android
 
-1. Gehe zu [GitHub Releases](https://github.com/project-nexus-official/oneapp/releases)
-2. Lade die neueste `NexusOneApp_0.1.8.apk` herunter
-3. Installiere die APK (Einstellungen → Unbekannte Quellen erlauben)
+1. Den passenden v0.2.0-Alpha-Release von
+   [GitHub Releases](https://github.com/project-nexus-official/oneapp/releases)
+   laden.
+2. Die APK installieren; Android muss die Installation aus der gewählten
+   Quelle erlauben.
+3. Seed Phrase beim ersten Start offline auf Papier sichern.
 
 ### Windows
 
-1. Gehe zu [GitHub Releases](https://github.com/project-nexus-official/oneapp/releases)
-2. Lade `Setup_NexusOneApp_v0.1.8.exe` herunter
-3. Installer ausführen und Anweisungen folgen
+1. `Setup_NexusOneApp_v0.2.0.exe` aus dem passenden Release laden.
+2. Installer ausführen und anschließend die Alpha-Hinweise beachten.
 
-### Bedienungsanleitung
+Die aktuelle Anleitung liegt als
+[Markdown](docs/guides/Bedienungsanleitung.md) und nach der Generierung als
+[PDF](docs/generated/pdf/NEXUS_OneApp_Bedienungsanleitung_v0.2.0-alpha.pdf)
+vor.
 
-Die vollständige Bedienungsanleitung steht als PDF im [aktuellen Release](https://github.com/project-nexus-official/oneapp/releases/tag/v0.1.8-alpha) zum Download bereit.
+## Entwicklung
 
-> iOS und macOS folgen in einer späteren Phase.
-
----
-
-## Für Entwickler
-
-### Tech Stack
+### Stack
 
 | Layer | Technologie |
 |---|---|
-| Frontend | Flutter / Dart (Android, Windows — iOS/macOS folgen) |
-| Transport | BLE Mesh + LAN + Nostr |
-| Verschlüsselung | X25519 + NIP-44, Ed25519, AES-256-GCM |
-| Datenbank | SQLite (sqflite / sqflite_ffi) |
-| Identität | BIP-39 Seed Phrase, Ed25519/SLIP-0010, DID (W3C did:key) |
-| Protokoll | Nostr (NIP-01/04/28/44) |
-
-### Voraussetzungen
-
-- [Flutter SDK](https://docs.flutter.dev/get-started/install) (stable channel, ≥ 3.22)
-- Android Studio oder VS Code mit Flutter-Extension
-- Git
+| Oberfläche | Flutter / Dart |
+| Daten | SQLite (`sqflite` / `sqflite_ffi`) |
+| State/Navigation | Provider / GoRouter |
+| Identität | BIP-39, Ed25519/SLIP-0010, `did:key` |
+| Transport | Nostr, BLE, LAN |
+| Kryptografie | projektspezifische AES-GCM-/X25519-Pfade sowie NIP-04 im Nostr-DM-Pfad |
 
 ### Setup
 
 ```bash
 git clone https://github.com/project-nexus-official/oneapp.git
 cd oneapp
-
 flutter pub get
-flutter run                  # Android-Gerät oder Emulator
-flutter run -d windows       # Windows Desktop
+flutter run
+flutter run -d windows
 ```
 
-### Projektstruktur
+Wichtige Sicherheitsregeln: Nicht mit `flutter clean`, `adb uninstall` oder
+`flutter install` auf bestehenden Alpha-Installationen arbeiten. Details und
+Testbaseline stehen in der [Testanleitung](docs/guides/testing/TESTING.md).
 
-```
+### Orientierung
+
+```text
 lib/
-├── core/                  # Kern-Infrastruktur
-│   ├── crypto/            # Verschlüsselung (X25519, AES-GCM, HKDF)
-│   ├── identity/          # DID, Seed Phrase, Pseudonym
-│   ├── contacts/          # Kontakt-Service, Trust-Levels
-│   ├── router.dart        # go_router mit Identity + Principles Guard
-│   └── storage/           # SQLite-Datenbank
-│
-├── features/              # UI-Screens nach Domain
-│   ├── onboarding/        # Seed Phrase, Identität, Grundsätze-Flow
-│   ├── dashboard/         # Startscreen, Radar, Node-Counter
-│   ├── chat/              # Direktnachrichten, Kanäle
-│   ├── cells/             # Zellen, Agora, Mitgliederverwaltung
-│   ├── dorfplatz/         # Sozialer Feed
-│   ├── contacts/          # Kontaktliste, Details, QR-Scanner
-│   ├── profile/           # Eigenes Profil, Selective Disclosure
-│   └── settings/          # App-Einstellungen
-│
-└── services/              # Plattformübergreifende Services
-    ├── cell_service.dart         # Zellen-Verwaltung
-    ├── feed_service.dart         # Dorfplatz-Feed
-    ├── notification_service.dart # Push ohne Firebase
-    └── update_service.dart       # GitHub Release Checker
+├── core/                 Identität, Kryptografie, Transport, Storage, Router
+├── features/             UI und Fachlogik nach Funktionsbereich
+│   ├── chat/
+│   ├── cells/
+│   ├── dorfplatz/
+│   ├── governance/
+│   └── ...
+└── services/             bereichsübergreifende Dienste
 ```
 
-### KI-gestützte Entwicklung
+Der Einstieg in alle aktuellen Dokumente ist
+[docs/INDEX.md](docs/INDEX.md). Architektur- und KI-Arbeitsregeln stehen in
+[CLAUDE.md](CLAUDE.md).
 
-Dieses Projekt nutzt Claude Code für KI-gestützte Entwicklung. Alle Konventionen, Architekturentscheidungen und der aktuelle Feature-Stand sind in [`CLAUDE.md`](CLAUDE.md) dokumentiert — die primäre Referenz für alle Entwickler (menschlich und KI).
+## Nächster Entwicklungsblock
 
----
+Vor neuen Großfunktionen wird die v0.2.0-Alpha gehärtet:
 
-## Roadmap
+1. Nostr-`e`-Tags für Reaktionen/Löschungen korrigieren.
+2. Stimmberechtigten-Snapshot beim Abstimmungsstart einfrieren.
+3. Vollständigen Decision-Record-Retry sicherstellen.
+4. Cross-Device-Tests und bekannte UI-Testfehler bereinigen.
+5. Empfangsverifikation und Senderautorisierung planen und umsetzen.
 
-### v0.1.9 — Governance Stufe 2
-- G2 Quadratic Voting (gewichtete Stimmen)
-- G2 Stimmen-Delegation pro Antrag (echte Liquid Democracy)
-
-### Phase 1c — AETHER Wallet & Marktplatz
-- VITA Ꝟ (fließend, Demurrage 0,5%/Monat)
-- TERRA ₮ (fest, für Infrastruktur)
-- AURA ₳ (Reputation, nicht transferierbar)
-- Lokaler Marktplatz (Peer-to-Peer)
-
-### Phase 2 — Sphären-Plugins
-- Care-System (Gesundheit, Bildung, Ernährung, Wohnen)
-- Plugin-Schnittstelle für Community-Erweiterungen
-
----
+Danach kann Quadratic Voting gemäß
+[G2 v1.5](docs/specs/governance/G2_Spezifikation_v1.5.md) neu priorisiert
+werden. AETHER bleibt bis zu einer bewussten Freigabe ein Entwurf.
 
 ## Mitmachen
 
-### Als Nutzer: Testen und Feedback geben
+Fehler und Verbesserungsvorschläge können als
+[GitHub Issue](https://github.com/project-nexus-official/oneapp/issues)
+eingereicht werden. Beiträge sollten klein, nachvollziehbar und mit Tests
+versehen sein. Es gelten die Datenverlust- und Sync-Regeln aus `CLAUDE.md`.
 
-Installiere die App, nutze sie im Alltag und melde Bugs oder Verbesserungsvorschläge direkt als [GitHub Issue](https://github.com/project-nexus-official/oneapp/issues) oder im Discord.
+## Rechtliches und Links
 
-### Als Entwickler: Code beitragen
+- [Lizenz](LICENSE): AGPL v3
+- [Haftungsausschluss](DISCLAIMER.md)
+- [Projektwebsite](https://nexus-terminal.org)
+- [GitHub-Repository](https://github.com/project-nexus-official/oneapp)
 
-```bash
-# 1. Fork auf GitHub
-# 2. Feature-Branch erstellen
-git checkout -b feat/dein-feature
-
-# 3. Änderungen committen (Conventional Commits)
-git commit -m "feat: kurze Beschreibung"
-
-# 4. Pull Request öffnen
-```
-
-**Gesuchte Rollen:**
-- Flutter / Dart (Frontend, Tests)
-- Protokoll-Design (P2P, Kryptographie, Nostr)
-- UX / UI Design (Figma, mobile-first)
-- Rust / Substrate (eigene Blockchain — Phase 1c)
-
-### Genesis Circle
-
-Werde Teil des Gründungskreises und gestalte die Grundlagen mit — 100 Architekten, 6 Archetypen, 5 Arbeitskreise.
-
-👉 **[nexus-terminal.org](https://nexus-terminal.org)**
-
----
-
-## Rechtliches
-
-> ⚠️ Bitte den vollständigen **[DISCLAIMER.md](DISCLAIMER.md)** vor der Nutzung lesen.
-
-**Code:** [AGPL v3](LICENSE) — Open Source, Copyleft. Jede Nutzung, Modifikation oder Weiterverbreitung muss unter denselben Bedingungen erfolgen und den Quellcode offenlegen.
-
-**Bauplan, Konzepte und Inhalte:** © Josh Richman 2024–2026. Alle Rechte vorbehalten. Der Bauplan des N.E.X.U.S.-Projekts (Protokoll, Governance-Modell, AETHER-Ökonomie) darf ohne ausdrückliche Genehmigung nicht reproduziert oder kommerziell genutzt werden.
-
----
-
-## Links
-
-| | |
-|---|---|
-| 🌐 Website | [nexus-terminal.org](https://nexus-terminal.org) |
-| 💬 Telegram Kanal | [t.me/NexusProjectOfficial](https://t.me/NexusProjectOfficial) |
-| 💬 Telegram Gruppe | [t.me/Nexus_Project_official](https://t.me/Nexus_Project_official) |
-| 📺 YouTube | [Project-N.e.x.u.s-Official](https://www.youtube.com/@Project-N.e.x.u.s-Official) |
-| 📖 Roman-Trilogie | [Amazon Kindle](https://www.amazon.de/dp/B0GGL1ZD7B) |
-| 🎧 Hörbuch (Gratis) | [YouTube Playlist](https://www.youtube.com/playlist?list=PLLIatNIX1ph05NEJKZ1dG7yEqgl6txJBy) |
-| 📘 Facebook | [NexusTerminal](https://www.facebook.com/NexusTerminal) |
-| 📸 Instagram | [n.e.x.u.s._navigator](https://www.instagram.com/n.e.x.u.s._navigator) |
-| 🐦 X (Twitter) | [nexusxnavigator](https://x.com/nexusxnavigator) |
-| 🦋 Bluesky | [nexus-navigator.bsky.social](https://bsky.app/profile/nexus-navigator.bsky.social) |
-| 🐙 GitHub | [project-nexus-official/oneapp](https://github.com/project-nexus-official/oneapp) |
-
----
-
-*Protokoll, nicht Plattform. Für alle.*  
-*Wir reformieren nicht. Wir bauen parallel. Dezentral statt Zentralmacht. Vertrauen statt Kontrolle. Liebe als Systemparameter — nicht als Floskel.*
+*Protokoll, nicht Plattform. Für alle.*

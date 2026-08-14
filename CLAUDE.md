@@ -16,6 +16,7 @@ N.E.X.U.S. ist Offline-First, P2P und asynchron. Nostr-Relays sind nur dumme Pip
 2. **LISTENER VOR TRANSPORT-START:** Streams (`.listen()`) müssen IMMER registriert werden, **bevor** der Transport (`_manager.start()`) oder Nostr-Keys initialisiert werden, sonst kommt es zu Event-Drops beim Startup.
 3. **NIP-01 e-Tag Pflicht:** Ein `e`-Tag MUSS immer eine 64-Hex Nostr-Event-ID sein. Keine UUIDs in `e`-Tags! Für interne UUIDs immer Custom-Tags (z.B. `proposal_id`) verwenden.
 4. **Zustands-Validierung:** Bei jedem Nostr `publish()` MUSS die Antwort des Relays verarbeitet/geloggt werden (`[RELAY-OK]`). Keine stillen Fails.
+5. **Empfang ist eine Vertrauensgrenze:** Neue oder geänderte Empfangspfade MÜSSEN Signatur/ID und die fachliche Absenderberechtigung prüfen, bevor sie lokalen Zustand verändern. Der Bestand erfüllt das noch nicht durchgängig; nicht als gegeben voraussetzen.
 
 ## 🛡️ SECURITY & SAFETY AUDIT
 1. **Kein Klartext:** Alle privaten Daten in der SQLite-DB (`PodDatabase`) MÜSSEN AES-256-GCM verschlüsselt in der `enc`-Spalte landen.
@@ -58,4 +59,6 @@ Prüfe deinen geschriebenen Code selbst:
 - **Stack:** Flutter/Dart, SQLite (Proto-POD, verschlüsselt), GoRouter, Provider.
 - **Transport:** Nostr (primär, NIP-konform), BLE Mesh, LAN Discovery. Offline-First ist Gesetz.
 - **Identität:** BIP-39 Seed Phrase, Ed25519/SLIP-0010, did:key W3C.
-- **Aktueller Fokus:** G2 Governance (Liquid Democracy, Quadratic Voting, Subsidiarität).
+- **Ist-Stand:** G2.1.6 / Liquid Democracy ist implementiert. Quadratic Voting, AETHER und interzelluläre Governance sind nicht fertig.
+- **Aktueller Fokus:** Release-Härtung nach G2.1.6: Nostr-e-Tags, eingefrorener Stimmberechtigten-Snapshot, vollständiger DecisionRecord-Retry, Cross-Device-Tests sowie anschließend Empfangsverifikation/Autorisierung.
+- **Dokumentationseinstieg:** `docs/INDEX.md`; aktueller Status unter `docs/current/`.

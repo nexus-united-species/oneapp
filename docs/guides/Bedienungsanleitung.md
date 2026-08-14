@@ -27,7 +27,7 @@ Was du brauchst: ein Android-Smartphone oder Windows-PC, etwas Zeit für den ers
 
 Die meisten Apps, die du kennst — WhatsApp, Instagram, Gmail — funktionieren so: Deine Nachrichten landen zuerst auf einem Computer, der einem Unternehmen gehört. Dieses Unternehmen entscheidet, wer deine Nachrichten sieht, ob sie gelöscht werden, und was mit deinen Daten passiert. Du bist Gast in ihrem Haus.
 
-Die N.E.X.U.S. OneApp funktioniert anders. Deine Nachrichten gehen direkt — über Bluetooth, über dein WLAN oder über das Internet. Aber immer verschlüsselt. Immer nur für dich und dein Gegenüber lesbar. Keine zentrale Macht, die den Fluss kontrolliert.
+Die N.E.X.U.S. OneApp funktioniert anders. Sie nutzt je nach Situation Bluetooth, dein lokales Netzwerk oder öffentliche Nostr-Relays. Direktnachrichten werden verschlüsselt übertragen. Öffentliche Kanäle, Dorfplatz-Inhalte und Governance-Ereignisse sind dagegen nicht privat und können über Relays sichtbar sein. Die Alpha ist noch keine unabhängig geprüfte Hochsicherheits-Anwendung.
 
 ### Was kann die App heute?
 
@@ -233,7 +233,7 @@ Eingehende Anfragen findest du unter dem Badge-Icon in der Kontakte-AppBar. Du k
 
 ### Was ist das?
 
-Kein Server eines Unternehmens liest mit. Deine Nachrichten sind von dem Moment an verschlüsselt, in dem du auf Senden tippst — und werden erst auf dem Gerät deines Gegenübers wieder lesbar. Das goldene Schloss-Symbol in jeder Chat-Bubble und im Chat-Header bestätigt: Diese Verbindung ist geschützt.
+Direktnachrichten werden vor dem Transport verschlüsselt und auf dem Gerät des Gegenübers entschlüsselt. Bei Internet-Kommunikation transportieren öffentliche Nostr-Relays die verschlüsselte Nachricht. Das goldene Schloss-Symbol kennzeichnet diesen Schutzpfad; es ist kein Nachweis einer unabhängigen Sicherheitsprüfung. Öffentliche Kanäle und Governance-Inhalte sind hiervon nicht automatisch umfasst.
 
 ### Wie findet meine Nachricht ihren Weg?
 
@@ -280,7 +280,7 @@ Halte eine Nachricht etwas länger gedrückt:
 | Favorisieren | Nachricht mit Stern markieren |
 | Privat anschreiben | Öffnet 1:1 Chat mit dem Ersteller |
 | Löschen für mich | Entfernt die Nachricht nur bei dir |
-| Löschen für alle | Entfernt bei allen (via Nostr Kind-5) |
+| Löschen für alle | Fordert die geräteübergreifende Entfernung via Nostr Kind-5 an; in der Alpha kann der Sync fehlschlagen |
 | Melden | Nachricht an den Kanal-Admin melden |
 
 ### Emoji-Reaktionen
@@ -741,20 +741,20 @@ Wenn du dich auf einem zweiten Gerät (z.B. Windows-PC und Android) mit der glei
 
 ### Was ist der Decision Record?
 
-Nach jeder abgeschlossenen Abstimmung wird automatisch ein unveränderlicher Decision Record erstellt. Er ist das Gedächtnis deiner Demokratie.
+Nach jeder abgeschlossenen Abstimmung wird automatisch ein Decision Record erstellt. Er dokumentiert das lokal berechnete Ergebnis und ist als nachvollziehbarer Datensatz gedacht.
 
 Der Decision Record enthält:
 
 - Das Ergebnis (Angenommen / Abgelehnt / Ungültig)
 - Alle abgegebenen Stimmen mit Pseudonym, Wahl, optionaler Begründung und Zeitstempel
 - Delegierte Stimmen (synthetische Stimmen aus Liquid Democracy)
-- Die Beteiligungsquote und Anzahl der Stimmberechtigten
-- Eine Hash-Kette zur Manipulationserkennung
+- Die Beteiligungsquote und einen daraus abgeleiteten Stimmberechtigten-Nenner
+- Eine lokale Hash-Verkettung zur Erkennung von Abweichungen
 - Den Zeitpunkt der Entscheidung
 
-Der Decision Record wird als Nostr-Event publiziert und ist für alle Zellenmitglieder einsehbar.
+Der Decision Record wird als unverschlüsseltes Nostr-Event publiziert. Inhalte können deshalb nicht nur für Zellenmitglieder, sondern grundsätzlich auch auf öffentlichen Relays sichtbar sein.
 
-*Der Decision Record kann nicht verändert, gelöscht oder schöngeredet werden.*
+⚠️ **Alpha-Einschränkung:** Eingehende Events und ihre Hash-Kette werden noch nicht durchgängig verifiziert. Der Decision Record ist daher aktuell eine nachvollziehbare Dokumentation, aber noch keine technisch garantierte Unveränderlichkeit.
 
 ### Die Beteiligungsanzeige lesen
 
@@ -762,13 +762,13 @@ Im Decision Record siehst du:
 
 *„Beteiligung: 80% (8 Stimmen von 10 Stimmberechtigten)"*
 
-Das bedeutet: 10 Mitglieder waren stimmberechtigt. 8 Stimmen kamen an — davon können einige delegierte Stimmen sein. Die Prozentzahl gibt an, wie hoch die Beteiligung war.
+Das bedeutet im vorgesehenen Modell: 10 Mitglieder waren stimmberechtigt und 8 Stimmen kamen an; einige davon können delegiert sein. In der aktuellen Alpha wird der Stimmberechtigten-Kreis beim Abstimmungsstart noch nicht zuverlässig eingefroren. Bei abweichenden Mitgliederlisten können Geräte deshalb unterschiedliche Beteiligungswerte berechnen.
 
 ✅ Gut zu wissen: „Stimmen" und „Stimmberechtigte" können unterschiedlich sein, wenn Liquid Democracy aktiv war (mehr dazu in Kapitel 10).
 
 ### Das Audit-Log (Historie-Tab)
 
-Jeder Antrag hat einen **Historie-Tab**. Dort findest du das vollständige, unveränderliche Protokoll — jedes Ereignis in chronologischer Reihenfolge:
+Jeder Antrag hat einen **Historie-Tab**. Dort findest du das lokal bekannte Protokoll der empfangenen Ereignisse in chronologischer Reihenfolge:
 
 - Antrag erstellt / bearbeitet
 - Statusübergang (Diskussion → Abstimmung → Entschieden)
@@ -778,7 +778,7 @@ Jeder Antrag hat einen **Historie-Tab**. Dort findest du das vollständige, unve
 - Ergebnis berechnet, Decision Record erstellt
 - Antrag archiviert oder zurückgezogen
 
-*„Diese Historie ist unveränderlich — sie ist das Gedächtnis unserer Demokratie."*
+Die Historie verbessert die Nachvollziehbarkeit. Relay-Aufbewahrung, Offline-Zeiten und noch fehlende Empfangsprüfungen können in der Alpha jedoch zu Lücken oder Abweichungen führen.
 
 ### Stichwahl (Runoff)
 
@@ -877,7 +877,7 @@ Jeder Code ist 30 Tage gültig. In deiner Einladungsliste siehst du: Ausstehend 
 
 ### Was ist das?
 
-Die N.E.X.U.S. OneApp legt automatisch regelmäßige Backups an — verschlüsselt, lokal gespeichert, ohne Cloud. Wenn du das Gerät wechselst oder die App neu installierst, holst du deine Daten mit dem Backup zurück.
+Die N.E.X.U.S. OneApp kann regelmäßige, verschlüsselte und lokal gespeicherte Backups anlegen. Bei einem Gerätewechsel lassen sich damit ausgewählte Identitäts-, Kontakt-, Kanal-, Zell- und Einstellungsdaten ergänzen. Nachrichten, Medien und nicht vollständig rekonstruierbare Mitgliedschaftszustände sind nicht garantiert enthalten.
 
 ### Was wird gesichert?
 
@@ -885,7 +885,7 @@ Die N.E.X.U.S. OneApp legt automatisch regelmäßige Backups an — verschlüsse
 |-----|-----------|
 | Kontakte & Vertrauensstufen | ✅ Ja |
 | Kanal-Mitgliedschaften | ✅ Ja |
-| Zellen-Mitgliedschaften | ✅ Ja |
+| Zellen und ausgewählte Mitgliedschaftsdaten | ⚠️ Teilweise; nach Restore prüfen |
 | Profildaten | ✅ Ja |
 | Grundsätze-Status | ✅ Ja |
 | Benachrichtigungseinstellungen | ✅ Ja |
@@ -915,7 +915,7 @@ Die N.E.X.U.S. OneApp legt automatisch regelmäßige Backups an — verschlüsse
 
 ### Backup wiederherstellen nach Gerätewechsel
 
-Wenn du deine Identität mit der Seed Phrase wiederherstellst, erscheint automatisch der Backup-Wiederherstellungs-Screen. Die App sucht Backup-Dateien im Backup-Verzeichnis. Wähle die gewünschte Datei aus — sie wird entschlüsselt und die Daten werden wiederhergestellt.
+Wenn du deine Identität mit der Seed Phrase wiederherstellst, erscheint automatisch der Backup-Wiederherstellungs-Screen. Die App sucht Backup-Dateien im Backup-Verzeichnis. Wähle die gewünschte Datei aus — sie wird entschlüsselt und die enthaltenen Daten werden ergänzt. Prüfe danach Kontakte, Kanäle und insbesondere deine bestätigten Zellmitgliedschaften auf dem neuen Gerät.
 
 💡 Merge-Logik: Bestehende Kontakte und Zellen werden nicht überschrieben — nur fehlende Daten werden ergänzt.
 
@@ -1049,15 +1049,15 @@ Dann verlierst du den Zugang zu deiner Identität — dauerhaft und unwiederbrin
 
 **Was passiert, wenn ich mein Gerät verliere?**
 
-Nichts Schlimmes — wenn du deine Seed Phrase hast. Installiere die App auf einem neuen Gerät, gib deine 12 Wörter ein, und deine Identität ist vollständig wiederhergestellt. Mit einem Backup kommen auch Kontakte und Zellen-Mitgliedschaften zurück.
+Mit deiner Seed Phrase kannst du dieselbe kryptografische Identität wieder ableiten. Installiere die App auf einem neuen Gerät und gib deine 12 Wörter ein. Ein passendes Backup kann Kontakte, Kanäle, Zellen und Einstellungen ergänzen; Nachrichten, Medien und bestätigte Zellmitgliedschaften müssen anschließend geprüft werden.
 
 **Kann jemand meine Nachrichten lesen?**
 
-Nein. Alle Direktnachrichten sind Ende-zu-Ende verschlüsselt (X25519 + AES-256-GCM). Selbst wenn Daten abgefangen würden, wäre nur unlesbares Rauschen zu sehen.
+Direktnachrichten werden verschlüsselt übertragen. Der aktuelle Nostr-DM-Pfad verwendet NIP-04; eine NIP-44-Migration und eine unabhängige Sicherheitsprüfung stehen noch aus. Öffentliche Kanäle, Dorfplatz-Inhalte sowie Governance-Ereignisse sind nicht als private Nachrichten zu behandeln.
 
 **Kann N.E.X.U.S. mein Konto löschen oder sperren?**
 
-Nein. Deine Identität existiert auf deinem Gerät. Niemand kann sie löschen, sperren oder einschränken.
+Die aus deiner Seed Phrase abgeleitete Identität kann N.E.X.U.S. nicht zentral löschen. Einzelne Relays, Geräte, Zellen oder Admin-Funktionen können Inhalte und Zugänge dennoch begrenzen; die Alpha setzt Schutz gegen missbräuchliche Zustands-Events noch nicht vollständig durch.
 
 ### Zellen & Governance
 
@@ -1093,7 +1093,7 @@ Delegation funktioniert pro Antrag. Du kannst für jeden Antrag eine eigene Pers
 
 **Sieht man, an wen ich delegiert habe?**
 
-Während der Abstimmung siehst du selbst deine aktive Delegation. Im Decision Record wird deine delegierte Stimme pseudonym dargestellt.
+Während der Abstimmung siehst du selbst deine aktive Delegation. Delegations- und Governance-Ereignisse werden derzeit mit DID/Pseudonym unverschlüsselt über öffentliche Nostr-Relays verteilt und sind daher nicht nur innerhalb der Zelle privat sichtbar.
 
 ### Verbindung & Kommunikation
 
@@ -1137,7 +1137,7 @@ Prüfe zuerst ob ein Update verfügbar ist. Bleibt der Fehler: GitHub → github
 
 **Antrag** — Ein formeller Vorschlag in einer Zelle, über den abgestimmt wird. Durchläuft die Phasen: Entwurf → Diskussion → Abstimmung → Entschieden → Archiviert.
 
-**Audit-Log** — Unveränderliches Protokoll aller Ereignisse zu einem Antrag — im Tab „Historie" der Antrag-Detailansicht einsehbar.
+**Audit-Log** — Lokale chronologische Historie der bekannten Ereignisse zu einem Antrag. In der Alpha noch nicht technisch als vollständig oder unveränderlich garantiert.
 
 **AURA ₳** — Einfluss und Stimmgewicht im AETHER-Protokoll. Entsteht durch Beitrag, nicht durch Kauf. Noch nicht aktiv.
 
@@ -1147,7 +1147,7 @@ Prüfe zuerst ob ein Update verfügbar ist. Bleibt der Fehler: GitHub → github
 
 **Dashboard** — Der Startbildschirm der N.E.X.U.S. OneApp. Zeigt Begrüßung, Radar, Übersichtskarten und wichtige Erinnerungen.
 
-**Decision Record** — Unveränderlicher Datensatz nach einer Abstimmung — alle Stimmen, Ergebnis, Hash-Kette, Nostr-Publikation. Das Gedächtnis der Demokratie.
+**Decision Record** — Datensatz nach einer Abstimmung mit Ergebnis, bekannten Stimmen, lokaler Hash-Verkettung und Nostr-Publikation. Für Transparenz gedacht; Empfangsverifikation ist noch nicht vollständig.
 
 **Delegation** — Die Übertragung der eigenen Stimme für einen bestimmten Antrag an eine andere Person aus der Zelle. Jederzeit widerrufbar. Bestandteil der Liquid Democracy.
 
@@ -1207,7 +1207,7 @@ Prüfe zuerst ob ein Update verfügbar ist. Bleibt der Fehler: GitHub → github
 
 ## Bekannte Einschränkungen (Alpha-Version)
 
-Die N.E.X.U.S. OneApp ist in der Alpha-Phase. Das bedeutet: Das Fundament ist solide, aber einige Funktionen sind noch nicht vollständig oder noch in Entwicklung.
+Die N.E.X.U.S. OneApp ist in der Alpha-Phase. Viele Kernpfade funktionieren und sind automatisiert getestet; mehrere Sync- und Sicherheitsfragen sind vor einer breiten oder produktiven Nutzung noch offen.
 
 **Was noch kommt:**
 
@@ -1221,8 +1221,12 @@ Die N.E.X.U.S. OneApp ist in der Alpha-Phase. Das bedeutet: Das Fundament ist so
 **Bekannte kleinere Einschränkungen:**
 
 - Sprachnachrichten über 5 Sekunden können nach einem App-Neustart gelegentlich nicht abspielbar sein
-- Auf Empfänger-Geräten können delegierte Stimmen in der Detail-Stimmenliste ggf. nicht vollständig angezeigt werden — das Tally-Ergebnis selbst ist jedoch immer korrekt
-- Die Mitgliederliste einer Zelle kann geräteabhängig leicht unterschiedlich sein — Abstimmungsergebnisse werden davon nicht beeinflusst
+- Auf Empfänger-Geräten können delegierte Stimmen in der Detail-Stimmenliste unvollständig angezeigt werden
+- Die Mitgliederliste einer Zelle kann geräteabhängig unterschiedlich sein; weil der Stimmberechtigten-Snapshot noch nicht zuverlässig eingefroren wird, kann dies Beteiligung, Quorum und Ergebnis beeinflussen
+- Emoji-Reaktionen und „Löschen für alle" können geräteübergreifend ausfallen, solange interne UUIDs in einzelnen Nostr-`e`-Tags verwendet werden
+- Ein Decision-Record-Retry nach vollständig fehlgeschlagenem Erstversand kann derzeit Felder verlieren
+- Eingehende Nostr-Events werden noch nicht durchgängig signatur- und berechtigungsgeprüft
+- Governance-Daten werden derzeit unverschlüsselt über öffentliche Relays verteilt
 
 ✅ Wenn du einen Fehler findest: GitHub → Issues → melden. Du hilfst der Menschheitsfamilie.
 
