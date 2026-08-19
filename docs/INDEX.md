@@ -71,6 +71,37 @@ bleiben zur Nachvollziehbarkeit erhalten, werden aber nicht mehr gepflegt.
 7. Sicherheitsversprechen beschreiben nur nachweislich implementiertes
    Verhalten; Vision und Zielbild werden ausdrücklich so benannt.
 
+## Was gehört ins Repository?
+
+Es gibt drei Ablagen mit unterschiedlicher Rolle. Sie bleiben getrennt.
+
+| Ort | Rolle |
+|---|---|
+| `C:\nexus-oneapp` | **Arbeitsstand** — Code und alles, was ihn regiert |
+| `…\Documents\!Nexus_Wissen` | **Kuratiertes Archiv** — Wissen, Medien, Organisation |
+| `…\Documents\!!!!!!!!!!!!!!!!!_Nexus` | **Rohbestand** — historisch, unsortiert |
+
+**Regel:** Ins Repository kommt, was den Code **regiert oder beschreibt** —
+Spezifikationen, Bugmeldungen, Testprotokolle, Architektur, Entscheidungen,
+Grenzen. Draußen bleibt, was das Projekt **umgibt** — Medien, Romane,
+Marketing, Sitzungsmitschnitte, Organisation, große Referenz-PDFs.
+
+**Vor jedem Import gilt:**
+
+1. **Inhalt prüfen, nicht Ordnerlage.** Auch das kuratierte Archiv enthält
+   falsch einsortierte Fremddateien.
+2. **Auf Geheimnisse prüfen:** Passwörter, Seedphrases, Schlüssel, API-Keys.
+   `.gitignore` schützt gegen die bekannten Muster, aber nicht gegen alle.
+3. **Auf Projektzugehörigkeit prüfen.** N.E.X.U.S. spricht von Zellen,
+   Gemeinschaften, Anträgen, Dorfplatz, Nostr, SQLite — nicht von Supabase,
+   Circles oder Rituals.
+4. **Bewegliche Dokumente nicht importieren.** Was gerade überarbeitet wird,
+   wartet bis zur fertigen Fassung. Sonst steht Veraltetes im Repo und wird
+   für gültig gehalten.
+
+Große Referenz-PDFs werden verlinkt statt versioniert — Git speichert sie bei
+jeder Änderung vollständig neu.
+
 ## Wo steht was?
 
 | Frage | Ort |

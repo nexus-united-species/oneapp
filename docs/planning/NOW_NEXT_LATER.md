@@ -199,7 +199,7 @@ eine Datenmodell-Entscheidung erzwingt — im Gegensatz zu ADR-0001/0002.
 | N.E.X.U.S. Linux (§29) | Briefing sagt selbst „nicht jetzt" | Nach stabilem Core |
 | WoT: Spezifikations-/Conformance-Prototyp | `wot-spec` ist Draft mit angekündigten Breaking Changes; unumkehrbare Abhängigkeit wäre verfrüht | **Nach NOW + ADR-0001** — braucht ADR-0002 nicht |
 | WoT: Device-Delegation / tiefe Integration | Setzt ein eigenes Device-Key-Modell voraus; dort selbst noch Phase-2-Entwurf | **Nach ADR-0002** |
-| AETHER-Wallet-Implementierung | Architektur (extern) steht, OneApp-Code ist Platzhalter | Eigener Block, nach Import des Master-Dokuments |
+| AETHER-Wallet-Implementierung | OneApp-Code ist Platzhalter (84 Zeilen). Die Architektur wird derzeit überarbeitet — aus dem AETHER Architecture Master (`_002`, 18.08.) entsteht eine neue AETHER-Spezifikation, erwartet Ende August. | **Warten auf die fertige Spezifikation.** Erst dann Import nach `docs/specs/` und eigener Block |
 
 ---
 
