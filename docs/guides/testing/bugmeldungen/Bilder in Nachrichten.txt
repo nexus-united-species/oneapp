@@ -1,0 +1,1 @@
+Versendete und eingehende Bilder in Nachrichten werden nicht schön angezeigt, man muss erst draufklicken, um das Bild zu sehen, eine Vorschau wäre gut

@@ -1,0 +1,1 @@
+Die Bio und freigegeben Felder im Profil werden nicht angezeigt wenn man ein Profil einens anderen ansieht. Es fehlen die Ansichtsbereich siehe Screenshot. 

@@ -1,0 +1,1 @@
+Kanal/Gruppe adminstrieren - es gibt keine Funktion als Superadmin/Admin/Gründer einen Kanal zu adminstrieren, löschen, umbenennen, öffentlich/privat umstellen  

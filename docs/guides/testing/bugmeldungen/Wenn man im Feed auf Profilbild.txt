@@ -1,0 +1,1 @@
+Wenn man im Feed des Dorfplatzes auf das Profilbild seines eigenen Beitrags klickt, sollte man ja auf das eigene Profil kommen, es wird auch eine Funktion ausgeführt, aber es für führt zu einer Meldung Kontakt nicht gefunden.

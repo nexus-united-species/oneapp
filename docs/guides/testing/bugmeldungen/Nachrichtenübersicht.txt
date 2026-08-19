@@ -1,0 +1,1 @@
+In der Nachrichtenübersicht und in der Kachel Nachrichten auf dem Dasboard werden von mir versendete Nachrichten als "ungelesene Neue eingangsnachrichten" angezeigt, das darf natürlich nur bei eingegangenen NAchrichten angezeigt werden

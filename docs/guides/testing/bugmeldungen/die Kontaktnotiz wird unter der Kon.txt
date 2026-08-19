@@ -1,0 +1,1 @@
+die Kontaktnotiz wird unter der Kontaktübersicht angezeigt, das muss auch in der Peerübersicht angezeigt werden, damit man sich nicht die Nicknamen merken muss bei leuten die man kennt.

@@ -1,0 +1,1 @@
+Versionsanzeige im Profil wird falsch angezeigt, siehe screenshot

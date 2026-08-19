@@ -44,7 +44,11 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Nächster kleiner Schritt |
 |---|---|---|
-| TD-49 | Große zentrale Services | Architekturkarte schreiben; danach nur entlang klarer Grenzen extrahieren |
+| TD-49 | Große zentrale Services | Architekturkarte geschrieben ([ARCHITECTURE_REALITY.md](ARCHITECTURE_REALITY.md), Befund 8): 7 Dateien tragen 31 % des Codes. Reihenfolge und Grenze in [ADR-0005](../decisions/ADR-0005-dateigroesse.md) |
+| TD-53 | Zwei unabhängige Identitätsschlüssel ohne normative Festlegung | `did:key` (Ed25519) und `nostrPubkey` (secp256k1) sind nicht umrechenbar; welcher fachlich gilt, ist unentschieden. Siehe [ADR-0001](../decisions/ADR-0001-identitaets-identifier.md) |
+| TD-54 | Kein Gerätekonzept auf Identitätsebene | Identität ist implizit gleich Gerät; kein Einzelwiderruf möglich. Verschärft TD-33 und TD-46. Siehe [ADR-0002](../decisions/ADR-0002-geraet-und-person.md) |
+| TD-55 | Persistenz reicht bis in die Widget-Ebene | 6 Screens greifen direkt auf `PodDatabase` zu, 13 Zugriffe aus `features/`/`services/` gesamt. Siehe [ADR-0004](../decisions/ADR-0004-storage-grenze.md) |
+| TD-56 | Zustellsemantik an Nostr gebunden | `PublishResultStatus` liegt unter `core/transport/nostr/`; BLE und LAN haben keine Entsprechung. Siehe [ADR-0003](../decisions/ADR-0003-zustellsemantik.md) |
 | TD-50 | Debug-/Reparaturprimitive in Produktcode | in gekennzeichneten Wartungsbereich verschieben |
 | TD-51 | Dichtes `print`-Logging | Präfixe katalogisieren und schrittweise strukturieren |
 | TD-52 | `lib.zip`/Code-Dumps im Arbeitsumfeld | nur im Archiv beziehungsweise außerhalb aktiver Suche halten |
@@ -58,8 +62,29 @@ Release-Reihenfolge steht separat in
 - Überzogene Aussagen zu NIP-44, unveränderlichen Decision Records und
   vollständig wiederherstellbaren Daten abgeschwächt.
 
+## Ergänzung 18. August 2026 – Architektur-Audit
+
+Ein Architektur-Ist-Zustand wurde erstmals erhoben
+([ARCHITECTURE_REALITY.md](ARCHITECTURE_REALITY.md)). Ergebnisse für diese
+Liste:
+
+- **Neu aufgenommen:** TD-53 bis TD-56 (Wartbarkeit) – vier Architekturbefunde,
+  die bisher nirgends erfasst waren.
+- **TD-49 präzisiert:** aus einer allgemeinen Beobachtung wurden sieben
+  konkrete Dateien mit Zerlegungsreihenfolge.
+- **TD-39 erneut im Code bestätigt:** `NostrEvent.verify()` ist implementiert
+  und getestet, wird im Produktivpfad aber an keiner Stelle aufgerufen
+  ([nostr_relay_manager.dart:431](../../lib/core/transport/nostr/nostr_relay_manager.dart)).
+  Status unverändert Release-Blocker.
+- **Keine Korrekturen nötig:** Alle bestehenden Einträge wurden gegen den Code
+  geprüft und als zutreffend bestätigt. Version, Schemastand und
+  Analyze-Baseline stimmen exakt.
+
 ## Quellen
 
+- [Architektur-Ist-Zustand](ARCHITECTURE_REALITY.md)
+- [Was nicht angefasst werden sollte](DO_NOT_TOUCH.md)
+- [Architekturentscheidungen](../decisions/)
 - [Audit Lauf A](../audits/2026-07/AUDIT_LAUF_A.md)
 - [Audit Lauf B](../audits/2026-07/AUDIT_LAUF_B.md)
 - [Projektstatus](PROJECT_STATUS.md)

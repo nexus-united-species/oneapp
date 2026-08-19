@@ -1,0 +1,4 @@
+Icons werden doppelt verwendet
+Chat bricht nicht um und ein senden Button fehlt
+Nach Versand sollte man den Beitrag bearbeiten können und auch löschen können, weiterleiten, favorisieren und info wann gesendet, wann empfangen/gelesen
+

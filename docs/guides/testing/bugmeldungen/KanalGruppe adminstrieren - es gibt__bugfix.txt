@@ -1,0 +1,13 @@
+Kanal/Gruppe adminstrieren - es gibt keine Funktion als Superadmin/Admin/Gründer einen Kanal zu adminstrieren, löschen, umbenennen, öffentlich/privat umstellen  
+
+
+Ich habe eben dem neuen Bugfix chat, diese Änderung mitgeteilt und er schreibt mir diesen Prompt, der stimmt doch nicht oder? Wir haben doch die Rollen schon: Kanal/Gruppe adminstrieren - "es gibt keine Funktion als Superadmin/Admin/Gründer einen Kanal zu adminstrieren, löschen, umbenennen, öffentlich/privat umstellen". 
+
+
+
+das war der Prompt den er erstellt hat:  
+
+
+Das ist ein größeres Feature-Paket. Ich teile es in zwei separate Prompts auf — erst die Admin-UI, dann die Aktionen — damit Claude Code nicht überfordert wird.
+
+

@@ -1,0 +1,1 @@
+Anzahl Notes stimmt nicht überein mit Radar/tatsächlichen Peers. es dauert zu lange bis sich die richtige Anzahl abbildet

@@ -1,0 +1,1 @@
+Profilbilder werden OneApp weit nicht angezeigt, fehlt wahrscheinlich auch in den Profileinstellungen die Freigabeeinstellung.

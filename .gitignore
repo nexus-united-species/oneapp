@@ -95,9 +95,28 @@ phase*-handy.txt
 *-discovery.txt
 NEXUS_OneApp_Implementierungsplan*.md
 
+# Archived implementation plans are intentionally versioned
+!/docs/archive/plans/
+!/docs/archive/plans/*.md
+
 # Codebase audit/dump artifacts (large, regenerable)
 nexus_codebase_audit*.txt
 codebase_dump*.txt
+
+# Sehr große externe Referenz-PDFs (18 MB, zurückgestellte Technologie).
+# Quelle: !Nexus_Wissen/3_Technik/Mesh/
+docs/specs/drafts/mesh/Reticulum_Global_Mesh.pdf
+
+# ── Geheimnisse: niemals versionieren ────────────────────────
+# Testkonten, Zugangsdaten, Seedphrases. Vgl. Audit Lauf B, E-2.
+# Quelle dieser Dateien: !Nexus_Wissen/3_Technik/OneApp_Test/
+Test User*.txt
+test_user*.txt
+*seedphrase*
+*seed_phrase*
+*recovery-codes*
+.env
+.env.*
 
 # Generated documentation PDFs
 /docs/generated/pdf/*.pdf
