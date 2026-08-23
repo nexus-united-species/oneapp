@@ -19,6 +19,7 @@ class NexusMessage {
   static const String broadcastDid = 'broadcast';
   static const int defaultTtlHours = 12;
   static const int maxHopCount = 7;
+  static const String nostrEventIdMetaKey = 'nostr_event_id';
 
   final String id;
   final String fromDid;
@@ -84,6 +85,11 @@ class NexusMessage {
   }
 
   bool get isBroadcast => toDid == broadcastDid;
+
+  String? get nostrEventId {
+    final value = metadata?[nostrEventIdMetaKey];
+    return value is String && value.isNotEmpty ? value : null;
+  }
 
   bool get isExpired {
     final expiresAt = timestamp.add(Duration(hours: ttlHours));
@@ -193,6 +199,13 @@ class NexusMessage {
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
         '${hex.substring(20)}';
   }
+
+  NexusMessage withNostrEventId(String eventId) => copyWith(
+        metadata: {
+          ...?metadata,
+          nostrEventIdMetaKey: eventId,
+        },
+      );
 
   /// Returns a copy with selected fields replaced.
   NexusMessage copyWith({

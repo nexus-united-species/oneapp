@@ -48,6 +48,12 @@ class NostrTransport implements MessageTransport {
     this.peerTimeout = const Duration(minutes: 2),
   }) : _relayManager = relayManager ?? NostrRelayManager();
 
+  static final RegExp _nostrEventIdPattern =
+      RegExp(r'^[0-9a-fA-F]{64}$');
+
+  static bool isValidNostrEventId(String? value) =>
+      value != null && _nostrEventIdPattern.hasMatch(value);
+
   final String localDid;
   String localPseudonym;
   final NostrRelayManager _relayManager;
@@ -79,6 +85,29 @@ class NostrTransport implements MessageTransport {
 
   // Nostr pubkey hex → last presence timestamp (for timeout eviction)
   final Map<String, DateTime> _peerLastPresence = {};
+
+  // Internal message UUID → generated outer Nostr event ID.
+  final Map<String, String> _sentNostrEventIds = <String, String>{};
+  static const int _maxSentEventIds = 200;
+
+  void _rememberSentNostrEventId(String messageId, String eventId) {
+    if (!isValidNostrEventId(eventId)) return;
+    _sentNostrEventIds[messageId] = eventId;
+    while (_sentNostrEventIds.length > _maxSentEventIds) {
+      _sentNostrEventIds.remove(_sentNostrEventIds.keys.first);
+    }
+  }
+
+  String? consumeSentNostrEventId(String messageId) =>
+      _sentNostrEventIds.remove(messageId);
+
+  static NexusMessage _withWrapperId(
+    NexusMessage message,
+    NostrEvent event,
+  ) =>
+      isValidNostrEventId(event.id)
+          ? message.withNostrEventId(event.id)
+          : message;
 
   // Active relay subscriptions
   String? _dmSubId;
@@ -709,21 +738,21 @@ class NostrTransport implements MessageTransport {
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
 
-  /// Publishes a NIP-25 Kind-7 reaction for [messageId].
-  void publishReaction(String messageId, String emoji) {
-    if (_keys == null) return;
+  /// Publishes a NIP-25 Kind-7 reaction for [targetEventId].
+  void publishReaction(String targetEventId, String emoji) {
+    if (_keys == null || !isValidNostrEventId(targetEventId)) return;
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.reaction,
       content: emoji,
       tags: [
-        ['e', messageId],
+        ['e', targetEventId],
       ],
     );
     final connectedRelays =
         _relayManager.statuses.where((s) => s.state == RelayState.connected).length;
-    print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
-    print('[REACTION-SEND] Tags: e=$messageId');
+    print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${targetEventId.substring(0, 8)}…');
+    print('[REACTION-SEND] Tags: e=$targetEventId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
     _relayManager.publishFireAndForget(event);
   }
@@ -1543,6 +1572,7 @@ class NostrTransport implements MessageTransport {
           ['t', nostrTag],
         ],
       );
+      _rememberSentNostrEventId(message.id, event.id);
       print('[NOSTR] Publishing Kind-42 channel=$channel '
           'id=${event.id.substring(0, 8)}…');
       _relayManager.publishFireAndForget(event);
@@ -1562,6 +1592,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(message.toJson()),
       tags: tags,
     );
+    _rememberSentNostrEventId(message.id, event.id);
     print('[NOSTR] Publishing broadcast kind=1 '
         'id=${event.id.substring(0, 8)}… tags=${event.tags.map((t) => t.join('=')).join(',')}');
     _relayManager.publishFireAndForget(event);
@@ -1599,6 +1630,7 @@ class NostrTransport implements MessageTransport {
         ['p', recipientNostrPubkey],
       ],
     );
+    _rememberSentNostrEventId(message.id, event.id);
     _relayManager.publishFireAndForget(event);
     print('[NOSTR] DM published, event id: ${event.id.substring(0, 8)}…');
   }
@@ -2294,13 +2326,11 @@ class NostrTransport implements MessageTransport {
     if (_keys == null) return;
     if (event.pubkey == _keys!.publicKeyHex) return; // own reaction
     final referencedEventId = event.tagValue('e');
-    if (referencedEventId == null) {
-      print('[REACTION-RECV] Kind-7 received but missing e-tag — ignored');
+    if (referencedEventId == null || !isValidNostrEventId(referencedEventId)) {
+      print('[REACTION-RECV] Kind-7 received with invalid e-tag — ignored');
       return;
     }
-    final shortTarget = referencedEventId.length >= 8
-        ? referencedEventId.substring(0, 8)
-        : referencedEventId;
+    final shortTarget = referencedEventId.substring(0, 8);
     final shortSender = event.pubkey.length >= 8
         ? event.pubkey.substring(0, 8)
         : event.pubkey;
@@ -2629,7 +2659,10 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
       _learnPeer(event.pubkey, message.fromDid, message.metadata);
       _msgController.add(message);
     } catch (e) {
@@ -2657,7 +2690,10 @@ class NostrTransport implements MessageTransport {
       final senderPubBytes = Uint8List.fromList(_hexToBytes(event.pubkey));
       final plaintext = await _nip04Decrypt(event.content, senderPubBytes);
       final msgJson = jsonDecode(plaintext) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
 
       final msgType = message.metadata?['type'] as String?;
       print('[NOSTR] DM decrypted OK: ${message.fromDid} → ${message.toDid}'
@@ -2688,7 +2724,10 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
       final didLen = message.fromDid.length;
       print('[NOSTR] Broadcast parsed OK: from=${message.fromDid.substring(0, didLen.clamp(0, 12))}… '
           'body="${message.body.length > 40 ? message.body.substring(0, 40) : message.body}"');
