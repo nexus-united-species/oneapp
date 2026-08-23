@@ -247,6 +247,7 @@ class NostrTransport implements MessageTransport {
   Stream<List<String>> get onFeedDelete => _feedDeleteController.stream;
 
   String? _feedSubId;
+  String? _reactionSubId;
 
   /// Dedicated author-based subscription for Kind-6 reposts.
   /// Public relays do NOT index Kind-6 by #t tags, so a tag-filtered sub
