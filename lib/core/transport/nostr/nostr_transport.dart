@@ -104,10 +104,15 @@ class NostrTransport implements MessageTransport {
   static NexusMessage _withWrapperId(
     NexusMessage message,
     NostrEvent event,
-  ) =>
-      isValidNostrEventId(event.id)
-          ? message.withNostrEventId(event.id)
-          : message;
+  ) {
+    if (isValidNostrEventId(event.id)) {
+      return message.withNostrEventId(event.id);
+    }
+    final sanitizedMetadata = Map<String, dynamic>.from(
+      message.metadata ?? const <String, dynamic>{},
+    )..remove(NexusMessage.nostrEventIdMetaKey);
+    return message.copyWith(metadata: sanitizedMetadata);
+  }
 
   // Active relay subscriptions
   String? _dmSubId;
@@ -391,6 +396,10 @@ class NostrTransport implements MessageTransport {
       _relayManager.closeSubscription(_channelDiscoverySubId!);
     }
     if (_feedSubId != null) _relayManager.closeSubscription(_feedSubId!);
+    if (_reactionSubId != null) {
+      _relayManager.closeSubscription(_reactionSubId!);
+      _reactionSubId = null;
+    }
     if (_feedRepostSubId != null) _relayManager.closeSubscription(_feedRepostSubId!);
     if (_proposalSubId != null) _relayManager.closeSubscription(_proposalSubId!);
     if (_voteSubId != null) _relayManager.closeSubscription(_voteSubId!);
@@ -1986,6 +1995,17 @@ class NostrTransport implements MessageTransport {
       'since': nowSeconds - 7 * 86400,
     });
     print('[NOSTR] Feed sub: $_feedSubId');
+
+    // NIP-25 reactions contain an e-tag but do not require a Dorfplatz t-tag.
+    // Subscribe without #t so chat/channel reactions reach _handleReaction().
+    if (_reactionSubId != null) {
+      _relayManager.closeSubscription(_reactionSubId!);
+    }
+    _reactionSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.reaction],
+      'since': nowSeconds - 7 * 86400,
+    });
+    print('[NOSTR] Reaction sub (no #t filter): $_reactionSubId');
 
     // Author-based feed subscription: fetch own posts + known contacts' posts
     // from the last 30 days.  This restores posts after a seed-phrase restore
