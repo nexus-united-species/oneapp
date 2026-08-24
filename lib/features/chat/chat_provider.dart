@@ -1768,11 +1768,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
 
-    // Optimistic local cache update – always use plaintext local message.
+    // Optimistic local cache update – always use plaintext local message, but
+    // retain the outer Nostr event ID produced from the wire copy.
+    final storedMsg = _withSentNostrEventId(localMsg);
     final convId = _conversationId(recipientDid, myDid);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(localMsg);
-    await _persistMessage(convId, localMsg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -1820,9 +1822,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(msg);
-    await _persistMessage(NexusMessage.broadcastDid, msg);
+    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
+    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2083,9 +2086,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ? NexusMessage.broadcastDid
         : _conversationId(recipientDid, myDid);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(msg);
-    await _persistMessage(convId, msg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2112,9 +2116,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _manager.sendMessage(msg, recipientDid: recipientDid);
 
     final convId = _conversationId(recipientDid, myDid);
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(msg);
-    await _persistMessage(convId, msg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
   }
@@ -2236,9 +2241,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
 
     final convId = _conversationId(recipientDid, myDid);
+    final storedMsg = _withSentNostrEventId(localMsg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(localMsg);
-    await _persistMessage(convId, localMsg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2291,9 +2297,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(msg);
-    await _persistMessage(NexusMessage.broadcastDid, msg);
+    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
+    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2788,7 +2795,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _reactionSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
-    _manager.stop();
+    // Only an initialized provider owns a running manager lifecycle. This also
+    // keeps constructor-injected transports usable in focused, uninitialized
+    // provider instances without starting an unawaited global manager stop.
+    if (_initialized) _manager.stop();
     super.dispose();
   }
 }

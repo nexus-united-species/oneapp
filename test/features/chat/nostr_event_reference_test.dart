@@ -10,6 +10,7 @@ import 'package:nexus_oneapp/core/identity/identity_service.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
 import 'package:nexus_oneapp/core/transport/nexus_message.dart';
 import 'package:nexus_oneapp/core/transport/nostr/nostr_transport.dart';
+import 'package:nexus_oneapp/core/transport/transport_manager.dart';
 import 'package:nexus_oneapp/features/chat/chat_provider.dart';
 
 /// F-001: the Nostr wrapper event ID must stay associated with the internal
@@ -25,6 +26,19 @@ class _FakeNostrTransport extends NostrTransport {
 
   final reactionController = StreamController<Map<String, dynamic>>.broadcast();
   final publishedReactions = <({String targetEventId, String emoji})>[];
+  final sentEventIds = <String, String>{};
+
+  @override
+  Future<void> sendMessage(
+    NexusMessage message, {
+    String? recipientDid,
+  }) async {
+    sentEventIds[message.id] = _validEventId;
+  }
+
+  @override
+  String? consumeSentNostrEventId(String messageId) =>
+      sentEventIds.remove(messageId);
 
   @override
   Stream<Map<String, dynamic>> get onFeedReaction => reactionController.stream;
@@ -179,6 +193,7 @@ void main() {
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({'notif_channel_reactions': true});
+      TransportManager.instance.clearTransports();
       pod = await _openTestDb();
       IdentityService.instance.setForTest(
         NexusIdentity(
@@ -188,6 +203,7 @@ void main() {
         ),
       );
       nostrTransport = _FakeNostrTransport();
+      TransportManager.instance.registerTransport(nostrTransport);
       notifications = [];
       provider = ChatProvider(
         nostrTransport: nostrTransport,
@@ -200,6 +216,7 @@ void main() {
 
     tearDown(() async {
       provider.dispose();
+      TransportManager.instance.clearTransports();
       await nostrTransport.close();
       IdentityService.instance.clearForTest();
     });
@@ -222,6 +239,47 @@ void main() {
       await provider.getMessages('#reaktionen');
       return stored;
     }
+
+    test(
+      'persists the generated Nostr event ID for an outgoing direct message',
+      () async {
+        const recipientDid = 'did:key:direct-recipient';
+
+        await provider.sendMessage(recipientDid, 'Direkte Nachricht');
+
+        final convId = ([myDid, recipientDid]..sort()).join(':');
+        final messages = await provider.getMessages(convId);
+        expect(messages, hasLength(1));
+        expect(messages.single.body, 'Direkte Nachricht');
+        expect(messages.single.nostrEventId, _validEventId);
+        expect(
+          NostrTransport.isValidNostrEventId(messages.single.nostrEventId),
+          isTrue,
+        );
+
+        final rows = await pod.listMessages(convId);
+        final persisted = NexusMessage.fromJson(rows.single);
+        expect(persisted.id, messages.single.id);
+        expect(persisted.nostrEventId, _validEventId);
+      },
+    );
+
+    test(
+      'persists the generated Nostr event ID for an outgoing mesh broadcast',
+      () async {
+        await provider.sendBroadcast('Nachricht an #mesh');
+
+        final messages =
+            await provider.getMessages(NexusMessage.broadcastDid);
+        expect(messages, hasLength(1));
+        expect(messages.single.nostrEventId, _validEventId);
+
+        final rows = await pod.listMessages(NexusMessage.broadcastDid);
+        final persisted = NexusMessage.fromJson(rows.single);
+        expect(persisted.id, messages.single.id);
+        expect(persisted.nostrEventId, _validEventId);
+      },
+    );
 
     test(
       'publishes the stored Nostr event ID instead of the internal UUID',
