@@ -551,6 +551,14 @@ class NostrTransport implements MessageTransport {
   }
 
   /// Publishes a NIP-28 Kind-41 channel metadata update.
+  ///
+  /// The `e` tag, when present, MUST reference the real Nostr event ID of the
+  /// channel's Kind-40 creation event (`channelData['nostrEventId']`) — NEVER
+  /// the internal NEXUS channel UUID (`channelData['id']`). Channels created
+  /// locally by this device, or discovered from another device via Kind-40,
+  /// carry a real `nostrEventId` once linked (see [GroupChannel.nostrEventId]
+  /// and `_handleChannelCreateEvent`). Legacy or not-yet-linked channels omit
+  /// the `e` tag entirely rather than publish a UUID-based one.
   void publishChannelMetadata(Map<String, dynamic> channelData) {
     if (_keys == null) return;
     final isPublic = (channelData['isPublic'] as bool?) ?? true;
@@ -558,40 +566,64 @@ class NostrTransport implements MessageTransport {
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
       ..remove('members');
+    final nostrEventId = channelData['nostrEventId'] as String?;
+    final tags = <List<String>>[
+      ['t', channelData['nostrTag'] as String? ?? 'nexus-channel'],
+      ['t', 'nexus-channel'],
+      ['access', isPublic ? 'public' : 'private'],
+      ['discoverable', isDiscoverable ? 'true' : 'false'],
+    ];
+    if (isValidNostrEventId(nostrEventId)) {
+      tags.insert(0, ['e', nostrEventId!]);
+    } else {
+      print('[CHANNEL-META-PUB] No valid nostrEventId available — '
+          'publishing Kind-41 without e-tag (legacy/unlinked channel)');
+    }
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.channelMetadata,
       content: jsonEncode(publicData),
-      tags: [
-        ['e', channelData['id'] as String? ?? ''],
-        ['t', channelData['nostrTag'] as String? ?? 'nexus-channel'],
-        ['t', 'nexus-channel'],
-        ['access', isPublic ? 'public' : 'private'],
-        ['discoverable', isDiscoverable ? 'true' : 'false'],
-      ],
+      tags: tags,
     );
     _relayManager.publishFireAndForget(event);
     print('[NOSTR] Published Kind-41 channel metadata: ${channelData['name']}');
   }
 
-  /// Publishes a NIP-09 Kind-5 deletion request for [messageId].
+  /// Publishes a NIP-09 Kind-5 deletion request referencing the real Nostr
+  /// event ID [targetEventId] of the message being deleted.
   ///
-  /// Best-effort: relays may ignore the request, and clients that already
-  /// cached the message may not remove it automatically.
-  void publishDeletion(String messageId) {
+  /// [targetEventId] MUST be the 64-char hex Nostr event ID that was assigned
+  /// when the message was originally published (see [NexusMessage.nostrEventId])
+  /// — NEVER the internal NEXUS message UUID. A NIP-01 `e` tag containing a
+  /// UUID is invalid and gets rejected by compliant relays, which is exactly
+  /// the TD-36/F-001 failure mode this guard prevents.
+  ///
+  /// If [targetEventId] is missing or not a valid 64-hex ID (e.g. the message
+  /// was sent while offline, or predates this field), no event is published —
+  /// there is no safe fallback tag for this event type, so the deletion stays
+  /// local-only rather than emitting a malformed Kind-5 event.
+  ///
+  /// Best-effort even when valid: relays may ignore the request, and clients
+  /// that already cached the message may not remove it automatically.
+  void publishDeletion(String targetEventId) {
     if (_keys == null) return;
+    if (!isValidNostrEventId(targetEventId)) {
+      print('[MSG-DELETE] Refusing to publish: no valid Nostr event ID '
+          '(deletion stays local-only)');
+      return;
+    }
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.deletion,
       content: 'Nachricht gelöscht',
       tags: [
-        ['e', messageId],
+        ['e', targetEventId],
       ],
     );
     final connectedRelays =
         _relayManager.statuses.where((s) => s.state == RelayState.connected).length;
-    print('[MSG-DELETE] Publishing kind=5: msgId=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
-    print('[MSG-DELETE] e-tag: $messageId');
+    print('[MSG-DELETE] Publishing kind=5: eventId=${targetEventId.substring(0, 8)}…');
+    print('[MSG-DELETE] e-tag: $targetEventId');
     print('[MSG-DELETE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
     _relayManager.publishFireAndForget(event);
   }
@@ -2668,6 +2700,10 @@ class NostrTransport implements MessageTransport {
         ...data,
         '_nostr_pubkey': event.pubkey,
         '_created_at': event.createdAt,
+        // Real Kind-40 wire event ID, so the receiver can link
+        // GroupChannel.nostrEventId even for channels discovered from
+        // another device (previously only set for locally-created channels).
+        '_nostr_event_id': event.id,
       });
     } catch (e) {
       print('[CHANNEL-SYNC] ✗ Kind-40 parse FAILED: $e');

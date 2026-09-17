@@ -26,6 +26,7 @@ class _FakeNostrTransport extends NostrTransport {
 
   final reactionController = StreamController<Map<String, dynamic>>.broadcast();
   final publishedReactions = <({String targetEventId, String emoji})>[];
+  final publishedDeletions = <String>[];
   final sentEventIds = <String, String>{};
 
   @override
@@ -46,6 +47,11 @@ class _FakeNostrTransport extends NostrTransport {
   @override
   void publishReaction(String targetEventId, String emoji) {
     publishedReactions.add((targetEventId: targetEventId, emoji: emoji));
+  }
+
+  @override
+  void publishDeletion(String targetEventId) {
+    publishedDeletions.add(targetEventId);
   }
 
   Future<void> emitReaction(Map<String, dynamic> data) async {
@@ -346,6 +352,52 @@ void main() {
         });
 
         expect(notifications, isEmpty);
+      },
+    );
+
+    // ── F-001 REWORK: message deletion (Kind-5, NIP-09) ───────────────────
+
+    test(
+      'publishNostrDeletion publishes the real Nostr event ID for a self-sent message',
+      () async {
+        final message = await cacheMessage(withNostrEventId: true);
+
+        provider.publishNostrDeletion(message);
+
+        expect(nostrTransport.publishedDeletions, [_validEventId]);
+        expect(nostrTransport.publishedDeletions.single, isNot(message.id));
+      },
+    );
+
+    test(
+      'publishNostrDeletion publishes the real Nostr event ID for a received message',
+      () async {
+        final received = NexusMessage.create(
+          fromDid: 'did:key:someone-else',
+          toDid: myDid,
+          body: 'von jemand anderem',
+        ).withNostrEventId(_validEventId);
+        await pod.insertMessage(
+          conversationId: 'did:key:someone-else',
+          senderDid: received.fromDid,
+          data: received.toJson(),
+        );
+
+        provider.publishNostrDeletion(received);
+
+        expect(nostrTransport.publishedDeletions, [_validEventId]);
+      },
+    );
+
+    test(
+      'publishNostrDeletion keeps legacy/offline messages local-only — no UUID fallback',
+      () async {
+        final message = await cacheMessage(withNostrEventId: false);
+
+        provider.publishNostrDeletion(message);
+
+        expect(message.nostrEventId, isNull);
+        expect(nostrTransport.publishedDeletions, isEmpty);
       },
     );
   });

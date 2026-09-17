@@ -512,6 +512,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         isPublic: (data['isPublic'] as bool?) ?? true,
         isDiscoverable: (data['isDiscoverable'] as bool?) ?? true,
         nostrTag: nostrTag,
+        // Real Kind-40 creation event ID, so this device can later publish a
+        // NIP-01-compliant Kind-41/Kind-5 e-tag for this channel too — not
+        // just the device that originally created it.
+        nostrEventId: data['_nostr_event_id'] as String?,
       );
 
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
@@ -2124,12 +2128,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Publishes a Nostr Kind-5 deletion event for [messageId].
+  /// Publishes a Nostr Kind-5 deletion event referencing [message]'s real
+  /// Nostr event ID.
   ///
-  /// Best-effort: relays may not honour the request, and clients that already
-  /// cached the message will not remove it automatically.
-  void publishNostrDeletion(String messageId) {
-    _nostrTransport?.publishDeletion(messageId);
+  /// Takes the full [NexusMessage] (not a bare ID string) so the correct
+  /// [NexusMessage.nostrEventId] is used rather than the internal UUID
+  /// (`message.id`) — passing the UUID would produce an invalid NIP-01 `e`
+  /// tag that compliant relays reject (TD-36/F-001). If the message has no
+  /// valid Nostr event ID yet (e.g. sent while offline, or a legacy message),
+  /// the deletion stays local-only — no event is published.
+  ///
+  /// Best-effort even when valid: relays may not honour the request, and
+  /// clients that already cached the message will not remove it automatically.
+  void publishNostrDeletion(NexusMessage message) {
+    final eventId = message.nostrEventId;
+    if (!NostrTransport.isValidNostrEventId(eventId)) {
+      print('[MSG-DELETE] No valid Nostr event ID for msgId=${message.id} '
+          '— deletion stays local-only');
+      return;
+    }
+    _nostrTransport?.publishDeletion(eventId!);
   }
 
   /// Publishes a Kind-5 deletion event for a cell (NIP-09 `a`-tag approach).
