@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -55,6 +56,8 @@ class FakeRelayManager extends NostrRelayManager {
   void closeSubscription(String subId) {}
 
   void injectEvent(NostrEvent event) => _eventCtrl.add(event);
+
+  Future<void> close() => _eventCtrl.close();
 }
 
 // ── Fake transport (reused from transport_manager_test.dart pattern) ──────────
@@ -336,6 +339,164 @@ void main() {
       expect(fakeRelay.published.first.tagValue('t'), equals('nexus-mesh'));
 
       await transport.stop();
+    });
+  });
+
+  group('NostrTransport event references', () {
+    const aliceMnemonic =
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    const bobMnemonic =
+        'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong';
+    const validTargetEventId =
+        'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+    NostrKeys keysFor(String mnemonic) => NostrKeys.fromBip39Seed(
+          Uint8List.fromList(Bip39.mnemonicToSeed(mnemonic)),
+        );
+
+    Future<({NostrTransport transport, FakeRelayManager relay})>
+        startTransport() async {
+      final relay = FakeRelayManager();
+      final transport = NostrTransport(
+        localDid: 'did:key:alice',
+        localPseudonym: 'Alice',
+        relayManager: relay,
+      );
+      await transport.start(keysOverride: keysFor(aliceMnemonic));
+      relay.published.clear();
+      return (transport: transport, relay: relay);
+    }
+
+    Future<void> stopTransport(
+      NostrTransport transport,
+      FakeRelayManager relay,
+    ) async {
+      await transport.stop();
+      await relay.close();
+    }
+
+    test('outgoing Kind-42 associates UUID with its 64-hex wrapper ID',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final message = NexusMessage.create(
+        fromDid: 'did:key:alice',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#reaktionen',
+        body: 'Hallo Kanal',
+      );
+
+      await transport.sendMessage(message);
+
+      expect(relay.published, hasLength(1));
+      final wrapper = relay.published.single;
+      expect(wrapper.kind, NostrKind.channelMessage);
+      expect(NostrTransport.isValidNostrEventId(wrapper.id), isTrue);
+      expect(transport.consumeSentNostrEventId(message.id), wrapper.id);
+      expect(transport.consumeSentNostrEventId(message.id), isNull,
+          reason: 'The association is consumed when the provider persists it');
+
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-42 adds wrapper ID without replacing the UUID',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final original = NexusMessage.create(
+        fromDid: 'did:key:bob',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#reaktionen',
+        body: 'Hallo von Bob',
+      );
+      final wrapper = NostrEvent.create(
+        keys: keysFor(bobMnemonic),
+        kind: NostrKind.channelMessage,
+        content: jsonEncode(original.toJson()),
+        tags: const [
+          ['t', 'nexus-channel-reaktionen'],
+        ],
+      );
+      final received = Completer<NexusMessage>();
+      final subscription = transport.onMessageReceived.listen(received.complete);
+
+      relay.injectEvent(wrapper);
+      final enriched = await received.future.timeout(const Duration(seconds: 1));
+
+      expect(enriched.id, original.id);
+      expect(enriched.nostrEventId, wrapper.id);
+      expect(NostrTransport.isValidNostrEventId(enriched.nostrEventId), isTrue);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('publishReaction emits one Kind-7 with the exact valid e-tag',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishReaction(validTargetEventId, '👍');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, hasLength(1));
+      expect(relay.published.single.kind, NostrKind.reaction);
+      expect(relay.published.single.content, '👍');
+      expect(relay.published.single.tags, [
+        ['e', validTargetEventId],
+      ]);
+
+      await stopTransport(transport, relay);
+    });
+
+    test('publishReaction rejects empty, UUID, and malformed targets',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      for (final invalidTarget in <String>[
+        '',
+        '550e8400-e29b-41d4-a716-446655440000',
+        'gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg',
+        'abc123',
+      ]) {
+        transport.publishReaction(invalidTarget, '👍');
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, isEmpty);
+
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-7 dispatches only a valid 64-hex e-tag', () async {
+      final (:transport, :relay) = await startTransport();
+      final reactions = <Map<String, dynamic>>[];
+      final subscription = transport.onFeedReaction.listen(reactions.add);
+      final bobKeys = keysFor(bobMnemonic);
+
+      NostrEvent reactionWithTags(List<List<String>> tags) => NostrEvent.create(
+            keys: bobKeys,
+            kind: NostrKind.reaction,
+            content: '🔥',
+            tags: tags,
+          );
+
+      relay.injectEvent(reactionWithTags(const []));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', '550e8400-e29b-41d4-a716-446655440000'],
+      ]));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', 'not-hex'],
+      ]));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', validTargetEventId],
+      ]));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reactions, hasLength(1));
+      expect(reactions.single['referencedEventId'], validTargetEventId);
+      expect(reactions.single['emoji'], '🔥');
+      expect(reactions.single['senderPubkey'], bobKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
     });
   });
 
