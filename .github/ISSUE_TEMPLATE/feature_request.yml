@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        **🇩🇪** Größere Ideen besprechen wir gerne zuerst in den [Diskussionen](https://github.com/nexus-united-species/terminal/discussions) oder in der [Community](https://community.nexus-terminal.org/).
+        **🇩🇪** Größere Ideen besprechen wir gerne zuerst in den [Diskussionen](https://github.com/nexus-united-species/oneapp/discussions) oder in der [Community](https://community.nexus-terminal.org/).
 
-        **🇬🇧** We are happy to discuss larger ideas first in the [Discussions](https://github.com/nexus-united-species/terminal/discussions) or in the [community](https://community.nexus-terminal.org/).
+        **🇬🇧** We are happy to discuss larger ideas first in the [Discussions](https://github.com/nexus-united-species/oneapp/discussions) or in the [community](https://community.nexus-terminal.org/).
   - type: textarea
     id: problem
     attributes:

@@ -20,7 +20,7 @@
   <a href="https://github.com/nexus-united-species/oneapp/releases">Download</a> ·
   <a href="https://www.nexus-terminal.org/oneapp.html">Webseite / Website</a> ·
   <a href="https://community.nexus-terminal.org/">Community</a> ·
-  <a href="https://github.com/nexus-united-species/terminal/discussions">Diskussionen / Discussions</a>
+  <a href="https://github.com/nexus-united-species/oneapp/discussions">Diskussionen / Discussions</a>
 </p>
 
 <p align="center">
@@ -137,7 +137,7 @@ Danach kann Quadratic Voting gemäß [G2 v1.5](docs/specs/governance/G2_Spezifik
 
 ### Mitmachen
 
-Fehler und Verbesserungsvorschläge sind als [Issue](https://github.com/nexus-united-species/oneapp/issues) willkommen, Fragen und Ideen in den [Diskussionen](https://github.com/nexus-united-species/terminal/discussions). Beiträge sollten klein, nachvollziehbar und mit Tests versehen sein – siehe den [Leitfaden für Beiträge](https://github.com/nexus-united-species/.github/blob/main/CONTRIBUTING.md) und den [Verhaltenskodex](https://github.com/nexus-united-species/.github/blob/main/CODE_OF_CONDUCT.md). Zusätzlich gelten die Datenverlust- und Sync-Regeln aus [CLAUDE.md](CLAUDE.md).
+Fehler und Verbesserungsvorschläge sind als [Issue](https://github.com/nexus-united-species/oneapp/issues) willkommen, Fragen und Ideen in den [Diskussionen](https://github.com/nexus-united-species/oneapp/discussions). Beiträge sollten klein, nachvollziehbar und mit Tests versehen sein – siehe den [Leitfaden für Beiträge](https://github.com/nexus-united-species/.github/blob/main/CONTRIBUTING.md) und den [Verhaltenskodex](https://github.com/nexus-united-species/.github/blob/main/CODE_OF_CONDUCT.md). Zusätzlich gelten die Datenverlust- und Sync-Regeln aus [CLAUDE.md](CLAUDE.md).
 
 ### Rechtliches
 
@@ -257,7 +257,7 @@ After that, quadratic voting according to [G2 v1.5](docs/specs/governance/G2_Spe
 
 ### Contributing
 
-Bugs and suggestions are welcome as [issues](https://github.com/nexus-united-species/oneapp/issues), questions and ideas in the [Discussions](https://github.com/nexus-united-species/terminal/discussions). Contributions should be small, traceable and come with tests – see the [contribution guide](https://github.com/nexus-united-species/.github/blob/main/CONTRIBUTING.md) and the [code of conduct](https://github.com/nexus-united-species/.github/blob/main/CODE_OF_CONDUCT.md). The data-loss and sync rules in [CLAUDE.md](CLAUDE.md) apply as well. Issues and pull requests in English or German are equally welcome.
+Bugs and suggestions are welcome as [issues](https://github.com/nexus-united-species/oneapp/issues), questions and ideas in the [Discussions](https://github.com/nexus-united-species/oneapp/discussions). Contributions should be small, traceable and come with tests – see the [contribution guide](https://github.com/nexus-united-species/.github/blob/main/CONTRIBUTING.md) and the [code of conduct](https://github.com/nexus-united-species/.github/blob/main/CODE_OF_CONDUCT.md). The data-loss and sync rules in [CLAUDE.md](CLAUDE.md) apply as well. Issues and pull requests in English or German are equally welcome.
 
 ### Legal
 
