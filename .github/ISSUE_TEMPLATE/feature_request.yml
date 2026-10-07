@@ -1,0 +1,33 @@
+name: "💡 Idee vorschlagen / Suggest an idea"
+description: "Eine neue Funktion oder Verbesserung vorschlagen. / Propose a new feature or improvement."
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **🇩🇪** Größere Ideen besprechen wir gerne zuerst in den [Diskussionen](https://github.com/nexus-united-species/terminal/discussions) oder in der [Community](https://community.nexus-terminal.org/).
+
+        **🇬🇧** We are happy to discuss larger ideas first in the [Discussions](https://github.com/nexus-united-species/terminal/discussions) or in the [community](https://community.nexus-terminal.org/).
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Welches Problem soll gelöst werden? / What problem should be solved?"
+      description: "Beschreibe die Situation aus Sicht der Menschen, die die App nutzen. / Describe the situation from the perspective of the people using the app."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Vorgeschlagene Lösung / Proposed solution"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternativen / Alternatives"
+      description: "Optional. Welche anderen Wege hast du bedacht? / Optional. What other approaches did you consider?"
+  - type: textarea
+    id: context
+    attributes:
+      label: "Weiterer Kontext / Additional context"
+      description: "Optional. Skizzen, Beispiele, Bezüge zu Charta oder Bauplan. / Optional. Sketches, examples, references to the charter or blueprint."

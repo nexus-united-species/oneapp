@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "💬 Fragen & Ideen / Questions & ideas"
+    url: https://github.com/nexus-united-species/terminal/discussions
+    about: "Fragen zur Bedienung und Ideen besprechen. / Ask questions about using the app and discuss ideas."
+  - name: "🌱 Community"
+    url: https://community.nexus-terminal.org/
+    about: "Austausch, Kreise und gemeinsame Projekte. / Exchange, circles and joint projects."
+  - name: "🔒 Sicherheitslücke melden / Report a security vulnerability"
+    url: https://github.com/nexus-united-species/.github/blob/main/SECURITY.md
+    about: "Bitte nicht öffentlich melden. / Please do not report publicly."
