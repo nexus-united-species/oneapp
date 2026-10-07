@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nexus-united-species/terminal/releases">Download</a> ·
+  <a href="https://github.com/nexus-united-species/oneapp/releases">Download</a> ·
   <a href="https://www.nexus-terminal.org/oneapp.html">Webseite / Website</a> ·
   <a href="https://community.nexus-terminal.org/">Community</a> ·
   <a href="https://github.com/nexus-united-species/terminal/discussions">Diskussionen / Discussions</a>
@@ -68,16 +68,18 @@ Die bestätigten Risiken und die Reihenfolge der Härtung stehen im [Projektstat
 
 **Android**
 
-1. `NexusOneApp_v0.2.0.apk` aus dem [aktuellen Release](https://github.com/nexus-united-species/terminal/releases) laden.
+1. `NexusOneApp_v0.2.0.apk` aus dem [aktuellen Release](https://github.com/nexus-united-species/oneapp/releases) laden.
 2. Die APK installieren; Android muss die Installation aus der gewählten Quelle erlauben.
 3. Die Seed-Phrase beim ersten Start offline auf Papier sichern.
 
 **Windows**
 
-1. `Setup_NexusOneApp_v0.2.0.exe` aus dem [aktuellen Release](https://github.com/nexus-united-species/terminal/releases) laden.
+1. `Setup_NexusOneApp_v0.2.0.exe` aus dem [aktuellen Release](https://github.com/nexus-united-species/oneapp/releases) laden.
 2. Den Installer ausführen und anschließend die Alpha-Hinweise beachten.
 
-Die Bedienungsanleitung liegt als [Markdown](docs/guides/Bedienungsanleitung.md) im Repository und als PDF im [Release](https://github.com/nexus-united-species/terminal/releases) vor.
+Die Bedienungsanleitung liegt als [Markdown](docs/guides/Bedienungsanleitung.md) im Repository und als PDF im [Release](https://github.com/nexus-united-species/oneapp/releases) vor.
+
+Ältere Versionen bis v0.1.11 liegen zusätzlich im [Archiv des Repositories `terminal`](https://github.com/nexus-united-species/terminal/releases).
 
 ### Entwicklung
 
@@ -186,16 +188,18 @@ Confirmed risks and the hardening order are documented in the [project status](d
 
 **Android**
 
-1. Download `NexusOneApp_v0.2.0.apk` from the [latest release](https://github.com/nexus-united-species/terminal/releases).
+1. Download `NexusOneApp_v0.2.0.apk` from the [latest release](https://github.com/nexus-united-species/oneapp/releases).
 2. Install the APK; Android must allow installation from the chosen source.
 3. On first launch, write your seed phrase down on paper and keep it offline.
 
 **Windows**
 
-1. Download `Setup_NexusOneApp_v0.2.0.exe` from the [latest release](https://github.com/nexus-united-species/terminal/releases).
+1. Download `Setup_NexusOneApp_v0.2.0.exe` from the [latest release](https://github.com/nexus-united-species/oneapp/releases).
 2. Run the installer and keep the alpha notices in mind.
 
-The user guide is available as [Markdown](docs/guides/Bedienungsanleitung.md) in this repository and as a PDF in the [release](https://github.com/nexus-united-species/terminal/releases) (both German for now).
+The user guide is available as [Markdown](docs/guides/Bedienungsanleitung.md) in this repository and as a PDF in the [release](https://github.com/nexus-united-species/oneapp/releases) (both German for now).
+
+Older versions up to v0.1.11 are also available in the [archive of the `terminal` repository](https://github.com/nexus-united-species/terminal/releases).
 
 ### Development
 
