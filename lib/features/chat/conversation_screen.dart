@@ -1176,7 +1176,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               Navigator.pop(ctx);
               await provider.deleteMessageLocally(msg, _convId);
               // Send Nostr Kind-5 deletion event
-              provider.publishNostrDeletion(msg.id);
+              provider.publishNostrDeletion(msg);
               await _refreshMessages();
             },
             child: const Text('Für alle löschen'),

@@ -48,6 +48,12 @@ class NostrTransport implements MessageTransport {
     this.peerTimeout = const Duration(minutes: 2),
   }) : _relayManager = relayManager ?? NostrRelayManager();
 
+  static final RegExp _nostrEventIdPattern =
+      RegExp(r'^[0-9a-fA-F]{64}$');
+
+  static bool isValidNostrEventId(String? value) =>
+      value != null && _nostrEventIdPattern.hasMatch(value);
+
   final String localDid;
   String localPseudonym;
   final NostrRelayManager _relayManager;
@@ -79,6 +85,34 @@ class NostrTransport implements MessageTransport {
 
   // Nostr pubkey hex → last presence timestamp (for timeout eviction)
   final Map<String, DateTime> _peerLastPresence = {};
+
+  // Internal message UUID → generated outer Nostr event ID.
+  final Map<String, String> _sentNostrEventIds = <String, String>{};
+  static const int _maxSentEventIds = 200;
+
+  void _rememberSentNostrEventId(String messageId, String eventId) {
+    if (!isValidNostrEventId(eventId)) return;
+    _sentNostrEventIds[messageId] = eventId;
+    while (_sentNostrEventIds.length > _maxSentEventIds) {
+      _sentNostrEventIds.remove(_sentNostrEventIds.keys.first);
+    }
+  }
+
+  String? consumeSentNostrEventId(String messageId) =>
+      _sentNostrEventIds.remove(messageId);
+
+  static NexusMessage _withWrapperId(
+    NexusMessage message,
+    NostrEvent event,
+  ) {
+    if (isValidNostrEventId(event.id)) {
+      return message.withNostrEventId(event.id);
+    }
+    final sanitizedMetadata = Map<String, dynamic>.from(
+      message.metadata ?? const <String, dynamic>{},
+    )..remove(NexusMessage.nostrEventIdMetaKey);
+    return message.copyWith(metadata: sanitizedMetadata);
+  }
 
   // Active relay subscriptions
   String? _dmSubId;
@@ -218,6 +252,7 @@ class NostrTransport implements MessageTransport {
   Stream<List<String>> get onFeedDelete => _feedDeleteController.stream;
 
   String? _feedSubId;
+  String? _reactionSubId;
 
   /// Dedicated author-based subscription for Kind-6 reposts.
   /// Public relays do NOT index Kind-6 by #t tags, so a tag-filtered sub
@@ -361,6 +396,10 @@ class NostrTransport implements MessageTransport {
       _relayManager.closeSubscription(_channelDiscoverySubId!);
     }
     if (_feedSubId != null) _relayManager.closeSubscription(_feedSubId!);
+    if (_reactionSubId != null) {
+      _relayManager.closeSubscription(_reactionSubId!);
+      _reactionSubId = null;
+    }
     if (_feedRepostSubId != null) _relayManager.closeSubscription(_feedRepostSubId!);
     if (_proposalSubId != null) _relayManager.closeSubscription(_proposalSubId!);
     if (_voteSubId != null) _relayManager.closeSubscription(_voteSubId!);
@@ -512,6 +551,14 @@ class NostrTransport implements MessageTransport {
   }
 
   /// Publishes a NIP-28 Kind-41 channel metadata update.
+  ///
+  /// The `e` tag, when present, MUST reference the real Nostr event ID of the
+  /// channel's Kind-40 creation event (`channelData['nostrEventId']`) — NEVER
+  /// the internal NEXUS channel UUID (`channelData['id']`). Channels created
+  /// locally by this device, or discovered from another device via Kind-40,
+  /// carry a real `nostrEventId` once linked (see [GroupChannel.nostrEventId]
+  /// and `_handleChannelCreateEvent`). Legacy or not-yet-linked channels omit
+  /// the `e` tag entirely rather than publish a UUID-based one.
   void publishChannelMetadata(Map<String, dynamic> channelData) {
     if (_keys == null) return;
     final isPublic = (channelData['isPublic'] as bool?) ?? true;
@@ -519,40 +566,64 @@ class NostrTransport implements MessageTransport {
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
       ..remove('members');
+    final nostrEventId = channelData['nostrEventId'] as String?;
+    final tags = <List<String>>[
+      ['t', channelData['nostrTag'] as String? ?? 'nexus-channel'],
+      ['t', 'nexus-channel'],
+      ['access', isPublic ? 'public' : 'private'],
+      ['discoverable', isDiscoverable ? 'true' : 'false'],
+    ];
+    if (isValidNostrEventId(nostrEventId)) {
+      tags.insert(0, ['e', nostrEventId!]);
+    } else {
+      print('[CHANNEL-META-PUB] No valid nostrEventId available — '
+          'publishing Kind-41 without e-tag (legacy/unlinked channel)');
+    }
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.channelMetadata,
       content: jsonEncode(publicData),
-      tags: [
-        ['e', channelData['id'] as String? ?? ''],
-        ['t', channelData['nostrTag'] as String? ?? 'nexus-channel'],
-        ['t', 'nexus-channel'],
-        ['access', isPublic ? 'public' : 'private'],
-        ['discoverable', isDiscoverable ? 'true' : 'false'],
-      ],
+      tags: tags,
     );
     _relayManager.publishFireAndForget(event);
     print('[NOSTR] Published Kind-41 channel metadata: ${channelData['name']}');
   }
 
-  /// Publishes a NIP-09 Kind-5 deletion request for [messageId].
+  /// Publishes a NIP-09 Kind-5 deletion request referencing the real Nostr
+  /// event ID [targetEventId] of the message being deleted.
   ///
-  /// Best-effort: relays may ignore the request, and clients that already
-  /// cached the message may not remove it automatically.
-  void publishDeletion(String messageId) {
+  /// [targetEventId] MUST be the 64-char hex Nostr event ID that was assigned
+  /// when the message was originally published (see [NexusMessage.nostrEventId])
+  /// — NEVER the internal NEXUS message UUID. A NIP-01 `e` tag containing a
+  /// UUID is invalid and gets rejected by compliant relays, which is exactly
+  /// the TD-36/F-001 failure mode this guard prevents.
+  ///
+  /// If [targetEventId] is missing or not a valid 64-hex ID (e.g. the message
+  /// was sent while offline, or predates this field), no event is published —
+  /// there is no safe fallback tag for this event type, so the deletion stays
+  /// local-only rather than emitting a malformed Kind-5 event.
+  ///
+  /// Best-effort even when valid: relays may ignore the request, and clients
+  /// that already cached the message may not remove it automatically.
+  void publishDeletion(String targetEventId) {
     if (_keys == null) return;
+    if (!isValidNostrEventId(targetEventId)) {
+      print('[MSG-DELETE] Refusing to publish: no valid Nostr event ID '
+          '(deletion stays local-only)');
+      return;
+    }
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.deletion,
       content: 'Nachricht gelöscht',
       tags: [
-        ['e', messageId],
+        ['e', targetEventId],
       ],
     );
     final connectedRelays =
         _relayManager.statuses.where((s) => s.state == RelayState.connected).length;
-    print('[MSG-DELETE] Publishing kind=5: msgId=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
-    print('[MSG-DELETE] e-tag: $messageId');
+    print('[MSG-DELETE] Publishing kind=5: eventId=${targetEventId.substring(0, 8)}…');
+    print('[MSG-DELETE] e-tag: $targetEventId');
     print('[MSG-DELETE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
     _relayManager.publishFireAndForget(event);
   }
@@ -709,21 +780,21 @@ class NostrTransport implements MessageTransport {
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
 
-  /// Publishes a NIP-25 Kind-7 reaction for [messageId].
-  void publishReaction(String messageId, String emoji) {
-    if (_keys == null) return;
+  /// Publishes a NIP-25 Kind-7 reaction for [targetEventId].
+  void publishReaction(String targetEventId, String emoji) {
+    if (_keys == null || !isValidNostrEventId(targetEventId)) return;
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.reaction,
       content: emoji,
       tags: [
-        ['e', messageId],
+        ['e', targetEventId],
       ],
     );
     final connectedRelays =
         _relayManager.statuses.where((s) => s.state == RelayState.connected).length;
-    print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${messageId.length >= 8 ? messageId.substring(0, 8) : messageId}…');
-    print('[REACTION-SEND] Tags: e=$messageId');
+    print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${targetEventId.substring(0, 8)}…');
+    print('[REACTION-SEND] Tags: e=$targetEventId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
     _relayManager.publishFireAndForget(event);
   }
@@ -1543,6 +1614,7 @@ class NostrTransport implements MessageTransport {
           ['t', nostrTag],
         ],
       );
+      _rememberSentNostrEventId(message.id, event.id);
       print('[NOSTR] Publishing Kind-42 channel=$channel '
           'id=${event.id.substring(0, 8)}…');
       _relayManager.publishFireAndForget(event);
@@ -1562,6 +1634,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(message.toJson()),
       tags: tags,
     );
+    _rememberSentNostrEventId(message.id, event.id);
     print('[NOSTR] Publishing broadcast kind=1 '
         'id=${event.id.substring(0, 8)}… tags=${event.tags.map((t) => t.join('=')).join(',')}');
     _relayManager.publishFireAndForget(event);
@@ -1599,6 +1672,7 @@ class NostrTransport implements MessageTransport {
         ['p', recipientNostrPubkey],
       ],
     );
+    _rememberSentNostrEventId(message.id, event.id);
     _relayManager.publishFireAndForget(event);
     print('[NOSTR] DM published, event id: ${event.id.substring(0, 8)}…');
   }
@@ -1954,6 +2028,17 @@ class NostrTransport implements MessageTransport {
     });
     print('[NOSTR] Feed sub: $_feedSubId');
 
+    // NIP-25 reactions contain an e-tag but do not require a Dorfplatz t-tag.
+    // Subscribe without #t so chat/channel reactions reach _handleReaction().
+    if (_reactionSubId != null) {
+      _relayManager.closeSubscription(_reactionSubId!);
+    }
+    _reactionSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.reaction],
+      'since': nowSeconds - 7 * 86400,
+    });
+    print('[NOSTR] Reaction sub (no #t filter): $_reactionSubId');
+
     // Author-based feed subscription: fetch own posts + known contacts' posts
     // from the last 30 days.  This restores posts after a seed-phrase restore
     // when the local DB is empty but Nostr still holds the events.
@@ -2294,13 +2379,11 @@ class NostrTransport implements MessageTransport {
     if (_keys == null) return;
     if (event.pubkey == _keys!.publicKeyHex) return; // own reaction
     final referencedEventId = event.tagValue('e');
-    if (referencedEventId == null) {
-      print('[REACTION-RECV] Kind-7 received but missing e-tag — ignored');
+    if (referencedEventId == null || !isValidNostrEventId(referencedEventId)) {
+      print('[REACTION-RECV] Kind-7 received with invalid e-tag — ignored');
       return;
     }
-    final shortTarget = referencedEventId.length >= 8
-        ? referencedEventId.substring(0, 8)
-        : referencedEventId;
+    final shortTarget = referencedEventId.substring(0, 8);
     final shortSender = event.pubkey.length >= 8
         ? event.pubkey.substring(0, 8)
         : event.pubkey;
@@ -2617,6 +2700,10 @@ class NostrTransport implements MessageTransport {
         ...data,
         '_nostr_pubkey': event.pubkey,
         '_created_at': event.createdAt,
+        // Real Kind-40 wire event ID, so the receiver can link
+        // GroupChannel.nostrEventId even for channels discovered from
+        // another device (previously only set for locally-created channels).
+        '_nostr_event_id': event.id,
       });
     } catch (e) {
       print('[CHANNEL-SYNC] ✗ Kind-40 parse FAILED: $e');
@@ -2629,7 +2716,10 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
       _learnPeer(event.pubkey, message.fromDid, message.metadata);
       _msgController.add(message);
     } catch (e) {
@@ -2657,7 +2747,10 @@ class NostrTransport implements MessageTransport {
       final senderPubBytes = Uint8List.fromList(_hexToBytes(event.pubkey));
       final plaintext = await _nip04Decrypt(event.content, senderPubBytes);
       final msgJson = jsonDecode(plaintext) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
 
       final msgType = message.metadata?['type'] as String?;
       print('[NOSTR] DM decrypted OK: ${message.fromDid} → ${message.toDid}'
@@ -2688,7 +2781,10 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = NexusMessage.fromJson(msgJson);
+      final message = _withWrapperId(
+        NexusMessage.fromJson(msgJson),
+        event,
+      );
       final didLen = message.fromDid.length;
       print('[NOSTR] Broadcast parsed OK: from=${message.fromDid.substring(0, didLen.clamp(0, 12))}… '
           'body="${message.body.length > 40 ? message.body.substring(0, 40) : message.body}"');

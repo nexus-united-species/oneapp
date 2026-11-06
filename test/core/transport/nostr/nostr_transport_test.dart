@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -55,6 +56,8 @@ class FakeRelayManager extends NostrRelayManager {
   void closeSubscription(String subId) {}
 
   void injectEvent(NostrEvent event) => _eventCtrl.add(event);
+
+  Future<void> close() => _eventCtrl.close();
 }
 
 // ── Fake transport (reused from transport_manager_test.dart pattern) ──────────
@@ -336,6 +339,319 @@ void main() {
       expect(fakeRelay.published.first.tagValue('t'), equals('nexus-mesh'));
 
       await transport.stop();
+    });
+  });
+
+  group('NostrTransport event references', () {
+    const aliceMnemonic =
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    const bobMnemonic =
+        'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong';
+    const validTargetEventId =
+        'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+    NostrKeys keysFor(String mnemonic) => NostrKeys.fromBip39Seed(
+          Uint8List.fromList(Bip39.mnemonicToSeed(mnemonic)),
+        );
+
+    Future<({NostrTransport transport, FakeRelayManager relay})>
+        startTransport() async {
+      final relay = FakeRelayManager();
+      final transport = NostrTransport(
+        localDid: 'did:key:alice',
+        localPseudonym: 'Alice',
+        relayManager: relay,
+      );
+      await transport.start(keysOverride: keysFor(aliceMnemonic));
+      relay.published.clear();
+      return (transport: transport, relay: relay);
+    }
+
+    Future<void> stopTransport(
+      NostrTransport transport,
+      FakeRelayManager relay,
+    ) async {
+      await transport.stop();
+      await relay.close();
+    }
+
+    test('outgoing Kind-42 associates UUID with its 64-hex wrapper ID',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final message = NexusMessage.create(
+        fromDid: 'did:key:alice',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#reaktionen',
+        body: 'Hallo Kanal',
+      );
+
+      await transport.sendMessage(message);
+
+      expect(relay.published, hasLength(1));
+      final wrapper = relay.published.single;
+      expect(wrapper.kind, NostrKind.channelMessage);
+      expect(NostrTransport.isValidNostrEventId(wrapper.id), isTrue);
+      expect(transport.consumeSentNostrEventId(message.id), wrapper.id);
+      expect(transport.consumeSentNostrEventId(message.id), isNull,
+          reason: 'The association is consumed when the provider persists it');
+
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-42 adds wrapper ID without replacing the UUID',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final original = NexusMessage.create(
+        fromDid: 'did:key:bob',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#reaktionen',
+        body: 'Hallo von Bob',
+      );
+      final wrapper = NostrEvent.create(
+        keys: keysFor(bobMnemonic),
+        kind: NostrKind.channelMessage,
+        content: jsonEncode(original.toJson()),
+        tags: const [
+          ['t', 'nexus-channel-reaktionen'],
+        ],
+      );
+      final received = Completer<NexusMessage>();
+      final subscription = transport.onMessageReceived.listen(received.complete);
+
+      relay.injectEvent(wrapper);
+      final enriched = await received.future.timeout(const Duration(seconds: 1));
+
+      expect(enriched.id, original.id);
+      expect(enriched.nostrEventId, wrapper.id);
+      expect(NostrTransport.isValidNostrEventId(enriched.nostrEventId), isTrue);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('publishReaction emits one Kind-7 with the exact valid e-tag',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishReaction(validTargetEventId, '👍');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, hasLength(1));
+      expect(relay.published.single.kind, NostrKind.reaction);
+      expect(relay.published.single.content, '👍');
+      expect(relay.published.single.tags, [
+        ['e', validTargetEventId],
+      ]);
+
+      await stopTransport(transport, relay);
+    });
+
+    test('publishReaction rejects empty, UUID, and malformed targets',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      for (final invalidTarget in <String>[
+        '',
+        '550e8400-e29b-41d4-a716-446655440000',
+        'gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg',
+        'abc123',
+      ]) {
+        transport.publishReaction(invalidTarget, '👍');
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, isEmpty);
+
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-7 dispatches only a valid 64-hex e-tag', () async {
+      final (:transport, :relay) = await startTransport();
+      final reactions = <Map<String, dynamic>>[];
+      final subscription = transport.onFeedReaction.listen(reactions.add);
+      final bobKeys = keysFor(bobMnemonic);
+
+      NostrEvent reactionWithTags(List<List<String>> tags) => NostrEvent.create(
+            keys: bobKeys,
+            kind: NostrKind.reaction,
+            content: '🔥',
+            tags: tags,
+          );
+
+      relay.injectEvent(reactionWithTags(const []));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', '550e8400-e29b-41d4-a716-446655440000'],
+      ]));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', 'not-hex'],
+      ]));
+      relay.injectEvent(reactionWithTags(const [
+        ['e', validTargetEventId],
+      ]));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reactions, hasLength(1));
+      expect(reactions.single['referencedEventId'], validTargetEventId);
+      expect(reactions.single['emoji'], '🔥');
+      expect(reactions.single['senderPubkey'], bobKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    // ── F-001 REWORK: message deletion (Kind-5, NIP-09) ───────────────────
+
+    test('publishDeletion emits one Kind-5 with the exact valid e-tag',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishDeletion(validTargetEventId);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, hasLength(1));
+      expect(relay.published.single.kind, NostrKind.deletion);
+      expect(relay.published.single.tags, [
+        ['e', validTargetEventId],
+      ]);
+
+      await stopTransport(transport, relay);
+    });
+
+    test(
+        'publishDeletion refuses empty, UUID, and malformed targets — no malformed event is published',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      for (final invalidTarget in <String>[
+        '',
+        '550e8400-e29b-41d4-a716-446655440000', // internal-UUID shape
+        'gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg',
+        'abc123',
+      ]) {
+        transport.publishDeletion(invalidTarget);
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, isEmpty,
+          reason: 'A UUID or malformed target must never become an e-tag; '
+              'no fallback Kind-5 event should be published either');
+
+      await stopTransport(transport, relay);
+    });
+
+    // ── F-001 REWORK: channel metadata (Kind-41, NIP-28) ──────────────────
+
+    test(
+        'publishChannelMetadata references the real Kind-40 event id when present',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishChannelMetadata({
+        'id': '550e8400-e29b-41d4-a716-446655440000', // internal channel UUID
+        'nostrEventId': validTargetEventId, // real Kind-40 wire event id
+        'name': '#teneriffa',
+        'nostrTag': 'nexus-channel-teneriffa',
+        'isPublic': true,
+        'isDiscoverable': true,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, hasLength(1));
+      final event = relay.published.single;
+      expect(event.kind, NostrKind.channelMetadata);
+      final eTags = event.tags.where((t) => t.isNotEmpty && t[0] == 'e');
+      expect(eTags, hasLength(1));
+      expect(eTags.single, ['e', validTargetEventId],
+          reason: 'The e-tag must be the real Kind-40 event id, never '
+              "channelData['id'] (the internal channel UUID)");
+
+      await stopTransport(transport, relay);
+    });
+
+    test(
+        'publishChannelMetadata omits the e-tag entirely when nostrEventId is missing — never falls back to the channel UUID',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishChannelMetadata({
+        'id': '550e8400-e29b-41d4-a716-446655440000',
+        // no 'nostrEventId' — legacy or not-yet-linked channel
+        'name': '#legacy',
+        'nostrTag': 'nexus-channel-legacy',
+        'isPublic': true,
+        'isDiscoverable': true,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(relay.published, hasLength(1),
+          reason: 'Kind-41 is still published — just without an e-tag');
+      final eTags = relay.published.single.tags
+          .where((t) => t.isNotEmpty && t[0] == 'e');
+      expect(eTags, isEmpty,
+          reason: 'No e-tag at all is correct; a UUID e-tag would not be');
+
+      await stopTransport(transport, relay);
+    });
+
+    test(
+        'publishChannelMetadata treats an invalid nostrEventId the same as a missing one',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishChannelMetadata({
+        'id': '550e8400-e29b-41d4-a716-446655440000',
+        'nostrEventId': '550e8400-e29b-41d4-a716-446655440000', // UUID shape
+        'name': '#legacy2',
+        'nostrTag': 'nexus-channel-legacy2',
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      final eTags = relay.published.single.tags
+          .where((t) => t.isNotEmpty && t[0] == 'e');
+      expect(eTags, isEmpty);
+
+      await stopTransport(transport, relay);
+    });
+
+    test(
+        'incoming Kind-40 channel-create event carries its real wire event id via onChannelAnnounced',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final announcements = <Map<String, dynamic>>[];
+      final subscription =
+          transport.onChannelAnnounced.listen(announcements.add);
+      final bobKeys = keysFor(bobMnemonic);
+
+      final wrapper = NostrEvent.create(
+        keys: bobKeys,
+        kind: NostrKind.channelCreate,
+        content: jsonEncode({
+          'id': '550e8400-e29b-41d4-a716-446655440000',
+          'name': '#discovered',
+          'nostrTag': 'nexus-channel-discovered',
+          'isPublic': true,
+          'isDiscoverable': true,
+        }),
+        tags: const [
+          ['t', 'nexus-channel-discovered'],
+          ['t', 'nexus-channel'],
+        ],
+      );
+
+      relay.injectEvent(wrapper);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(announcements, hasLength(1));
+      expect(announcements.single['_nostr_event_id'], wrapper.id,
+          reason: 'A channel discovered from another device must carry the '
+              'real Kind-40 wire event id so this device can later publish '
+              'a NIP-01-compliant Kind-41/Kind-5 e-tag for it too');
+      expect(NostrTransport.isValidNostrEventId(
+              announcements.single['_nostr_event_id'] as String?),
+          isTrue);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
     });
   });
 

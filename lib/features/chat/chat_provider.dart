@@ -48,6 +48,13 @@ import '../governance/delegation.dart';
 import '../governance/proposal_service.dart';
 import '../../services/invite_service.dart';
 
+/// Side effect invoked when an incoming Nostr reaction targets a local message.
+typedef ReactionNotifier = Future<void> Function({
+  required String title,
+  required String body,
+  String? payload,
+});
+
 /// ViewModel for the chat feature.
 ///
 /// Responsibilities:
@@ -58,7 +65,31 @@ import '../../services/invite_service.dart';
 ///   - Expose a per-conversation message list and peer list.
 ///   - Notify [ConversationService] on every message event.
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
-  ChatProvider() : _manager = TransportManager.instance;
+  /// [nostrTransport] and [reactionNotification] exist so the reaction path can
+  /// be exercised without a full transport stack.  Both default to the regular
+  /// production behaviour when omitted.
+  ChatProvider({
+    NostrTransport? nostrTransport,
+    ReactionNotifier? reactionNotification,
+  })  : _manager = TransportManager.instance,
+        _nostrTransport = nostrTransport,
+        _reactionNotification =
+            reactionNotification ?? _showReactionNotification {
+    if (nostrTransport != null) _subscribeToReactions(nostrTransport);
+  }
+
+  static Future<void> _showReactionNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) =>
+      NotificationService.instance.showGenericNotification(
+        title: title,
+        body: body,
+        payload: payload,
+      );
+
+  final ReactionNotifier _reactionNotification;
 
   final TransportManager _manager;
 
@@ -133,7 +164,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<List<NexusPeer>>? _peersSub;
   StreamSubscription<Map<String, dynamic>>? _channelAnnouncedSub;
   StreamSubscription<List<({String id, String? name})>>? _channelDeletedSub;
+  StreamSubscription<Map<String, dynamic>>? _reactionSub;
   Timer? _muteExpiryTimer;
+
+  /// Registers the incoming Kind-7 listener, replacing any previous one.
+  void _subscribeToReactions(NostrTransport transport) {
+    _reactionSub?.cancel();
+    _reactionSub = transport.onFeedReaction.listen(_handleIncomingReaction);
+  }
 
   // ── Initialization ─────────────────────────────────────────────────────────
 
@@ -189,7 +227,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _manager.registerTransport(_lanTransport!);
 
       // Nostr transport – internet fallback; started conditionally below.
-      _nostrTransport = NostrTransport(
+      _nostrTransport ??= NostrTransport(
         localDid: identity.did,
         localPseudonym: identity.pseudonym,
       );
@@ -202,7 +240,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .listen((data) => FeedService.instance.handleIncomingPost(data));
       _nostrTransport!.onFeedComment
           .listen((data) => FeedService.instance.handleIncomingComment(data));
-      _nostrTransport!.onFeedReaction.listen(_handleIncomingReaction);
+      _subscribeToReactions(_nostrTransport!);
       _nostrTransport!.onFeedDelete
           .listen((ids) => FeedService.instance.handleIncomingDelete(ids));
 
@@ -474,6 +512,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         isPublic: (data['isPublic'] as bool?) ?? true,
         isDiscoverable: (data['isDiscoverable'] as bool?) ?? true,
         nostrTag: nostrTag,
+        // Real Kind-40 creation event ID, so this device can later publish a
+        // NIP-01-compliant Kind-41/Kind-5 e-tag for this channel too — not
+        // just the device that originally created it.
+        nostrEventId: data['_nostr_event_id'] as String?,
       );
 
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
@@ -1730,11 +1772,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
 
-    // Optimistic local cache update – always use plaintext local message.
+    // Optimistic local cache update – always use plaintext local message, but
+    // retain the outer Nostr event ID produced from the wire copy.
+    final storedMsg = _withSentNostrEventId(localMsg);
     final convId = _conversationId(recipientDid, myDid);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(localMsg);
-    await _persistMessage(convId, localMsg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -1782,9 +1826,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(msg);
-    await _persistMessage(NexusMessage.broadcastDid, msg);
+    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
+    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -1853,12 +1898,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           )
         : wireMsg;
 
+    final storedMsg = _withSentNostrEventId(localMsg);
+
     _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(localMsg);
-    await _persistMessage(name, localMsg);
+    _conversationCache[name]!.add(storedMsg);
+    await _persistMessage(name, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
+  }
+
+  /// Attaches the outer Nostr event ID generated for [message] while it was
+  /// published, so later Kind-7 reactions can reference a real NIP-01 event ID
+  /// instead of the internal UUID.  Returns [message] unchanged when no valid
+  /// association exists (offline send, non-Nostr transport, legacy message).
+  NexusMessage _withSentNostrEventId(NexusMessage message) {
+    final eventId = _nostrTransport?.consumeSentNostrEventId(message.id);
+    if (!NostrTransport.isValidNostrEventId(eventId)) return message;
+    return message.withNostrEventId(eventId!);
   }
 
   /// Joins [channel] and subscribes to its Nostr tag.
@@ -2033,9 +2090,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ? NexusMessage.broadcastDid
         : _conversationId(recipientDid, myDid);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(msg);
-    await _persistMessage(convId, msg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2062,19 +2120,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _manager.sendMessage(msg, recipientDid: recipientDid);
 
     final convId = _conversationId(recipientDid, myDid);
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(msg);
-    await _persistMessage(convId, msg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
   }
 
-  /// Publishes a Nostr Kind-5 deletion event for [messageId].
+  /// Publishes a Nostr Kind-5 deletion event referencing [message]'s real
+  /// Nostr event ID.
   ///
-  /// Best-effort: relays may not honour the request, and clients that already
-  /// cached the message will not remove it automatically.
-  void publishNostrDeletion(String messageId) {
-    _nostrTransport?.publishDeletion(messageId);
+  /// Takes the full [NexusMessage] (not a bare ID string) so the correct
+  /// [NexusMessage.nostrEventId] is used rather than the internal UUID
+  /// (`message.id`) — passing the UUID would produce an invalid NIP-01 `e`
+  /// tag that compliant relays reject (TD-36/F-001). If the message has no
+  /// valid Nostr event ID yet (e.g. sent while offline, or a legacy message),
+  /// the deletion stays local-only — no event is published.
+  ///
+  /// Best-effort even when valid: relays may not honour the request, and
+  /// clients that already cached the message will not remove it automatically.
+  void publishNostrDeletion(NexusMessage message) {
+    final eventId = message.nostrEventId;
+    if (!NostrTransport.isValidNostrEventId(eventId)) {
+      print('[MSG-DELETE] No valid Nostr event ID for msgId=${message.id} '
+          '— deletion stays local-only');
+      return;
+    }
+    _nostrTransport?.publishDeletion(eventId!);
   }
 
   /// Publishes a Kind-5 deletion event for a cell (NIP-09 `a`-tag approach).
@@ -2186,9 +2259,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
 
     final convId = _conversationId(recipientDid, myDid);
+    final storedMsg = _withSentNostrEventId(localMsg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(localMsg);
-    await _persistMessage(convId, localMsg);
+    _conversationCache[convId]!.add(storedMsg);
+    await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2241,9 +2315,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(msg);
-    await _persistMessage(NexusMessage.broadcastDid, msg);
+    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
+    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
     ConversationService.instance.notifyUpdate();
 
     notifyListeners();
@@ -2272,9 +2347,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
+
     _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(msg);
-    await _persistMessage(name, msg);
+    _conversationCache[name]!.add(storedMsg);
+    await _persistMessage(name, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
   }
@@ -2327,14 +2404,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _manager.sendMessage(msg);
 
+    final storedMsg = _withSentNostrEventId(msg);
+
     _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(msg);
-    await _persistMessage(name, msg);
+    _conversationCache[name]!.add(storedMsg);
+    await _persistMessage(name, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
   }
 
   /// Adds an emoji reaction to a channel message.
+  ///
+  /// The local reaction row stays keyed by the internal [messageId] UUID, but
+  /// the Kind-7 event is only published when the message carries a real
+  /// 64-hex Nostr event ID.  Legacy messages without that association stay
+  /// local-only; the UUID is never used as an `e` tag.
   Future<void> addChannelReaction(String messageId, String emoji) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
     await PodDatabase.instance.upsertReaction(
@@ -2342,8 +2426,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       emoji: emoji,
       reactorDid: myDid,
     );
-    _nostrTransport?.publishReaction(messageId, emoji);
+
+    final nostrEventId = _findCachedMessage(messageId)?.nostrEventId;
+    if (NostrTransport.isValidNostrEventId(nostrEventId)) {
+      _nostrTransport?.publishReaction(nostrEventId!, emoji);
+    } else {
+      print('[REACTION-SEND] No valid Nostr event ID for msgId=$messageId '
+          '— reaction stays local-only');
+    }
     notifyListeners();
+  }
+
+  /// Returns the cached message with the internal UUID [messageId], if any.
+  NexusMessage? _findCachedMessage(String messageId) {
+    for (final messages in _conversationCache.values) {
+      for (final message in messages) {
+        if (message.id == messageId) return message;
+      }
+    }
+    return null;
   }
 
   /// Removes an emoji reaction from a channel message.
@@ -2375,20 +2476,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final senderPubkey = data['senderPubkey'] as String?;
     final emoji = data['emoji'] as String? ?? '👍';
     if (referencedId == null || senderPubkey == null) return;
+    if (!NostrTransport.isValidNostrEventId(referencedId)) return;
 
-    final shortTarget = referencedId.length >= 8
-        ? referencedId.substring(0, 8)
-        : referencedId;
+    final shortTarget = referencedId.substring(0, 8);
     final cacheSize = _conversationCache.values.fold<int>(0, (s, v) => s + v.length);
     print('[REACTION-RECV] Chat-Handler: emoji=$emoji target=$shortTarget… '
         '(searching $cacheSize msgs in ${_conversationCache.length} convs)');
 
-    // Search conversation cache for a message authored by me with this ID.
+    // Search conversation cache for a message authored by me whose outer Nostr
+    // event ID matches.  The internal UUID must never match here.
     String? convId;
     bool isChannel = false;
     for (final entry in _conversationCache.entries) {
       final msg = entry.value.cast<NexusMessage?>().firstWhere(
-            (m) => m!.id == referencedId && m.fromDid == myDid,
+            (m) => m!.nostrEventId == referencedId && m.fromDid == myDid,
             orElse: () => null,
           );
       if (msg != null) {
@@ -2416,7 +2517,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Trigger 3: channel reaction
       if (await NotificationSettings.channelReactions()) {
         final channelLabel = convId; // e.g. "#teneriffa"
-        NotificationService.instance.showGenericNotification(
+        await _reactionNotification(
           title: '$senderName reagierte in $channelLabel',
           body: emoji,
           payload: convId,
@@ -2425,7 +2526,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       // Trigger 1: direct message reaction
       if (await NotificationSettings.chatReactions()) {
-        NotificationService.instance.showGenericNotification(
+        await _reactionNotification(
           title: '$senderName hat reagiert',
           body: '$emoji auf deine Nachricht',
           payload: convId,
@@ -2709,9 +2810,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _msgSub?.cancel();
     _peersSub?.cancel();
+    _reactionSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
-    _manager.stop();
+    // Only an initialized provider owns a running manager lifecycle. This also
+    // keeps constructor-injected transports usable in focused, uninitialized
+    // provider instances without starting an unawaited global manager stop.
+    if (_initialized) _manager.stop();
     super.dispose();
   }
 }

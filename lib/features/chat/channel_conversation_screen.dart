@@ -688,7 +688,7 @@ class _ChannelConversationScreenState
               Navigator.pop(ctx);
               await provider.deleteMessageLocally(
                   msg, _channel.conversationId);
-              provider.publishNostrDeletion(msg.id);
+              provider.publishNostrDeletion(msg);
               await _refreshMessages();
             },
             child: const Text('Für alle löschen'),
