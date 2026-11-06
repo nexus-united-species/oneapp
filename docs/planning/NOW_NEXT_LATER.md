@@ -1,6 +1,6 @@
 # N.E.X.U.S. OneApp — Entscheidungsvorlage NOW / NEXT / LATER
 
-Stand: 18. August 2026
+Stand: 18. August 2026, fortgeschrieben 6. November 2026
 Grundlage: [ARCHITECTURE_REALITY.md](../current/ARCHITECTURE_REALITY.md) ·
 [decisions/](../decisions/) · [ANTWORT_ARCHITEKTUR_BRIEFING.md](ANTWORT_ARCHITEKTUR_BRIEFING.md) ·
 [Audit Lauf A](../audits/2026-07/AUDIT_LAUF_A.md) · [Lauf B](../audits/2026-07/AUDIT_LAUF_B.md)
@@ -10,6 +10,78 @@ Architekturrunde nicht in eine dritte, vierte Diskussionsrunde läuft. Diese
 Vorlage ersetzt keine Detaildokumente, sie ordnet sie nur ein.
 
 **Leitsatz bleibt:** Messenger First — Modular Underneath. Kein Rewrite.
+
+---
+
+## Projektablauf ab 6. November 2026 (Wiederaufnahme)
+
+Nach der Pause wurde der Stand neu gesichtet. Die Blöcke NOW, NEXT-A und
+NEXT-B unten bleiben gültig; dieser Ablauf ordnet sie in Phasen und ergänzt
+die neuen Befunde (TD-57 bis TD-65 in [TECH_DEBT.md](../current/TECH_DEBT.md)).
+
+### Phase 0 – Aufräumen und Ausgangslage
+
+1. F-001 vom Zweig `integrate/F-001-nostr-event-id` zusammenführen;
+   Arbeitszweig auf den Stand von `origin/main` bringen.
+2. Teststand und `flutter analyze` neu messen.
+3. **Update-Prüfung reparieren (TD-61):**
+   - `version.json` auf eine eigene Domain legen (z. B.
+     `start.nexus-terminal.org/oneapp/version.json`), damit künftige
+     GitHub-Umbauten nichts mehr brechen. Braucht die Freigabe der
+     Server-Betreuer.
+   - Download-Links auf die Releases in `nexus-united-species/oneapp`
+     umstellen; Einladungs-Ersatzlink und README ebenso.
+   - Prüfen, ob schon installierte v0.2.0-Apps über eine Pages-Seite unter
+     dem alten Konto `project-nexus-official` erreichbar sind, ohne die
+     GitHub-Weiterleitungen zu brechen (dort kein Repository `terminal`
+     oder `oneapp` anlegen). Sonst Tester über das Portal informieren.
+4. Zwei-Geräte-Diagnose Android/Windows mit Logdatei: Kontoumzug per Seed
+   und Chat in beide Richtungen.
+5. Verwaiste Agenten-Zweige und Worktrees aufräumen – nur nach Freigabe.
+
+**Fertig, wenn:** sauberer Hauptstand, gemessene Ausgangswerte,
+Diagnose-Log liegt vor, neue Update-Adresse im Code.
+
+### Phase 1 – Konto und Sync
+
+1. Relay-Basis: neue Standardliste (eigenes Relay, `relay.damus.io`,
+   `nos.lol`; ohne `relay.snort.social` und `relay.nostr.band`), eigenes
+   strfry-Relay auf dem VPS, selbst eingetragene Relays speichern,
+   Hintergrunddienst mit mehreren Relays (TD-47).
+2. Kontoumzug: Backup-Datei auswählbar, Name aus Backup übernehmen, eigenes
+   Profil vor dem ersten Veröffentlichen von Relays holen (TD-58, TD-59).
+3. Nachrichten-Sync: selbst gesendete DMs abonnieren, Verlauf für neue
+   Geräte nachladen, Mitgliedschaften länger zurück (TD-57, TD-63, TD-33).
+4. Kontakte und Kanalliste verschlüsselt zwischen eigenen Geräten abgleichen
+   (TD-60).
+5. Restliche NOW-Blocker: F-002, F-003, TD-39.
+
+**Fertig, wenn:** Zwei-Geräte-Test bestanden und dokumentiert → v0.2.1.
+
+### Phase 2 – Mehrsprachigkeit (teilweise parallel zu Phase 1)
+
+Lokalisierungsgrundlage und Sprachwahl; Texte herauslösen (Onboarding und
+Messenger zuerst); DE und EN, dann ES, FR, RU; Begriffsglossar abgestimmt
+mit der Webseite; Prüfung durch Muttersprachler aus der Community (TD-62).
+
+### Phase 3 – Messenger-Qualität
+
+Medienserver mit Verschlüsselung (TD-64), NIP-17 für Direktnachrichten,
+Fehlermeldungen aus dem Testen, Desktop-Overflow und TD-25,
+Messenger-first-Modus, Benachrichtigungen → v0.3.0 Community-Alpha.
+**Vorher entschieden:** [Zielbild Gemeinschaften, Portal und OneApp](ZIELBILD_GEMEINSCHAFTEN_HUMHUB_ONEAPP.md),
+offene Entscheidungen 1–4.
+
+### Phase 4 – Fundament für Module
+
+ADR-0001, ADR-0004, ADR-0005; Senderautorisierung (TD-40) und
+Hash-Prüfung (TD-41); Modulrahmen mit je Gemeinschaft zuschaltbaren
+Werkzeugen.
+
+### Phase 5 – Module
+
+Gemeinschaften und Abstimmungen als Modul, Marktplatz, AETHER nach fertiger
+Spezifikation, Brücke zum Portal.
 
 ---
 
@@ -236,8 +308,9 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Ausschließlich NOW abarbeiten: F-001, F-002, F-003, TD-39. Parallel können die
+Stand 6. November 2026: **Phase 0** des Projektablaufs oben abarbeiten. Die
+NOW-Punkte F-002, F-003 und TD-39 folgen in Phase 1. Parallel können die
 fünf ADRs besprochen und entschieden werden — ihre Umsetzung beginnt erst
-danach, und zwar mit NEXT-A.
+danach.
 
 Danach: dieses Dokument fortschreiben, nicht neu aufsetzen.
