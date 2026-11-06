@@ -17,7 +17,7 @@ sind keine Arbeitsgrundlage für neue Änderungen.
 | [Was nicht angefasst werden sollte](current/DO_NOT_TOUCH.md) | Bereiche, die gut genug sind und geschützt werden | aktuell, Stand 18.08.2026 |
 | [Architekturentscheidungen](decisions/) | Offene und getroffene Grundsatzentscheidungen (ADRs) | 5 Entscheidungen offen |
 | [Release Readiness](current/RELEASE_READINESS.md) | Blocker und Reihenfolge vor dem nächsten Alpha-Release | aktuell |
-| [Tech Debt](current/TECH_DEBT.md) | Bestätigte technische Schulden mit Priorität | aktuell |
+| [Tech Debt](current/TECH_DEBT.md) | Bestätigte technische Schulden mit Priorität | aktuell, ergänzt 06.11.2026 (TD-57 bis TD-65) |
 | [Bedienungsanleitung](guides/Bedienungsanleitung.md) | Nutzeranleitung für v0.2.0-alpha | aktuell, Alpha-Hinweise beachten |
 | [Testanleitung](guides/testing/TESTING.md) | Reproduzierbarer Testeinstieg und bekannte Baseline | aktuell |
 | [G2-Spezifikation v1.5](specs/governance/G2_Spezifikation_v1.5.md) | Konsolidierte Governance-Spezifikation | aktuell |
@@ -30,10 +30,11 @@ sind keine Arbeitsgrundlage für neue Änderungen.
 | [AETHER-Entwurf v0.4](specs/drafts/AETHER_Spezifikation_v0.4.docx) | Noch nicht freigegebene AETHER-Spezifikation | Entwurf, AETHER ist nicht implementiert |
 | [Architektur-Briefing 2026](planning/ARCHITEKTUR_BRIEFING_2026.md) | Quellfassung des strategischen Briefings: Messenger First, Modular Underneath, Reality-Audit-Auftrag | Auftragsgrundlage seit 18.08.2026 |
 | [Antwort auf das Briefing](planning/ANTWORT_ARCHITEKTUR_BRIEFING.md) | Architektenantwort: §50-Fragen, Widerspruch, Bewertung einer Kooperation mit Web of Trust (zweimal korrigiert) | Diskussionsgrundlage |
-| [NOW/NEXT/LATER](planning/NOW_NEXT_LATER.md) | Kompakte Entscheidungsvorlage: Release-Blocker, die 5 ADRs, zurückgestellte Themen | **Arbeitsgrundlage für den nächsten Schritt** |
+| [NOW/NEXT/LATER](planning/NOW_NEXT_LATER.md) | Projektablauf Phase 0–5 (seit 06.11.2026), Release-Blocker, die 5 ADRs, zurückgestellte Themen | **Arbeitsgrundlage für den nächsten Schritt** |
 | [Übergabe an ChatGPT](planning/UEBERGABE_CHATGPT.md) | Welche Dokumente die Strategieberatung braucht, was verifiziert ist, was sich zuletzt geändert hat | Handreichung |
 | [Briefing-Abdeckung](planning/BRIEFING_ABDECKUNG.md) | Welche Briefing-Anforderung ist erfüllt, offen oder bewusst verworfen | **fortzuschreiben nach jedem Arbeitsblock** |
 | [Messenger-first-Modus](planning/messenger-first-modus.md) | Analyse einer möglichen Fokusänderung | offene Planungsentscheidung |
+| [Zielbild Gemeinschaften, Portal und OneApp](planning/ZIELBILD_GEMEINSCHAFTEN_HUMHUB_ONEAPP.md) | Wie HumHub-Kreise, Übersicht, Kanäle, Dorfplatz und Gemeinschaften zusammengeführt werden; Übergangspfad zur Ablösung des Portals | Entwurf, Stand 06.11.2026; vor Phase 3 zu entscheiden |
 | [Research](research/) | Analysen fremder Projekte: Web of Trust, Real Life Stack, SourceLess | Recherche, keine Entscheidung |
 | [Bauplan-Extrakt V13.1](vision/BAUPLAN_V13.1_extrakt.txt) | Langfristige Vision | Vision, keine Ist-Beschreibung |
 | [Legacy-Chat-Test](guides/testing/legacy-chat-test.md) | Frühere Zwei-Geräte-LAN-Anleitung | Referenz; aktuelle Anleitung hat Vorrang |
