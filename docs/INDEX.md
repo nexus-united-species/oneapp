@@ -34,6 +34,7 @@ sind keine Arbeitsgrundlage für neue Änderungen.
 | [Übergabe an ChatGPT](planning/UEBERGABE_CHATGPT.md) | Welche Dokumente die Strategieberatung braucht, was verifiziert ist, was sich zuletzt geändert hat | Handreichung |
 | [Briefing-Abdeckung](planning/BRIEFING_ABDECKUNG.md) | Welche Briefing-Anforderung ist erfüllt, offen oder bewusst verworfen | **fortzuschreiben nach jedem Arbeitsblock** |
 | [Messenger-first-Modus](planning/messenger-first-modus.md) | Analyse einer möglichen Fokusänderung | offene Planungsentscheidung |
+| [Zielbild Gemeinschaften, Portal und OneApp](planning/ZIELBILD_GEMEINSCHAFTEN_HUMHUB_ONEAPP.md) | Wie HumHub-Kreise, Übersicht, Kanäle, Dorfplatz und Gemeinschaften zusammengeführt werden; Übergangspfad zur Ablösung des Portals | Entwurf, Stand 06.11.2026; vor Phase 3 zu entscheiden |
 | [Research](research/) | Analysen fremder Projekte: Web of Trust, Real Life Stack, SourceLess | Recherche, keine Entscheidung |
 | [Bauplan-Extrakt V13.1](vision/BAUPLAN_V13.1_extrakt.txt) | Langfristige Vision | Vision, keine Ist-Beschreibung |
 | [Legacy-Chat-Test](guides/testing/legacy-chat-test.md) | Frühere Zwei-Geräte-LAN-Anleitung | Referenz; aktuelle Anleitung hat Vorrang |
