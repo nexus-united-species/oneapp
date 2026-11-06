@@ -3,7 +3,7 @@
 **Version: v0.2.0-alpha**
 Für alle, die nicht nur konsumieren — sondern mitbauen.
 
-github.com/project-nexus-official/oneapp
+github.com/nexus-united-species/oneapp
 
 ---
 
@@ -1121,7 +1121,7 @@ Noch nicht. N.E.X.U.S. ist für Android und Windows verfügbar. iOS ist in Planu
 
 **Meine App zeigt einen Fehler — was tun?**
 
-Prüfe zuerst ob ein Update verfügbar ist. Bleibt der Fehler: GitHub → github.com/project-nexus-official/oneapp → Issue melden. Du hilfst damit der gesamten Menschheitsfamilie.
+Prüfe zuerst ob ein Update verfügbar ist. Bleibt der Fehler: GitHub → github.com/nexus-united-species/oneapp → Issue melden. Du hilfst damit der gesamten Menschheitsfamilie.
 
 ---
 
@@ -1248,7 +1248,7 @@ Wir reformieren nicht. Wir bauen parallel. Dezentral statt Zentralmacht. Vertrau
 - 🎵 **TikTok** — tiktok.com/@n.e.x.u.s._navigator
 - 🐦 **X (Twitter)** — x.com/nexusxnavigator
 - 🦋 **Bluesky** — bsky.app/profile/nexus-navigator.bsky.social
-- 💻 **GitHub (OneApp)** — github.com/project-nexus-official/oneapp
+- 💻 **GitHub (OneApp)** — github.com/nexus-united-species/oneapp
 
 ---
 

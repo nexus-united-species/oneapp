@@ -117,6 +117,27 @@ void main() {
       SharedPreferences.setMockInitialValues({});
     });
 
+    test('fetches version.json from the oneapp repository (TD-61)', () async {
+      Uri? requested;
+      final client = MockClient((request) async {
+        requested = request.url;
+        return http.Response(
+          jsonEncode({'version': '0.2.0', 'version_code': 12}),
+          200,
+        );
+      });
+
+      await UpdateService.instance.checkForUpdateWithMock(
+        client: client,
+        currentVersionCode: 12,
+      );
+
+      expect(
+        requested.toString(),
+        'https://raw.githubusercontent.com/nexus-united-species/oneapp/main/version.json',
+      );
+    });
+
     test('returns UpdateInfo when remote version_code is higher', () async {
       final client = _mockClient(
         version: '0.2.0',

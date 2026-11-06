@@ -94,7 +94,7 @@ Verantwortlich: Josh Richman
 | 💬 Telegram Gruppe | https://t.me/Nexus_Project_official |
 | 📺 YouTube | https://www.youtube.com/@Project-N.e.x.u.s-Official |
 | 📖 Roman-Trilogie | https://www.amazon.de/dp/B0GGL1ZD7B |
-| 🐙 GitHub | https://github.com/project-nexus-official/oneapp |
+| 🐙 GitHub | https://github.com/nexus-united-species/oneapp |
 
 ---
 *N.E.X.U.S. — Betriebssystem für eine souveräne Zivilisation.*  

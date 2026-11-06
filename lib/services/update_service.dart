@@ -44,8 +44,11 @@ class UpdateService {
   UpdateService._();
   static final instance = UpdateService._();
 
+  // Served from the repository root of the oneapp repo. GitHub Pages URLs do
+  // not redirect after a repository transfer (TD-61); move this to an own
+  // domain once one is approved.
   static const _kVersionJsonUrl =
-      'https://project-nexus-official.github.io/terminal/downloads/version.json';
+      'https://raw.githubusercontent.com/nexus-united-species/oneapp/main/version.json';
   static const _kLastCheckKey = 'nexus_last_update_check';
   static const _kLastDialogKey = 'last_update_dialog_shown';
   static const _kSkippedVersionKey = 'nexus_skipped_version';
@@ -204,7 +207,7 @@ class UpdateService {
     await _fetchAndEvaluate();
   }
 
-  /// Fetches version.json from GitHub Pages, compares version_code with the
+  /// Fetches version.json from the oneapp repository, compares version_code with the
   /// installed build number, and updates [current] / [updateStream] if a newer
   /// version is available and the 24-hour dialog throttle allows it.
   ///
