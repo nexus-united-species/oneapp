@@ -74,6 +74,31 @@ void main() {
     });
   });
 
+  group('reactorIdsForSigner', () {
+    Set<String> ids(String signer) => reactorIdsForSigner(
+          signerPubkey: signer,
+          myDid: _myDid,
+          myNostrPubkey: _myKey,
+          contactDidForNostrPubkey: _contacts,
+        );
+
+    test('covers the own key and my DID', () {
+      expect(ids(_myKey), {_myKey, _myDid});
+    });
+
+    test('covers a contact by key and DID', () {
+      expect(ids(_bobKey), {_bobKey, _bobDid});
+    });
+
+    test('covers only the key for an unknown signer', () {
+      expect(ids(_malloryKey), {_malloryKey});
+    });
+
+    test('is empty for an empty signer', () {
+      expect(ids(''), isEmpty);
+    });
+  });
+
   group('normalizeReactionContent', () {
     test('keeps an emoji', () {
       expect(normalizeReactionContent('🔥'), '🔥');

@@ -2433,19 +2433,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// local-only; the UUID is never used as an `e` tag.
   Future<void> addChannelReaction(String messageId, String emoji) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
-    await PodDatabase.instance.upsertReaction(
-      messageId: messageId,
-      emoji: emoji,
-      reactorDid: myDid,
-    );
-
     final nostrEventId = _findCachedMessage(messageId)?.nostrEventId;
+    String? reactionEventId;
     if (NostrTransport.isValidNostrEventId(nostrEventId)) {
-      _nostrTransport?.publishReaction(nostrEventId!, emoji);
+      reactionEventId = _nostrTransport?.publishReaction(nostrEventId!, emoji);
     } else {
       print('[REACTION-SEND] No valid Nostr event ID for msgId=$messageId '
           '— reaction stays local-only');
     }
+    // The reaction's own event ID lets a later withdrawal reach the others.
+    await PodDatabase.instance.upsertReaction(
+      messageId: messageId,
+      emoji: emoji,
+      reactorDid: myDid,
+      nostrEventId: reactionEventId,
+    );
     notifyListeners();
   }
 
@@ -2505,14 +2507,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
-  /// Removes an emoji reaction from a channel message.
+  /// Removes an own emoji reaction and, if it was published, asks the others
+  /// to remove it too via a Kind-5 for the reaction event (TD-71).
   Future<void> removeChannelReaction(String messageId, String emoji) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
+    final reactionEventId = await PodDatabase.instance.getReactionEventId(
+      messageId: messageId,
+      emoji: emoji,
+      reactorDid: myDid,
+    );
     await PodDatabase.instance.deleteReaction(
       messageId: messageId,
       emoji: emoji,
       reactorDid: myDid,
     );
+    if (NostrTransport.isValidNostrEventId(reactionEventId)) {
+      _nostrTransport?.publishDeletion(reactionEventId!);
+    } else {
+      print('[REACTION-SEND] Withdrawn reaction was local-only — '
+          'nothing to publish');
+    }
     notifyListeners();
   }
 
@@ -2831,6 +2845,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Deletes [msg] locally (soft delete – hidden from UI, stays in DB).
   Future<void> deleteMessageLocally(NexusMessage msg, String convId) async {
     await PodDatabase.instance.softDeleteMessage(msg.id);
+    await PodDatabase.instance.deleteReactionsForMessages({msg.id});
     _conversationCache[convId]?.removeWhere((m) => m.id == msg.id);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
@@ -2899,13 +2914,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    if (toDelete.isEmpty) return;
-    for (final messageId in toDelete) {
-      await PodDatabase.instance.softDeleteMessage(messageId);
+    // Withdrawn reactions (TD-71): only those recorded for the signer.
+    final withdrawn =
+        await PodDatabase.instance.deleteReactionsByNostrEventIdsFrom(
+      ids,
+      reactorIdsForSigner(
+        signerPubkey: request.authorPubkey,
+        myDid: myDid,
+        myNostrPubkey: myPubkey,
+        contactDidForNostrPubkey: _contactDidForNostrPubkey,
+      ),
+    );
+    if (withdrawn > 0) {
+      print('[REACTION-RECV] Withdrawn: $withdrawn reaction(s) by '
+          '$shortSigner…');
     }
-    print('[MSG-DELETE-RECV] Applied: ${toDelete.length} message(s) deleted '
-        'by $shortSigner…');
-    ConversationService.instance.notifyUpdate();
+
+    if (toDelete.isNotEmpty) {
+      for (final messageId in toDelete) {
+        await PodDatabase.instance.softDeleteMessage(messageId);
+      }
+      // Reactions must not outlive their message (TD-70).
+      await PodDatabase.instance.deleteReactionsForMessages(toDelete);
+      print('[MSG-DELETE-RECV] Applied: ${toDelete.length} message(s) '
+          'deleted by $shortSigner…');
+      ConversationService.instance.notifyUpdate();
+    }
+    if (toDelete.isEmpty && withdrawn == 0) return;
     notifyListeners();
   }
 

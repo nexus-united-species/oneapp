@@ -811,9 +811,11 @@ class NostrTransport implements MessageTransport {
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
 
-  /// Publishes a NIP-25 Kind-7 reaction for [targetEventId].
-  void publishReaction(String targetEventId, String emoji) {
-    if (_keys == null || !isValidNostrEventId(targetEventId)) return;
+  /// Publishes a NIP-25 Kind-7 reaction for [targetEventId] and returns the
+  /// reaction's own event ID (needed to withdraw it later via Kind-5), or
+  /// null if nothing was published.
+  String? publishReaction(String targetEventId, String emoji) {
+    if (_keys == null || !isValidNostrEventId(targetEventId)) return null;
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.reaction,
@@ -828,6 +830,7 @@ class NostrTransport implements MessageTransport {
     print('[REACTION-SEND] Tags: e=$targetEventId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
     _relayManager.publishFireAndForget(event);
+    return event.id;
   }
 
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7

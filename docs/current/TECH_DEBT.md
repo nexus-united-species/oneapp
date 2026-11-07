@@ -49,8 +49,8 @@ Release-Reihenfolge steht separat in
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen |
 | TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
-| TD-70 | Lokales Löschen lässt Reaktionen stehen | `deleteMessageLocally` setzt nur das Soft-Delete-Flag ([chat_provider.dart:2747](../../lib/features/chat/chat_provider.dart)); Reaktionen auf die Nachricht bleiben und werden im Kanal ohne Beitrag angezeigt (Android, 07.11.2026) |
-| TD-71 | Zurückgenommene Reaktionen und Reaktionen vom eigenen Zweitgerät werden nicht übertragen | `removeChannelReaction` löscht nur lokal und sendet kein Kind-5 ([chat_provider.dart](../../lib/features/chat/chat_provider.dart)); der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Ein beim Gegenüber angezeigtes Emoji bleibt also stehen, wenn man es zurücknimmt |
+| TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | Der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Wer mit derselben Identität auf zwei Geräten arbeitet, sieht seine Reaktion nur auf dem Gerät, auf dem er sie gesetzt hat. Vor einer Änderung muss der Dorfplatz eigene Reaktionen getrennt behandeln, sonst entstehen Doppelungen |
+| TD-72 | Dorfplatz-Löschpfad entfernt Reaktionen ohne Absenderprüfung | `FeedService.handleIncomingDelete` löscht jede Reaktion, deren Event-ID in einem beliebigen Kind-5 steht ([feed_service.dart](../../lib/features/dorfplatz/feed_service.dart), `deleteReactionsByNostrEventIds`); der Absender wird nicht weitergereicht. Betrifft seit TD-67 auch Chat- und Kanalreaktionen. Folge: Ein Fremder kann angezeigte Emojis entfernen, keine Nachrichten. Teil der Empfangsverifikation (TD-39) |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
 
 ## Wartbarkeit
@@ -124,6 +124,14 @@ Liste:
   angenommen, in Kanälen jeder Absender. Mehrfach zugestellte Events werden
   einmal gespeichert und einmal gemeldet; NIP-25 „+“ wird zu 👍, „-“ und
   überlange Texte werden verworfen. Neu: TD-71.
+- **TD-70 erledigt (07.11.2026, Gerätetest offen):** Wird eine Nachricht
+  gelöscht, lokal oder per „Für alle löschen“ vom Verfasser, werden ihre
+  Reaktionen mitgelöscht.
+- **Zurücknehmen von Reaktionen (bisher Teil von TD-71) erledigt, Gerätetest
+  offen:** Eine zurückgenommene eigene Reaktion wird per Kind-5 auf das
+  Reaktions-Event gemeldet und beim Gegenüber entfernt, aber nur, wenn der
+  Kind-5 vom Reagierenden selbst stammt. TD-71 umfasst nur noch das eigene
+  Zweitgerät. Neu: TD-72.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

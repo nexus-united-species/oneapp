@@ -2042,6 +2042,35 @@ class PodDatabase {
     );
   }
 
+  /// Deletes every reaction on the messages [messageIds] (TD-70).
+  Future<int> deleteReactionsForMessages(Set<String> messageIds) async {
+    if (messageIds.isEmpty) return 0;
+    final placeholders = List.filled(messageIds.length, '?').join(', ');
+    return _database.delete(
+      'message_reactions',
+      where: 'message_id IN ($placeholders)',
+      whereArgs: messageIds.toList(),
+    );
+  }
+
+  /// Deletes reactions whose own Nostr event ID is in [eventIds], but only
+  /// those recorded for one of [reactorIds] (TD-71: only the reactor may
+  /// withdraw a reaction). Returns the number of deleted rows.
+  Future<int> deleteReactionsByNostrEventIdsFrom(
+    Set<String> eventIds,
+    Set<String> reactorIds,
+  ) async {
+    if (eventIds.isEmpty || reactorIds.isEmpty) return 0;
+    final eventMarks = List.filled(eventIds.length, '?').join(', ');
+    final reactorMarks = List.filled(reactorIds.length, '?').join(', ');
+    return _database.delete(
+      'message_reactions',
+      where: 'nostr_event_id IN ($eventMarks) '
+          'AND reactor_did IN ($reactorMarks)',
+      whereArgs: [...eventIds, ...reactorIds],
+    );
+  }
+
   /// Returns reactions grouped by emoji: { '👍': ['did:key:...', ...] }
   Future<Map<String, List<String>>> getReactionsForMessage(String messageId) async {
     final rows = await _database.query(

@@ -44,3 +44,22 @@ String? resolveReactorId({
       message.fromDid == myDid ? message.toDid : message.fromDid;
   return contactDid != null && contactDid == partnerDid ? contactDid : null;
 }
+
+/// All reactor IDs that [resolveReactorId] may have recorded for
+/// [signerPubkey]. A Kind-5 signed by this key may only withdraw reactions
+/// stored under one of these IDs (TD-71).
+Set<String> reactorIdsForSigner({
+  required String signerPubkey,
+  required String myDid,
+  required String? myNostrPubkey,
+  required String? Function(String nostrPubkey) contactDidForNostrPubkey,
+}) {
+  final signer = signerPubkey.toLowerCase();
+  if (signer.isEmpty) return const {};
+  final contactDid = contactDidForNostrPubkey(signer);
+  return {
+    signer,
+    if (myNostrPubkey != null && myNostrPubkey.toLowerCase() == signer) myDid,
+    if (contactDid != null) contactDid,
+  };
+}

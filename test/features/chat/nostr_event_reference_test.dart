@@ -21,6 +21,8 @@ const _validEventId =
     'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const _otherEventId =
     'b1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+const _reactionEventId =
+    'c1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 final _myNostrPubkey = '33' * 32;
 final _bobNostrPubkey = '44' * 32;
 final _malloryNostrPubkey = '55' * 32;
@@ -60,8 +62,9 @@ class _FakeNostrTransport extends NostrTransport {
   String? get localNostrPubkeyHex => localPubkey;
 
   @override
-  void publishReaction(String targetEventId, String emoji) {
+  String? publishReaction(String targetEventId, String emoji) {
     publishedReactions.add((targetEventId: targetEventId, emoji: emoji));
+    return _reactionEventId;
   }
 
   @override
@@ -782,6 +785,168 @@ void main() {
       await react(_bobNostrPubkey, '🔥', target: message.id);
 
       expect(await provider.getMessageReactions(message.id), isEmpty);
+    });
+  });
+
+  group('ChatProvider – reaction cleanup (TD-70) and withdrawal (TD-71)', () {
+    const myDid = 'did:key:reaction-cleanup-test';
+    late PodDatabase pod;
+    late _FakeNostrTransport nostrTransport;
+    late ChatProvider provider;
+    late int notifyCount;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      TransportManager.instance.clearTransports();
+      pod = await _openTestDb();
+      IdentityService.instance.setForTest(
+        NexusIdentity(
+          publicKeyHex: '11' * 32,
+          pseudonym: 'Aufräumtest',
+          did: myDid,
+        ),
+      );
+      nostrTransport = _FakeNostrTransport();
+      TransportManager.instance.registerTransport(nostrTransport);
+      notifyCount = 0;
+      provider = ChatProvider(
+        nostrTransport: nostrTransport,
+        reactionNotification:
+            ({required title, required body, String? payload}) async {},
+      )..addListener(() => notifyCount++);
+    });
+
+    tearDown(() async {
+      provider.dispose();
+      TransportManager.instance.clearTransports();
+      await nostrTransport.close();
+      IdentityService.instance.clearForTest();
+    });
+
+    Future<NexusMessage> storeChannelPost({
+      String fromDid = myDid,
+      String? authorPubkey,
+    }) async {
+      final message = NexusMessage.create(
+        fromDid: fromDid,
+        toDid: NexusMessage.broadcastDid,
+        channel: '#kanal',
+        body: 'mit Emoji',
+      ).withNostrEventId(_validEventId, authorPubkey: authorPubkey);
+      await pod.insertMessage(
+        conversationId: '#kanal',
+        senderDid: fromDid,
+        data: message.toJson(),
+      );
+      await provider.getMessages('#kanal');
+      return message;
+    }
+
+    test('deleting a message locally also removes its reactions', () async {
+      final message = await storeChannelPost();
+      await pod.upsertReaction(
+        messageId: message.id,
+        emoji: '🔥',
+        reactorDid: _bobNostrPubkey,
+      );
+
+      await provider.deleteMessageLocally(message, '#kanal');
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+    });
+
+    test('an incoming deletion also removes the reactions of that message',
+        () async {
+      final message = await storeChannelPost(
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+      );
+      await pod.upsertReaction(
+        messageId: message.id,
+        emoji: '👍',
+        reactorDid: myDid,
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+    });
+
+    test('remembers the event ID of an own published reaction', () async {
+      final message = await storeChannelPost();
+
+      await provider.addChannelReaction(message.id, '🔥');
+
+      expect(
+        await pod.getReactionEventId(
+          messageId: message.id,
+          emoji: '🔥',
+          reactorDid: myDid,
+        ),
+        _reactionEventId,
+      );
+    });
+
+    test('withdrawing an own reaction publishes a Kind-5 for that reaction',
+        () async {
+      final message = await storeChannelPost();
+      await provider.addChannelReaction(message.id, '🔥');
+
+      await provider.removeChannelReaction(message.id, '🔥');
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+      expect(nostrTransport.publishedDeletions, [_reactionEventId]);
+    });
+
+    test('withdrawing a local-only reaction publishes nothing', () async {
+      final message = await storeChannelPost();
+      await pod.upsertReaction(
+        messageId: message.id,
+        emoji: '🔥',
+        reactorDid: myDid,
+      );
+
+      await provider.removeChannelReaction(message.id, '🔥');
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+      expect(nostrTransport.publishedDeletions, isEmpty);
+    });
+
+    test('removes a reaction when its reactor withdraws it', () async {
+      final message = await storeChannelPost();
+      await pod.upsertReaction(
+        messageId: message.id,
+        emoji: '🔥',
+        reactorDid: _bobNostrPubkey,
+        nostrEventId: _reactionEventId,
+      );
+      final before = notifyCount;
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_reactionEventId]);
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+      expect(notifyCount, greaterThan(before));
+      expect(await provider.getMessages('#kanal'), hasLength(1),
+          reason: 'Withdrawing a reaction must not delete the message');
+    });
+
+    test('keeps a reaction when someone else tries to withdraw it', () async {
+      final message = await storeChannelPost();
+      await pod.upsertReaction(
+        messageId: message.id,
+        emoji: '🔥',
+        reactorDid: _bobNostrPubkey,
+        nostrEventId: _reactionEventId,
+      );
+
+      await nostrTransport.emitDeletion(
+        _malloryNostrPubkey,
+        [_reactionEventId],
+      );
+
+      expect(await provider.getMessageReactions(message.id), {
+        '🔥': [_bobNostrPubkey],
+      });
     });
   });
 }
