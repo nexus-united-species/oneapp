@@ -71,7 +71,8 @@ class _FakeNostrTransport extends NostrTransport {
 
   Future<void> emitReaction(Map<String, dynamic> data) async {
     reactionController.add(data);
-    await Future<void>.delayed(Duration.zero);
+    // The provider stores the reaction before it notifies.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
   }
 
   Future<void> emitDeletion(String authorPubkey, List<String> eventIds) async {
@@ -583,6 +584,204 @@ void main() {
       await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
 
       expect(await provider.getMessages('#loeschen'), hasLength(1));
+    });
+  });
+
+  group('ChatProvider – incoming reactions are stored (TD-67)', () {
+    const myDid = 'did:key:reaction-store-test';
+    late PodDatabase pod;
+    late _FakeNostrTransport nostrTransport;
+    late ChatProvider provider;
+    late List<String> notifications;
+    late int notifyCount;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({
+        'notif_channel_reactions': true,
+        'notif_chat_reactions': true,
+      });
+      TransportManager.instance.clearTransports();
+      pod = await _openTestDb();
+      IdentityService.instance.setForTest(
+        NexusIdentity(
+          publicKeyHex: '11' * 32,
+          pseudonym: 'Reaktionsspeicher',
+          did: myDid,
+        ),
+      );
+      nostrTransport = _FakeNostrTransport();
+      TransportManager.instance.registerTransport(nostrTransport);
+      notifications = [];
+      notifyCount = 0;
+      provider = ChatProvider(
+        nostrTransport: nostrTransport,
+        reactionNotification:
+            ({required title, required body, String? payload}) async {
+              notifications.add(body);
+            },
+      )..addListener(() => notifyCount++);
+    });
+
+    tearDown(() async {
+      provider.dispose();
+      TransportManager.instance.clearTransports();
+      await nostrTransport.close();
+      IdentityService.instance.clearForTest();
+    });
+
+    Future<NexusMessage> storeMessage({
+      required String convId,
+      required String fromDid,
+      String toDid = NexusMessage.broadcastDid,
+      String? channel,
+      bool loadIntoCache = true,
+    }) async {
+      final message = NexusMessage.create(
+        fromDid: fromDid,
+        toDid: toDid,
+        channel: channel,
+        body: 'reagier auf mich',
+      ).withNostrEventId(_validEventId);
+      await pod.insertMessage(
+        conversationId: convId,
+        senderDid: fromDid,
+        data: message.toJson(),
+      );
+      if (loadIntoCache) await provider.getMessages(convId);
+      return message;
+    }
+
+    Future<void> react(String signer, String emoji, {String? target}) async {
+      await nostrTransport.emitReaction({
+        'referencedEventId': target ?? _validEventId,
+        'senderPubkey': signer,
+        'emoji': emoji,
+        'reactionEventId': _otherEventId,
+      });
+    }
+
+    test('stores a reaction on an own channel post and refreshes the UI',
+        () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: myDid,
+        channel: '#kanal',
+      );
+      final before = notifyCount;
+
+      await react(_bobNostrPubkey, '🔥');
+
+      expect(await provider.getMessageReactions(message.id), {
+        '🔥': [_bobNostrPubkey],
+      });
+      expect(notifyCount, greaterThan(before));
+      expect(notifications, ['🔥']);
+    });
+
+    test('stores a reaction on someone else\'s channel post without notifying',
+        () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: 'did:key:bob',
+        channel: '#kanal',
+      );
+
+      await react(_malloryNostrPubkey, '👍');
+
+      expect(await provider.getMessageReactions(message.id), {
+        '👍': [_malloryNostrPubkey],
+      });
+      expect(notifications, isEmpty);
+    });
+
+    test('stores a reaction in a conversation that is not loaded yet',
+        () async {
+      final message = await storeMessage(
+        convId: '#nicht-geoeffnet',
+        fromDid: myDid,
+        channel: '#nicht-geoeffnet',
+        loadIntoCache: false,
+      );
+
+      await react(_bobNostrPubkey, '❤️');
+
+      expect(await provider.getMessageReactions(message.id), {
+        '❤️': [_bobNostrPubkey],
+      });
+    });
+
+    test('ignores a stranger reacting in a direct chat', () async {
+      const bobDid = 'did:key:bob';
+      final message = await storeMessage(
+        convId: ([myDid, bobDid]..sort()).join(':'),
+        fromDid: myDid,
+        toDid: bobDid,
+      );
+
+      await react(_malloryNostrPubkey, '👎');
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+      expect(notifications, isEmpty);
+    });
+
+    test('stores and notifies only once when several relays deliver it',
+        () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: myDid,
+        channel: '#kanal',
+      );
+
+      await Future.wait([
+        react(_bobNostrPubkey, '🔥'),
+        react(_bobNostrPubkey, '🔥'),
+        react(_bobNostrPubkey, '🔥'),
+      ]);
+
+      expect(await provider.getMessageReactions(message.id), {
+        '🔥': [_bobNostrPubkey],
+      });
+      expect(notifications, hasLength(1));
+    });
+
+    test('maps a NIP-25 "+" like to 👍 and ignores a "-" dislike', () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: 'did:key:bob',
+        channel: '#kanal',
+      );
+
+      await react(_malloryNostrPubkey, '-');
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+
+      await react(_malloryNostrPubkey, '+');
+      expect(await provider.getMessageReactions(message.id), {
+        '👍': [_malloryNostrPubkey],
+      });
+    });
+
+    test('ignores an oversized reaction text', () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: 'did:key:bob',
+        channel: '#kanal',
+      );
+
+      await react(_malloryNostrPubkey, 'x' * 200);
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
+    });
+
+    test('never matches the internal UUID', () async {
+      final message = await storeMessage(
+        convId: '#kanal',
+        fromDid: myDid,
+        channel: '#kanal',
+      );
+
+      await react(_bobNostrPubkey, '🔥', target: message.id);
+
+      expect(await provider.getMessageReactions(message.id), isEmpty);
     });
   });
 }

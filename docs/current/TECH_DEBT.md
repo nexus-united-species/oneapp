@@ -33,7 +33,6 @@ Release-Reihenfolge steht separat in
 | TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
-| TD-67 | Empfangene Reaktionen in Chat und Kanal werden nicht gespeichert | Kind-7 kommt an und wird der richtigen Nachricht zugeordnet, löst aber nur eine Benachrichtigung aus; kein `upsertReaction` ([chat_provider.dart:2470](../../lib/features/chat/chat_provider.dart)). Nur der Dorfplatz speichert fremde Reaktionen. Am Gerät bestätigt 07.11.2026 |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
 | TD-69 | Ungefilterte Abos holen weltweiten Fremdverkehr | Reaktionsabo ohne `#t`/`#p`/`authors` ([nostr_transport.dart:2036](../../lib/core/transport/nostr/nostr_transport.dart)) und Kind-5-Abo liefern Events fremder Nostr-Nutzer: im Test 3.816 Reaktionen von 763 und 24.082 Löschungen von 239 fremden Absendern in rund 6 Stunden, Log auf 177 MB. Kostet Akku, Datenvolumen und Leistung; jede fremde Löschung wird gegen alle Beiträge verglichen |
 
@@ -51,6 +50,7 @@ Release-Reihenfolge steht separat in
 | TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
 | TD-70 | Lokales Löschen lässt Reaktionen stehen | `deleteMessageLocally` setzt nur das Soft-Delete-Flag ([chat_provider.dart:2747](../../lib/features/chat/chat_provider.dart)); Reaktionen auf die Nachricht bleiben und werden im Kanal ohne Beitrag angezeigt (Android, 07.11.2026) |
+| TD-71 | Zurückgenommene Reaktionen und Reaktionen vom eigenen Zweitgerät werden nicht übertragen | `removeChannelReaction` löscht nur lokal und sendet kein Kind-5 ([chat_provider.dart](../../lib/features/chat/chat_provider.dart)); der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Ein beim Gegenüber angezeigtes Emoji bleibt also stehen, wenn man es zurücknimmt |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
 
 ## Wartbarkeit
@@ -118,6 +118,12 @@ Liste:
   `pod_messages.nostr_event_id` gefunden (DB v24, rein additiv). Am Gerät in
   beide Richtungen bestätigt. Ältere Nachrichten ohne gespeicherte Event-ID
   lassen sich nur löschen, solange sie im geöffneten Gespräch geladen sind.
+- **TD-67 erledigt (07.11.2026, Gerätetest offen):** Empfangene Reaktionen in
+  Chat und Kanal werden gespeichert und sofort angezeigt, auch in nicht
+  geöffneten Gesprächen. In Direktchats wird nur der Gesprächspartner
+  angenommen, in Kanälen jeder Absender. Mehrfach zugestellte Events werden
+  einmal gespeichert und einmal gemeldet; NIP-25 „+“ wird zu 👍, „-“ und
+  überlange Texte werden verworfen. Neu: TD-71.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

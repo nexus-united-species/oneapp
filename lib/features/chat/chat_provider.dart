@@ -35,6 +35,7 @@ import '../../shared/widgets/notification_banner.dart';
 import '../../core/roles/role_enums.dart';
 import 'channel_access_service.dart';
 import 'message_deletion_policy.dart';
+import 'message_reaction_policy.dart';
 import 'conversation_service.dart';
 import 'group_channel.dart';
 import 'group_channel_service.dart';
@@ -168,6 +169,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _reactionSub;
   StreamSubscription<MessageDeletionRequest>? _deletionSub;
   Timer? _muteExpiryTimer;
+
+  /// Reactions already being processed, so parallel relay deliveries of the
+  /// same Kind-7 are stored and announced once (bounded, oldest dropped).
+  final Set<String> _seenReactionKeys = <String>{};
+  static const int _seenReactionCap = 2000;
 
   /// Registers the incoming Kind-7 and Kind-5 listeners, replacing any
   /// previous ones.
@@ -2453,6 +2459,52 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
+  /// Finds the message whose real Nostr event ID is [eventId], first in the
+  /// conversation cache, then in the database. Returns its conversation ID
+  /// and the message, or null.
+  Future<(String, NexusMessage)?> _findMessageByNostrEventId(
+    String eventId,
+  ) async {
+    for (final entry in _conversationCache.entries) {
+      for (final message in entry.value) {
+        if (message.nostrEventId == eventId) return (entry.key, message);
+      }
+    }
+    final rows = await PodDatabase.instance.findMessagesByNostrEventIds({
+      eventId,
+    });
+    for (final row in rows) {
+      final convId = row['conversation_id'] as String?;
+      final message = _messageFromStoredRow(row);
+      if (convId != null && message != null) return (convId, message);
+    }
+    return null;
+  }
+
+  /// Parses a row from [PodDatabase.findMessagesByNostrEventIds]; null if
+  /// the stored message cannot be read.
+  static NexusMessage? _messageFromStoredRow(Map<String, dynamic> row) {
+    try {
+      return NexusMessage.fromJson(Map<String, dynamic>.from(row)
+        ..remove('conversation_id')
+        ..remove('message_id'));
+    } on FormatException catch (e) {
+      print('[CHAT] Stored message unreadable: $e');
+    } on TypeError catch (e) {
+      print('[CHAT] Stored message unreadable: $e');
+    }
+    return null;
+  }
+
+  /// DID of the contact with the Nostr public key [pubkey], if known.
+  static String? _contactDidForNostrPubkey(String pubkey) {
+    final lower = pubkey.toLowerCase();
+    for (final contact in ContactService.instance.contacts) {
+      if (contact.nostrPubkey?.toLowerCase() == lower) return contact.did;
+    }
+    return null;
+  }
+
   /// Removes an emoji reaction from a channel message.
   Future<void> removeChannelReaction(String messageId, String emoji) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
@@ -2470,9 +2522,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── Incoming reaction handler (Triggers 1 & 3) ───────────────────────────
 
-  /// Called when a Kind-7 reaction arrives from Nostr.
-  /// Checks whether the referenced event ID matches a message in the local
-  /// conversation cache that was sent by me.
+  /// Called when a Kind-7 reaction arrives from Nostr (TD-67).
+  ///
+  /// Finds the chat or channel message whose real Nostr event ID is
+  /// referenced (never the internal UUID), checks that the signer may react
+  /// there ([resolveReactorId]), stores the reaction and refreshes the UI.
+  /// A notification follows only for reactions on my own messages.
   Future<void> _handleIncomingReaction(Map<String, dynamic> data) async {
     // Delegate feed reactions to FeedService (Trigger 4 handled there).
     FeedService.instance.handleIncomingReaction(data);
@@ -2480,35 +2535,59 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final myDid = IdentityService.instance.currentIdentity?.did ?? '';
     final referencedId = data['referencedEventId'] as String?;
     final senderPubkey = data['senderPubkey'] as String?;
-    final emoji = data['emoji'] as String? ?? '👍';
     if (referencedId == null || senderPubkey == null) return;
     if (!NostrTransport.isValidNostrEventId(referencedId)) return;
+    final emoji = normalizeReactionContent(data['emoji'] as String?);
+    if (emoji == null) return;
+    final rawReactionId = data['reactionEventId'] as String?;
+    final reactionEventId =
+        NostrTransport.isValidNostrEventId(rawReactionId) ? rawReactionId : null;
+
+    // Synchronous lock before the first await: relays deliver the same
+    // Kind-7 several times in parallel.
+    final dedupeKey =
+        reactionEventId ?? '$referencedId|${senderPubkey.toLowerCase()}|$emoji';
+    if (!_seenReactionKeys.add(dedupeKey)) return;
+    if (_seenReactionKeys.length > _seenReactionCap) {
+      _seenReactionKeys.remove(_seenReactionKeys.first);
+    }
 
     final shortTarget = referencedId.substring(0, 8);
-    final cacheSize = _conversationCache.values.fold<int>(0, (s, v) => s + v.length);
-    print('[REACTION-RECV] Chat-Handler: emoji=$emoji target=$shortTarget… '
-        '(searching $cacheSize msgs in ${_conversationCache.length} convs)');
+    final target = await _findMessageByNostrEventId(referencedId);
+    if (target == null) {
+      // Nothing stored: allow a later delivery once the message exists.
+      _seenReactionKeys.remove(dedupeKey);
+      return;
+    }
+    final (convId, message) = target;
+    final isChannel =
+        convId.startsWith('#') || convId == NexusMessage.broadcastDid;
 
-    // Search conversation cache for a message authored by me whose outer Nostr
-    // event ID matches.  The internal UUID must never match here.
-    String? convId;
-    bool isChannel = false;
-    for (final entry in _conversationCache.entries) {
-      final msg = entry.value.cast<NexusMessage?>().firstWhere(
-            (m) => m!.nostrEventId == referencedId && m.fromDid == myDid,
-            orElse: () => null,
-          );
-      if (msg != null) {
-        convId = entry.key;
-        isChannel = convId.startsWith('#');
-        break;
-      }
+    final reactorId = resolveReactorId(
+      message: message,
+      isChannel: isChannel,
+      signerPubkey: senderPubkey,
+      myDid: myDid,
+      myNostrPubkey: nostrPubkeyHex,
+      contactDidForNostrPubkey: _contactDidForNostrPubkey,
+    );
+    if (reactorId == null) {
+      print('[REACTION-RECV] Rejected: ${senderPubkey.substring(0, 8)}… may '
+          'not react in conv=$convId');
+      return;
     }
-    if (convId == null) {
-      print('[REACTION-RECV] Match found: false (no matching msg in conv cache)');
-      return; // not my message
-    }
-    print('[REACTION-RECV] Match found: true in conv=$convId isChannel=$isChannel');
+
+    await PodDatabase.instance.upsertReaction(
+      messageId: message.id,
+      emoji: emoji,
+      reactorDid: reactorId,
+      nostrEventId: reactionEventId,
+    );
+    print('[REACTION-RECV] Stored: emoji=$emoji target=$shortTarget… '
+        'conv=$convId isChannel=$isChannel');
+    notifyListeners();
+
+    if (message.fromDid != myDid || reactorId == myDid) return;
 
     // Resolve sender name via nostrPubkey
     final matchedContact = ContactService.instance.contacts
@@ -2811,19 +2890,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final rows =
           await PodDatabase.instance.findMessagesByNostrEventIds(remaining);
       for (final row in rows) {
-        final NexusMessage message;
-        try {
-          message = NexusMessage.fromJson(Map<String, dynamic>.from(row)
-            ..remove('conversation_id')
-            ..remove('message_id'));
-        } on FormatException catch (e) {
-          print('[MSG-DELETE-RECV] Stored message unreadable: $e');
-          continue;
-        } on TypeError catch (e) {
-          print('[MSG-DELETE-RECV] Stored message unreadable: $e');
-          continue;
-        }
-        if (!isAllowed(message)) continue;
+        final message = _messageFromStoredRow(row);
+        if (message == null || !isAllowed(message)) continue;
         toDelete.add(message.id);
         // The conversation may have been loaded during the await.
         _conversationCache[row['conversation_id'] as String?]
