@@ -154,8 +154,7 @@ class InviteService {
 
   // Fallback GitHub releases page when the API is unreachable.
   static const _releasesUrl =
-      'https://github.com/project-nexus-official/'
-      'N.E.X.U.S.-OneApp-Betriebssystem-der-freien-Welt/releases/latest';
+      'https://github.com/nexus-united-species/oneapp/releases/latest';
 
   final List<InviteRecord> _invites = [];
 

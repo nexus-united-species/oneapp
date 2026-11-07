@@ -790,11 +790,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.surface,
+      // Full height allowed and scrollable: on short desktop windows the
+      // default half-height sheet cut off the last entries.
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) => SafeArea(
-        child: Column(
+        child: SingleChildScrollView(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             // ── Quick emoji reactions ──
@@ -899,7 +902,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               },
             ),
           ],
-        ),
+        )),
       ),
     );
   }
@@ -1176,7 +1179,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               Navigator.pop(ctx);
               await provider.deleteMessageLocally(msg, _convId);
               // Send Nostr Kind-5 deletion event
-              provider.publishNostrDeletion(msg.id);
+              provider.publishNostrDeletion(msg);
               await _refreshMessages();
             },
             child: const Text('Für alle löschen'),

@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 23,
+      version: 24,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -133,9 +133,14 @@ class PodDatabase {
         message_id      TEXT,
         is_favorite     INTEGER NOT NULL DEFAULT 0,
         is_deleted      INTEGER NOT NULL DEFAULT 0,
-        edited_body     TEXT
+        edited_body     TEXT,
+        nostr_event_id  TEXT
       )
     ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pod_messages_nostr_event_id '
+      'ON pod_messages(nostr_event_id)',
+    );
 
     // Verifiable Credentials (prepared for Phase 2)
     await db.execute('''
@@ -1091,6 +1096,23 @@ class PodDatabase {
       ''');
       print('[DB-MIGRATION-23] delegations table + 5 indexes created');
     }
+
+    if (oldVersion < 24) {
+      // TD-66: index messages by their public Nostr wrapper event ID so an
+      // incoming Kind-5 can find the message even when its conversation is
+      // not loaded. Additive; legacy rows keep NULL and are matched only via
+      // the in-memory cache.
+      if (!await _hasColumn(db, 'pod_messages', 'nostr_event_id')) {
+        await db.execute(
+          'ALTER TABLE pod_messages ADD COLUMN nostr_event_id TEXT',
+        );
+      }
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_pod_messages_nostr_event_id '
+        'ON pod_messages(nostr_event_id)',
+      );
+      print('[DB-MIGRATION-24] pod_messages.nostr_event_id + index added');
+    }
   }
 
   // ── Identity namespace ────────────────────────────────────────────────────
@@ -1168,6 +1190,7 @@ class PodDatabase {
     }
 
     final enc = await PodEncryption.encrypt(jsonEncode(data), _key);
+    final nostrEventId = _validNostrEventIdOf(data);
     await _database.insert('pod_messages', {
       'conversation_id': conversationId,
       'sender_did': senderDid,
@@ -1176,6 +1199,8 @@ class PodDatabase {
       'status': 'pending',
       // ignore: use_null_aware_elements
       if (msgId != null) 'message_id': msgId,
+      // ignore: use_null_aware_elements
+      if (nostrEventId != null) 'nostr_event_id': nostrEventId,
     });
     debugPrint('[DB] insertMessage: saved ${msgId ?? "(no id)"} conv=$conversationId');
   }
@@ -1213,6 +1238,51 @@ class PodDatabase {
       where: 'message_id = ?',
       whereArgs: [messageId],
     );
+  }
+
+  static final RegExp _nostrEventIdPattern = RegExp(r'^[0-9a-fA-F]{64}$');
+
+  /// The message's public Nostr wrapper event ID, if it carries a valid one.
+  static String? _validNostrEventIdOf(Map<String, dynamic> data) {
+    // NexusMessage.toJson() stores its metadata under 'meta'.
+    final metadata = data['meta'];
+    if (metadata is! Map) return null;
+    final value = metadata['nostr_event_id'];
+    return value is String && _nostrEventIdPattern.hasMatch(value)
+        ? value
+        : null;
+  }
+
+  /// Returns the not-deleted messages whose Nostr wrapper event ID is in
+  /// [eventIds], decrypted, with `conversation_id` and `message_id` added.
+  ///
+  /// Only rows stored since DB v24 carry the indexed column; older rows are
+  /// not found here.
+  Future<List<Map<String, dynamic>>> findMessagesByNostrEventIds(
+    Set<String> eventIds,
+  ) async {
+    if (eventIds.isEmpty) return const [];
+    final placeholders = List.filled(eventIds.length, '?').join(', ');
+    final rows = await _database.query(
+      'pod_messages',
+      where: 'nostr_event_id IN ($placeholders) AND is_deleted = 0',
+      whereArgs: eventIds.toList(),
+    );
+    final result = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      try {
+        final plain = await PodEncryption.decrypt(row['enc'] as String, _key);
+        final data = jsonDecode(plain) as Map<String, dynamic>;
+        result.add({
+          ...data,
+          'conversation_id': row['conversation_id'],
+          'message_id': row['message_id'],
+        });
+      } catch (e) {
+        debugPrint('[DB] findMessagesByNostrEventIds: decode failed: $e');
+      }
+    }
+    return result;
   }
 
   /// Soft-deletes a message (hidden from listMessages, data preserved).
@@ -1969,6 +2039,35 @@ class PodDatabase {
       'message_reactions',
       where: 'nostr_event_id IN ($placeholders)',
       whereArgs: eventIds.toList(),
+    );
+  }
+
+  /// Deletes every reaction on the messages [messageIds] (TD-70).
+  Future<int> deleteReactionsForMessages(Set<String> messageIds) async {
+    if (messageIds.isEmpty) return 0;
+    final placeholders = List.filled(messageIds.length, '?').join(', ');
+    return _database.delete(
+      'message_reactions',
+      where: 'message_id IN ($placeholders)',
+      whereArgs: messageIds.toList(),
+    );
+  }
+
+  /// Deletes reactions whose own Nostr event ID is in [eventIds], but only
+  /// those recorded for one of [reactorIds] (TD-71: only the reactor may
+  /// withdraw a reaction). Returns the number of deleted rows.
+  Future<int> deleteReactionsByNostrEventIdsFrom(
+    Set<String> eventIds,
+    Set<String> reactorIds,
+  ) async {
+    if (eventIds.isEmpty || reactorIds.isEmpty) return 0;
+    final eventMarks = List.filled(eventIds.length, '?').join(', ');
+    final reactorMarks = List.filled(reactorIds.length, '?').join(', ');
+    return _database.delete(
+      'message_reactions',
+      where: 'nostr_event_id IN ($eventMarks) '
+          'AND reactor_did IN ($reactorMarks)',
+      whereArgs: [...eventIds, ...reactorIds],
     );
   }
 

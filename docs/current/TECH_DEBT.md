@@ -33,12 +33,14 @@ Release-Reihenfolge steht separat in
 | TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
+| TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
+| TD-69 | Ungefilterte Abos holen weltweiten Fremdverkehr | Reaktionsabo ohne `#t`/`#p`/`authors` ([nostr_transport.dart:2036](../../lib/core/transport/nostr/nostr_transport.dart)) und Kind-5-Abo liefern Events fremder Nostr-Nutzer: im Test 3.816 Reaktionen von 763 und 24.082 Löschungen von 239 fremden Absendern in rund 6 Stunden, Log auf 177 MB. Kostet Akku, Datenvolumen und Leistung; jede fremde Löschung wird gegen alle Beiträge verglichen |
 
 ## Mittel
 
 | ID | Thema | Hinweis |
 |---|---|---|
-| TD-25 | UI-/Navigation-Test-Failures | 11 bekannte Fehler in der geprüften Auswahl; meist veraltete Labels plus realer Desktop-Overflow |
+| TD-25 | UI-/Navigation-Test-Failures | 11 bekannte Fehler in der geprüften Auswahl; meist veraltete Labels plus realer Desktop-Overflow. Messung 06.11.2026: zusätzlich 5 Fehler in den TransportManager-Tests |
 | TD-28 | `publish_results.vote_id` polymorph | Feld trägt je nach `event_kind` auch DecisionRecord-/Delegation-IDs; später in `payload_id` umbenennen |
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | seltener partieller Secure-Storage-Zustand; nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Init-Race kann UNIQUE-Kollision erzeugen; Abstimmung ohne Pubkey ablehnen |
@@ -47,6 +49,8 @@ Release-Reihenfolge steht separat in
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen |
 | TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
+| TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | Der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Wer mit derselben Identität auf zwei Geräten arbeitet, sieht seine Reaktion nur auf dem Gerät, auf dem er sie gesetzt hat. Vor einer Änderung muss der Dorfplatz eigene Reaktionen getrennt behandeln, sonst entstehen Doppelungen |
+| TD-72 | Dorfplatz-Löschpfad entfernt Reaktionen ohne Absenderprüfung | `FeedService.handleIncomingDelete` löscht jede Reaktion, deren Event-ID in einem beliebigen Kind-5 steht ([feed_service.dart](../../lib/features/dorfplatz/feed_service.dart), `deleteReactionsByNostrEventIds`); der Absender wird nicht weitergereicht. Betrifft seit TD-67 auch Chat- und Kanalreaktionen. Folge: Ein Fremder kann angezeigte Emojis entfernen, keine Nachrichten. Teil der Empfangsverifikation (TD-39) |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
 
 ## Wartbarkeit
@@ -101,6 +105,35 @@ Liste:
   davon beim damaligen Test zugeschlagen haben, klärt ein Zwei-Geräte-Test
   mit Logdatei (Phase 0).
 - **TD-47 aktualisiert** mit einer Live-Prüfung der Standard-Relays.
+- **Zwei-Geräte-Test A (07.11.2026, Android ↔ Windows, F-001 enthalten):**
+  Textnachrichten in Chat und Kanal kommen in beide Richtungen an. Reaktionen
+  und Löschungen werden korrekt mit echten Event-IDs gesendet und empfangen
+  (F-001 wirkt), aber beim Empfänger nicht angewendet. Neu: TD-66 bis TD-69
+  (hoch) und TD-70 (mittel). Das Android-Log brach nach dem Start ab
+  (Verbindung zum Gerät verloren); die Befunde stammen aus dem Windows-Log.
+- **TD-66 erledigt (07.11.2026):** „Für alle löschen“ wird beim Empfänger
+  angewendet, in Chat und Kanal, auch für eigene Löschungen vom zweiten Gerät.
+  Eine Löschung wirkt nur, wenn sie mit dem Schlüssel des Verfassers signiert
+  ist. Nachrichten in nicht geöffneten Gesprächen werden über die neue Spalte
+  `pod_messages.nostr_event_id` gefunden (DB v24, rein additiv). Am Gerät in
+  beide Richtungen bestätigt. Ältere Nachrichten ohne gespeicherte Event-ID
+  lassen sich nur löschen, solange sie im geöffneten Gespräch geladen sind.
+- **TD-67 erledigt (07.11.2026, Gerätetest offen):** Empfangene Reaktionen in
+  Chat und Kanal werden gespeichert und sofort angezeigt, auch in nicht
+  geöffneten Gesprächen. In Direktchats wird nur der Gesprächspartner
+  angenommen, in Kanälen jeder Absender. Mehrfach zugestellte Events werden
+  einmal gespeichert und einmal gemeldet; NIP-25 „+“ wird zu 👍, „-“ und
+  überlange Texte werden verworfen. Neu: TD-71.
+- **TD-70 erledigt (07.11.2026, Gerätetest offen):** Wird eine Nachricht
+  gelöscht, lokal oder per „Für alle löschen“ vom Verfasser, werden ihre
+  Reaktionen mitgelöscht.
+- **Zurücknehmen von Reaktionen (bisher Teil von TD-71) erledigt, Gerätetest
+  offen:** Eine zurückgenommene eigene Reaktion wird per Kind-5 auf das
+  Reaktions-Event gemeldet und beim Gegenüber entfernt, aber nur, wenn der
+  Kind-5 vom Reagierenden selbst stammt. TD-71 umfasst nur noch das eigene
+  Zweitgerät. Neu: TD-72.
+- **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
+  im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen
