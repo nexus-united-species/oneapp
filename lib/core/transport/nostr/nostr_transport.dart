@@ -30,6 +30,22 @@ import 'publish_result.dart';
 import 'publish_result_dao.dart';
 import 'publish_result_status.dart';
 
+/// An incoming NIP-09 Kind-5 request to delete chat or channel messages.
+///
+/// [authorPubkey] is the key that signed the deletion. The receiver must only
+/// apply it to messages that were published by that same key.
+class MessageDeletionRequest {
+  const MessageDeletionRequest({
+    required this.authorPubkey,
+    required this.eventIds,
+  });
+
+  final String authorPubkey;
+
+  /// Valid 64-hex Nostr event IDs from the `e` tags.
+  final List<String> eventIds;
+}
+
 /// Internet fallback transport via Nostr protocol (NIP-01, NIP-04, NIP-78).
 ///
 /// - Encrypted DMs (Kind 4 / NIP-04) for peer-to-peer messages.
@@ -105,12 +121,16 @@ class NostrTransport implements MessageTransport {
     NexusMessage message,
     NostrEvent event,
   ) {
+    // The author key always comes from the signed wrapper, never from the
+    // sender-controlled message JSON, so it cannot be spoofed via metadata.
     if (isValidNostrEventId(event.id)) {
-      return message.withNostrEventId(event.id);
+      return message.withNostrEventId(event.id, authorPubkey: event.pubkey);
     }
     final sanitizedMetadata = Map<String, dynamic>.from(
       message.metadata ?? const <String, dynamic>{},
-    )..remove(NexusMessage.nostrEventIdMetaKey);
+    )
+      ..remove(NexusMessage.nostrEventIdMetaKey)
+      ..remove(NexusMessage.nostrAuthorPubkeyMetaKey);
     return message.copyWith(metadata: sanitizedMetadata);
   }
 
@@ -250,6 +270,17 @@ class NostrTransport implements MessageTransport {
 
   /// Stream of Nostr event IDs to delete, from incoming Kind-5 events.
   Stream<List<String>> get onFeedDelete => _feedDeleteController.stream;
+
+  // Lives as long as the transport singleton, like the other event streams:
+  // stop()/start() reuse it, so it is intentionally never closed.
+  final _messageDeleteController =
+      StreamController<MessageDeletionRequest>.broadcast();
+
+  /// Kind-5 requests that may target chat or channel messages (TD-66).
+  /// Includes requests signed with the own key, so a deletion made on the
+  /// second device is applied here too.
+  Stream<MessageDeletionRequest> get onMessageDeletion =>
+      _messageDeleteController.stream;
 
   String? _feedSubId;
   String? _reactionSubId;
@@ -2486,23 +2517,29 @@ class NostrTransport implements MessageTransport {
     final shortSender = event.pubkey.length >= 8
         ? event.pubkey.substring(0, 8)
         : event.pubkey;
+    final isDorfplatz = tTags.contains('nexus-dorfplatz');
 
-    // For feed/message deletions: skip own events (already applied locally).
+    // Chat/channel messages: forward own deletions too, so a deletion made on
+    // the second device of the same identity is applied here (TD-66). The
+    // receiver checks that the signer is the message's author.
+    if (!isDorfplatz) {
+      final validIds = ids.where(isValidNostrEventId).toList();
+      if (validIds.isNotEmpty) {
+        print('[MSG-DELETE-RECV] Kind-5 from $shortSender…: '
+            '${validIds.length} valid e-tag(s) → chat handler');
+        _messageDeleteController.add(MessageDeletionRequest(
+          authorPubkey: event.pubkey,
+          eventIds: validIds,
+        ));
+      }
+    }
+
+    // Feed deletions: skip own events (already applied locally).
     if (event.pubkey == _keys!.publicKeyHex) return;
 
-    // Dorfplatz / message deletion.
-    final isDorfplatz = tTags.contains('nexus-dorfplatz');
     final prefix = isDorfplatz ? 'FEED-DELETE-RECV' : 'MSG-DELETE-RECV';
     print('[$prefix] Kind-5 received from $shortSender…: '
         '${ids.length} e-tag(s), t-tags=$tTags');
-    for (final id in ids) {
-      final shortId = id.length >= 8 ? id.substring(0, 8) : id;
-      print('[$prefix]   e-tag: $shortId…');
-    }
-    if (!isDorfplatz) {
-      print('[MSG-DELETE-RECV] ⚠ Chat-Löschung hat keinen separaten Recv-Handler — '
-          'wird an FeedService weitergeleitet (wird dort nicht matchen)');
-    }
     _feedDeleteController.add(ids);
   }
 

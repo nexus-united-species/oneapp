@@ -539,6 +539,144 @@ void main() {
       await stopTransport(transport, relay);
     });
 
+    // ── TD-66: incoming message deletion (Kind-5, NIP-09) ─────────────────
+
+    test('incoming Kind-5 for a chat message reaches onMessageDeletion '
+        'with the signing author', () async {
+      final (:transport, :relay) = await startTransport();
+      final deletions = <MessageDeletionRequest>[];
+      final subscription = transport.onMessageDeletion.listen(deletions.add);
+      final bobKeys = keysFor(bobMnemonic);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: bobKeys,
+        kind: NostrKind.deletion,
+        content: 'Nachricht gelöscht',
+        tags: const [
+          ['e', validTargetEventId],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(deletions, hasLength(1));
+      expect(deletions.single.authorPubkey, bobKeys.publicKeyHex);
+      expect(deletions.single.eventIds, [validTargetEventId]);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('own Kind-5 from the second device is forwarded, not skipped',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final deletions = <MessageDeletionRequest>[];
+      final subscription = transport.onMessageDeletion.listen(deletions.add);
+      final aliceKeys = keysFor(aliceMnemonic);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: aliceKeys,
+        kind: NostrKind.deletion,
+        content: 'Nachricht gelöscht',
+        tags: const [
+          ['e', validTargetEventId],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(deletions, hasLength(1));
+      expect(deletions.single.authorPubkey, aliceKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-5 drops UUID and malformed e-tags', () async {
+      final (:transport, :relay) = await startTransport();
+      final deletions = <MessageDeletionRequest>[];
+      final subscription = transport.onMessageDeletion.listen(deletions.add);
+      final bobKeys = keysFor(bobMnemonic);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: bobKeys,
+        kind: NostrKind.deletion,
+        content: '',
+        tags: const [
+          ['e', '550e8400-e29b-41d4-a716-446655440000'],
+          ['e', 'not-hex'],
+        ],
+      ));
+      relay.injectEvent(NostrEvent.create(
+        keys: bobKeys,
+        kind: NostrKind.deletion,
+        content: '',
+        tags: const [
+          ['e', '550e8400-e29b-41d4-a716-446655440000'],
+          ['e', validTargetEventId],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(deletions, hasLength(1),
+          reason: 'A request without any valid e-tag is not forwarded');
+      expect(deletions.single.eventIds, [validTargetEventId]);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('Dorfplatz Kind-5 is not forwarded as a message deletion', () async {
+      final (:transport, :relay) = await startTransport();
+      final deletions = <MessageDeletionRequest>[];
+      final subscription = transport.onMessageDeletion.listen(deletions.add);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: keysFor(bobMnemonic),
+        kind: NostrKind.deletion,
+        content: '',
+        tags: const [
+          ['e', validTargetEventId],
+          ['t', 'nexus-dorfplatz'],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(deletions, isEmpty);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
+    test('incoming Kind-42 records the signing author for later deletion '
+        'checks', () async {
+      final (:transport, :relay) = await startTransport();
+      final bobKeys = keysFor(bobMnemonic);
+      final original = NexusMessage.create(
+        fromDid: 'did:key:bob',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#reaktionen',
+        body: 'Hallo von Bob',
+      );
+      final received = Completer<NexusMessage>();
+      final subscription =
+          transport.onMessageReceived.listen(received.complete);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: bobKeys,
+        kind: NostrKind.channelMessage,
+        content: jsonEncode(original.toJson()),
+        tags: const [
+          ['t', 'nexus-channel-reaktionen'],
+        ],
+      ));
+      final enriched =
+          await received.future.timeout(const Duration(seconds: 1));
+
+      expect(enriched.nostrAuthorPubkey, bobKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
     // ── F-001 REWORK: channel metadata (Kind-41, NIP-28) ──────────────────
 
     test(

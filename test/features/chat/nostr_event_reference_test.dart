@@ -19,12 +19,20 @@ import 'package:nexus_oneapp/features/chat/chat_provider.dart';
 
 const _validEventId =
     'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+const _otherEventId =
+    'b1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+final _myNostrPubkey = '33' * 32;
+final _bobNostrPubkey = '44' * 32;
+final _malloryNostrPubkey = '55' * 32;
 
 class _FakeNostrTransport extends NostrTransport {
   _FakeNostrTransport()
     : super(localDid: 'did:key:reaction-test', localPseudonym: 'Test');
 
   final reactionController = StreamController<Map<String, dynamic>>.broadcast();
+  final deletionController =
+      StreamController<MessageDeletionRequest>.broadcast();
+  String? localPubkey = _myNostrPubkey;
   final publishedReactions = <({String targetEventId, String emoji})>[];
   final publishedDeletions = <String>[];
   final sentEventIds = <String, String>{};
@@ -45,6 +53,13 @@ class _FakeNostrTransport extends NostrTransport {
   Stream<Map<String, dynamic>> get onFeedReaction => reactionController.stream;
 
   @override
+  Stream<MessageDeletionRequest> get onMessageDeletion =>
+      deletionController.stream;
+
+  @override
+  String? get localNostrPubkeyHex => localPubkey;
+
+  @override
   void publishReaction(String targetEventId, String emoji) {
     publishedReactions.add((targetEventId: targetEventId, emoji: emoji));
   }
@@ -59,7 +74,18 @@ class _FakeNostrTransport extends NostrTransport {
     await Future<void>.delayed(Duration.zero);
   }
 
-  Future<void> close() => reactionController.close();
+  Future<void> emitDeletion(String authorPubkey, List<String> eventIds) async {
+    deletionController.add(
+      MessageDeletionRequest(authorPubkey: authorPubkey, eventIds: eventIds),
+    );
+    // The provider persists after the synchronous cache update.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+
+  Future<void> close() async {
+    await reactionController.close();
+    await deletionController.close();
+  }
 }
 
 Future<PodDatabase> _openTestDb() async {
@@ -81,7 +107,8 @@ Future<PodDatabase> _openTestDb() async {
           message_id      TEXT,
           is_favorite     INTEGER NOT NULL DEFAULT 0,
           is_deleted      INTEGER NOT NULL DEFAULT 0,
-          edited_body     TEXT
+          edited_body     TEXT,
+          nostr_event_id  TEXT
         )
       ''');
       await db.execute('''
@@ -400,5 +427,162 @@ void main() {
         expect(nostrTransport.publishedDeletions, isEmpty);
       },
     );
+  });
+
+  group('ChatProvider – incoming deletion (TD-66)', () {
+    const myDid = 'did:key:deletion-test';
+    late PodDatabase pod;
+    late _FakeNostrTransport nostrTransport;
+    late ChatProvider provider;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      TransportManager.instance.clearTransports();
+      pod = await _openTestDb();
+      IdentityService.instance.setForTest(
+        NexusIdentity(
+          publicKeyHex: '11' * 32,
+          pseudonym: 'Löschtest',
+          did: myDid,
+        ),
+      );
+      nostrTransport = _FakeNostrTransport();
+      TransportManager.instance.registerTransport(nostrTransport);
+      provider = ChatProvider(
+        nostrTransport: nostrTransport,
+        reactionNotification:
+            ({required title, required body, String? payload}) async {},
+      );
+    });
+
+    tearDown(() async {
+      provider.dispose();
+      TransportManager.instance.clearTransports();
+      await nostrTransport.close();
+      IdentityService.instance.clearForTest();
+    });
+
+    /// Stores a message from [fromDid] signed by [authorPubkey] in [convId].
+    Future<NexusMessage> storeMessage({
+      required String convId,
+      required String fromDid,
+      String? authorPubkey,
+      String eventId = _validEventId,
+      bool loadIntoCache = true,
+    }) async {
+      final message = NexusMessage.create(
+        fromDid: fromDid,
+        toDid: NexusMessage.broadcastDid,
+        channel: convId,
+        body: 'zu löschen',
+      ).withNostrEventId(eventId, authorPubkey: authorPubkey);
+      await pod.insertMessage(
+        conversationId: convId,
+        senderDid: fromDid,
+        data: message.toJson(),
+      );
+      if (loadIntoCache) await provider.getMessages(convId);
+      return message;
+    }
+
+    test('removes a received message when its author deletes it', () async {
+      await storeMessage(
+        convId: '#loeschen',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#loeschen'), isEmpty);
+      expect(await pod.listMessages('#loeschen'), isEmpty,
+          reason: 'The deletion must survive a restart');
+    });
+
+    test('ignores a deletion signed by someone other than the author',
+        () async {
+      await storeMessage(
+        convId: '#loeschen',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+      );
+
+      await nostrTransport.emitDeletion(_malloryNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#loeschen'), hasLength(1));
+      expect(await pod.listMessages('#loeschen'), hasLength(1));
+    });
+
+    test('applies an own deletion coming from the second device', () async {
+      await storeMessage(convId: '#loeschen', fromDid: myDid);
+
+      await nostrTransport.emitDeletion(_myNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#loeschen'), isEmpty);
+      expect(await pod.listMessages('#loeschen'), isEmpty);
+    });
+
+    test('does not let a foreign key delete an own message', () async {
+      await storeMessage(convId: '#loeschen', fromDid: myDid);
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#loeschen'), hasLength(1));
+    });
+
+    test('deletes a message whose conversation is not loaded yet', () async {
+      await storeMessage(
+        convId: '#nicht-geoeffnet',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+        loadIntoCache: false,
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await pod.listMessages('#nicht-geoeffnet'), isEmpty);
+      expect(await provider.getMessages('#nicht-geoeffnet'), isEmpty);
+    });
+
+    test('leaves other messages untouched', () async {
+      await storeMessage(
+        convId: '#loeschen',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+        loadIntoCache: false,
+      );
+      await storeMessage(
+        convId: '#loeschen',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+        eventId: _otherEventId,
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      final remaining = await provider.getMessages('#loeschen');
+      expect(remaining, hasLength(1));
+      expect(remaining.single.nostrEventId, _otherEventId);
+    });
+
+    test('never matches the internal UUID', () async {
+      final message = await storeMessage(
+        convId: '#loeschen',
+        fromDid: 'did:key:bob',
+        authorPubkey: _bobNostrPubkey,
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [message.id]);
+
+      expect(await provider.getMessages('#loeschen'), hasLength(1));
+    });
+
+    test('ignores a deletion when the author cannot be determined', () async {
+      await storeMessage(convId: '#loeschen', fromDid: 'did:key:unbekannt');
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#loeschen'), hasLength(1));
+    });
   });
 }

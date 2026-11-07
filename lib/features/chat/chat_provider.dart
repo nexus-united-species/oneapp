@@ -34,6 +34,7 @@ import '../../services/notification_settings.dart';
 import '../../shared/widgets/notification_banner.dart';
 import '../../core/roles/role_enums.dart';
 import 'channel_access_service.dart';
+import 'message_deletion_policy.dart';
 import 'conversation_service.dart';
 import 'group_channel.dart';
 import 'group_channel_service.dart';
@@ -165,12 +166,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _channelAnnouncedSub;
   StreamSubscription<List<({String id, String? name})>>? _channelDeletedSub;
   StreamSubscription<Map<String, dynamic>>? _reactionSub;
+  StreamSubscription<MessageDeletionRequest>? _deletionSub;
   Timer? _muteExpiryTimer;
 
-  /// Registers the incoming Kind-7 listener, replacing any previous one.
+  /// Registers the incoming Kind-7 and Kind-5 listeners, replacing any
+  /// previous ones.
   void _subscribeToReactions(NostrTransport transport) {
     _reactionSub?.cancel();
     _reactionSub = transport.onFeedReaction.listen(_handleIncomingReaction);
+    _deletionSub?.cancel();
+    _deletionSub =
+        transport.onMessageDeletion.listen(_handleIncomingMessageDeletion);
   }
 
   // ── Initialization ─────────────────────────────────────────────────────────
@@ -2751,6 +2757,90 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Applies an incoming Kind-5 deletion to chat and channel messages (TD-66).
+  ///
+  /// Only messages published by the signing key are removed (see
+  /// [isAuthorizedMessageDeleter]); everything else is ignored. Matching uses
+  /// the real Nostr wrapper event ID, never the internal UUID.
+  Future<void> _handleIncomingMessageDeletion(
+    MessageDeletionRequest request,
+  ) async {
+    final ids =
+        request.eventIds.where(NostrTransport.isValidNostrEventId).toSet();
+    if (ids.isEmpty) return;
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final myPubkey = nostrPubkeyHex;
+    final shortSigner = request.authorPubkey.length >= 8
+        ? request.authorPubkey.substring(0, 8)
+        : request.authorPubkey;
+
+    bool isAllowed(NexusMessage message) {
+      final allowed = isAuthorizedMessageDeleter(
+        message: message,
+        signerPubkey: request.authorPubkey,
+        myDid: myDid,
+        myNostrPubkey: myPubkey,
+        contactNostrPubkey: (did) =>
+            ContactService.instance.findByDid(did)?.nostrPubkey,
+      );
+      if (!allowed) {
+        print('[MSG-DELETE-RECV] Rejected: $shortSigner… is not the author '
+            'of msgId=${message.id}');
+      }
+      return allowed;
+    }
+
+    // Synchronous state lock before the first await: relays deliver the same
+    // Kind-5 several times in parallel.
+    final toDelete = <String>{};
+    final resolvedInCache = <String>{};
+    for (final messages in _conversationCache.values) {
+      messages.removeWhere((message) {
+        final eventId = message.nostrEventId;
+        if (eventId == null || !ids.contains(eventId)) return false;
+        resolvedInCache.add(eventId);
+        if (!isAllowed(message)) return false;
+        toDelete.add(message.id);
+        return true;
+      });
+    }
+
+    // Conversations that are not loaded yet: look up by the indexed column.
+    final remaining = ids.difference(resolvedInCache);
+    if (remaining.isNotEmpty) {
+      final rows =
+          await PodDatabase.instance.findMessagesByNostrEventIds(remaining);
+      for (final row in rows) {
+        final NexusMessage message;
+        try {
+          message = NexusMessage.fromJson(Map<String, dynamic>.from(row)
+            ..remove('conversation_id')
+            ..remove('message_id'));
+        } on FormatException catch (e) {
+          print('[MSG-DELETE-RECV] Stored message unreadable: $e');
+          continue;
+        } on TypeError catch (e) {
+          print('[MSG-DELETE-RECV] Stored message unreadable: $e');
+          continue;
+        }
+        if (!isAllowed(message)) continue;
+        toDelete.add(message.id);
+        // The conversation may have been loaded during the await.
+        _conversationCache[row['conversation_id'] as String?]
+            ?.removeWhere((m) => m.id == message.id);
+      }
+    }
+
+    if (toDelete.isEmpty) return;
+    for (final messageId in toDelete) {
+      await PodDatabase.instance.softDeleteMessage(messageId);
+    }
+    print('[MSG-DELETE-RECV] Applied: ${toDelete.length} message(s) deleted '
+        'by $shortSigner…');
+    ConversationService.instance.notifyUpdate();
+    notifyListeners();
+  }
+
   /// Saves the edited body for [msg] locally and updates the in-memory cache.
   Future<void> editMessage(
       NexusMessage msg, String convId, String newBody) async {
@@ -2811,6 +2901,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _msgSub?.cancel();
     _peersSub?.cancel();
     _reactionSub?.cancel();
+    _deletionSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
     // Only an initialized provider owns a running manager lifecycle. This also

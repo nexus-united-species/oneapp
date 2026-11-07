@@ -21,6 +21,10 @@ class NexusMessage {
   static const int maxHopCount = 7;
   static const String nostrEventIdMetaKey = 'nostr_event_id';
 
+  /// Hex pubkey that signed the Nostr wrapper event. Only the same key may
+  /// later delete the message via Kind-5 (NIP-09).
+  static const String nostrAuthorPubkeyMetaKey = 'nostr_author_pubkey';
+
   final String id;
   final String fromDid;
   final String toDid;
@@ -88,6 +92,11 @@ class NexusMessage {
 
   String? get nostrEventId {
     final value = metadata?[nostrEventIdMetaKey];
+    return value is String && value.isNotEmpty ? value : null;
+  }
+
+  String? get nostrAuthorPubkey {
+    final value = metadata?[nostrAuthorPubkeyMetaKey];
     return value is String && value.isNotEmpty ? value : null;
   }
 
@@ -200,10 +209,13 @@ class NexusMessage {
         '${hex.substring(20)}';
   }
 
-  NexusMessage withNostrEventId(String eventId) => copyWith(
+  NexusMessage withNostrEventId(String eventId, {String? authorPubkey}) =>
+      copyWith(
         metadata: {
           ...?metadata,
           nostrEventIdMetaKey: eventId,
+          if (authorPubkey != null && authorPubkey.isNotEmpty)
+            nostrAuthorPubkeyMetaKey: authorPubkey,
         },
       );
 
