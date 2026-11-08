@@ -34,7 +34,8 @@ Release-Reihenfolge steht separat in
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
-| TD-69 | Ungefilterte Abos holen weltweiten Fremdverkehr | Reaktionsabo ohne `#t`/`#p`/`authors` ([nostr_transport.dart:2036](../../lib/core/transport/nostr/nostr_transport.dart)) und Kind-5-Abo liefern Events fremder Nostr-Nutzer: im Test 3.816 Reaktionen von 763 und 24.082 Löschungen von 239 fremden Absendern in rund 6 Stunden, Log auf 177 MB. Kostet Akku, Datenvolumen und Leistung; jede fremde Löschung wird gegen alle Beiträge verglichen |
+| TD-73 | Über LAN zugestellte Nachrichten haben keine Nostr-Event-ID | Direktnachrichten: Ist der Empfänger im selben Netz, sendet der TransportManager nur per LAN ([transport_manager.dart](../../lib/core/transport/transport_manager.dart), `sendMessage`). Kanalbeiträge: gehen an alle Transporte, die LAN-Kopie kommt zuerst an und wird ohne Event-ID gespeichert; die Nostr-Kopie ergänzt sie nicht. Ohne Event-ID bleiben Reaktionen und „Für alle löschen“ beim Empfänger wirkungslos (`No valid Nostr event ID`, bzw. Kind-7/Kind-5 kommt an, findet aber keine Nachricht). Am Gerät bestätigt 08.11.2026 (Handy-Hotspot, beide Geräte im selben Netz) |
+| TD-74 | DM ohne Relay-Verbindung geht verloren | Ist beim Senden kein Relay verbunden, wird das Kind-4-Event an 0 Relays geschickt (`[PUBLISH] kind=4 … → 0 relay(s)`) und weder gespeichert noch nach dem Wiederverbinden erneut gesendet; die Retry-Queue gibt es nur für Governance-Events. Die Nachricht steht beim Absender als gesendet da, kommt aber nie an. Verstößt gegen Offline-First. Am Gerät bestätigt 08.11.2026 |
 
 ## Mittel
 
@@ -132,6 +133,15 @@ Liste:
   Reaktions-Event gemeldet und beim Gegenüber entfernt, aber nur, wenn der
   Kind-5 vom Reagierenden selbst stammt. TD-71 umfasst nur noch das eigene
   Zweitgerät. Neu: TD-72.
+- **TD-69 erledigt (07.11.2026, Gerätetest offen):** Die Kind-7- und
+  Kind-5-Abos holen keinen weltweiten Fremdverkehr mehr. Chat- und
+  Kanalreaktionen tragen jetzt `t=nexus-reaction`, Nachrichten- und
+  Reaktionslöschungen `t=nexus-message-delete`. Abonniert werden diese
+  Markierungen (bei Kind-5 zusätzlich `nexus-channel-delete`) sowie
+  unmarkierte Events vom eigenen Schlüssel und von Kontakten; Letzteres wird
+  mit der Kontaktliste alle 30 Minuten erneuert. Einschränkung: Reaktionen und
+  Löschungen älterer App-Versionen von Absendern, die kein Kontakt sind
+  (etwa in Kanälen), kommen nicht mehr an.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
