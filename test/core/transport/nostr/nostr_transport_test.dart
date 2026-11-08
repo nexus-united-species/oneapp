@@ -190,10 +190,11 @@ void main() {
       );
       await manager.sendMessage(msg, recipientDid: recipientDid);
 
-      // LAN should have sent it, BLE and Nostr should not
+      // LAN delivers it; Nostr gets a mirror copy so the message has a Nostr
+      // event ID for reactions and deletions (TD-73); BLE is not used.
       expect(lan.sent, contains(msg));
       expect(ble.sent, isEmpty);
-      expect(nostr.sent, isEmpty);
+      expect(nostr.sent, contains(msg));
     });
 
     test('peer merging: same DID visible on both LAN and Nostr', () async {

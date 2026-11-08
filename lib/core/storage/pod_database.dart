@@ -1285,6 +1285,44 @@ class PodDatabase {
     return result;
   }
 
+  /// Returns the stored message with the internal UUID [messageId], decrypted,
+  /// with `conversation_id` and `message_id` added; null if unknown.
+  Future<Map<String, dynamic>?> findMessageById(String messageId) async {
+    final rows = await _database.query(
+      'pod_messages',
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    final plain = await PodEncryption.decrypt(row['enc'] as String, _key);
+    return {
+      ...jsonDecode(plain) as Map<String, dynamic>,
+      'conversation_id': row['conversation_id'],
+      'message_id': row['message_id'],
+    };
+  }
+
+  /// Replaces the stored data of [messageId] with [data] if the row has no
+  /// Nostr event ID yet and [data] carries one (TD-73: ID learned after a
+  /// LAN delivery). Returns true if a row was updated.
+  Future<bool> attachNostrEventId(
+    String messageId,
+    Map<String, dynamic> data,
+  ) async {
+    final nostrEventId = _validNostrEventIdOf(data);
+    if (nostrEventId == null) return false;
+    final enc = await PodEncryption.encrypt(jsonEncode(data), _key);
+    final updated = await _database.update(
+      'pod_messages',
+      {'enc': enc, 'nostr_event_id': nostrEventId},
+      where: 'message_id = ? AND nostr_event_id IS NULL',
+      whereArgs: [messageId],
+    );
+    return updated > 0;
+  }
+
   /// Soft-deletes a message (hidden from listMessages, data preserved).
   Future<void> softDeleteMessage(String messageId) async {
     await _database.update(

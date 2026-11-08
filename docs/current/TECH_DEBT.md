@@ -34,7 +34,6 @@ Release-Reihenfolge steht separat in
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
-| TD-73 | Über LAN zugestellte Nachrichten haben keine Nostr-Event-ID | Direktnachrichten: Ist der Empfänger im selben Netz, sendet der TransportManager nur per LAN ([transport_manager.dart](../../lib/core/transport/transport_manager.dart), `sendMessage`). Kanalbeiträge: gehen an alle Transporte, die LAN-Kopie kommt zuerst an und wird ohne Event-ID gespeichert; die Nostr-Kopie ergänzt sie nicht. Ohne Event-ID bleiben Reaktionen und „Für alle löschen“ beim Empfänger wirkungslos (`No valid Nostr event ID`, bzw. Kind-7/Kind-5 kommt an, findet aber keine Nachricht). Am Gerät bestätigt 08.11.2026 (Handy-Hotspot, beide Geräte im selben Netz) |
 | TD-74 | DM ohne Relay-Verbindung geht verloren | Ist beim Senden kein Relay verbunden, wird das Kind-4-Event an 0 Relays geschickt (`[PUBLISH] kind=4 … → 0 relay(s)`) und weder gespeichert noch nach dem Wiederverbinden erneut gesendet; die Retry-Queue gibt es nur für Governance-Events. Die Nachricht steht beim Absender als gesendet da, kommt aber nie an. Verstößt gegen Offline-First. Am Gerät bestätigt 08.11.2026 |
 
 ## Mittel
@@ -142,6 +141,17 @@ Liste:
   mit der Kontaktliste alle 30 Minuten erneuert. Einschränkung: Reaktionen und
   Löschungen älterer App-Versionen von Absendern, die kein Kontakt sind
   (etwa in Kanälen), kommen nicht mehr an.
+- **TD-73 erledigt (08.11.2026, Gerätetest offen):** Über LAN zugestellte
+  Nachrichten bekommen ihre Nostr-Event-ID nachträglich. Direktnachrichten an
+  einen LAN-Partner gehen zusätzlich über Nostr. Kommt die Nostr-Kopie einer
+  bereits zugestellten Nachricht an, trägt der Empfänger deren Event-ID nach
+  (Cache und Datenbank), statt die Kopie wegzuwerfen; das gilt auch für
+  Kanalbeiträge. Nachgetragen wird nur, wenn Absender, Empfänger, Zeitpunkt
+  und die Ed25519-Signatur des Absenders übereinstimmen (bei unsignierten
+  Nachrichten der Text) und der Nostr-Schlüssel zum bekannten Schlüssel des
+  Verfassers passt; eine vorhandene Event-ID wird nie ersetzt. Ist der
+  Verfasser kein Kontakt, wird sein Nostr-Schlüssel nicht geprüft (Teil von
+  TD-39). Vor dem Update empfangene Nachrichten bleiben ohne Event-ID.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

@@ -39,6 +39,7 @@ class TransportManager {
 
   final _messageController = StreamController<NexusMessage>.broadcast();
   final _peersController = StreamController<List<NexusPeer>>.broadcast();
+  final _nostrReferenceController = StreamController<NexusMessage>.broadcast();
 
   // All known peers keyed by DID (merged across transports)
   final Map<String, NexusPeer> _peers = {};
@@ -61,6 +62,14 @@ class TransportManager {
 
   /// Stream of all incoming messages (deduplicated, expired messages filtered).
   Stream<NexusMessage> get onMessageReceived => _messageController.stream;
+
+  /// Copies of already delivered messages that carry a Nostr event ID (TD-73).
+  ///
+  /// A message that arrived first over LAN/BLE has no Nostr event ID; the
+  /// later Nostr copy is a duplicate and not delivered again, but its event
+  /// ID is needed for reactions and deletions, so it is offered here.
+  Stream<NexusMessage> get onNostrReference =>
+      _nostrReferenceController.stream;
 
   /// Stream of the merged peer list across all transports.
   Stream<List<NexusPeer>> get onPeersChanged => _peersController.stream;
@@ -165,14 +174,36 @@ class TransportManager {
       if (transport.state == TransportState.error) continue;
       try {
         await transport.sendMessage(msg, recipientDid: recipientDid);
-        return;
       } catch (_) {
         continue;
       }
+      if (transport.type == TransportType.lan) {
+        await _mirrorToNostr(msg, recipientDid);
+      }
+      return;
     }
     throw StateError(
       'No transport available. Register and start at least one transport.',
     );
+  }
+
+  /// Also publishes a LAN-delivered directed message over Nostr (TD-73), so
+  /// it gets a Nostr event ID that reactions and deletions can reference.
+  /// The receiver drops the copy as a duplicate but learns the event ID.
+  /// Best effort: the LAN delivery already succeeded.
+  Future<void> _mirrorToNostr(NexusMessage msg, String? recipientDid) async {
+    for (final transport in _transports) {
+      if (transport.type != TransportType.nostr ||
+          transport.state == TransportState.error) {
+        continue;
+      }
+      try {
+        await transport.sendMessage(msg, recipientDid: recipientDid);
+        debugPrint('[TRANSPORT] LAN delivery mirrored to Nostr: ${msg.id}');
+      } catch (e) {
+        debugPrint('[TRANSPORT] Nostr mirror failed for ${msg.id}: $e');
+      }
+    }
   }
 
   /// Stops all transports and cancels subscriptions.
@@ -214,7 +245,10 @@ class TransportManager {
     // Incoming messages
     _subs.add(transport.onMessageReceived.listen((msg) {
       if (msg.isExpired) return;
-      if (_isDuplicate(msg.id)) return;
+      if (_isDuplicate(msg.id)) {
+        if (msg.nostrEventId != null) _nostrReferenceController.add(msg);
+        return;
+      }
       _messageController.add(msg);
     }));
 
