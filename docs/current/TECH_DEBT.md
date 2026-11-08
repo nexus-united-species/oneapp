@@ -47,7 +47,6 @@ Release-Reihenfolge steht separat in
 | TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
 | TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | Der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Wer mit derselben Identität auf zwei Geräten arbeitet, sieht seine Reaktion nur auf dem Gerät, auf dem er sie gesetzt hat. Vor einer Änderung muss der Dorfplatz eigene Reaktionen getrennt behandeln, sonst entstehen Doppelungen |
-| TD-72 | Dorfplatz-Löschpfad entfernt Reaktionen ohne Absenderprüfung | `FeedService.handleIncomingDelete` löscht jede Reaktion, deren Event-ID in einem beliebigen Kind-5 steht ([feed_service.dart](../../lib/features/dorfplatz/feed_service.dart), `deleteReactionsByNostrEventIds`); der Absender wird nicht weitergereicht. Betrifft seit TD-67 auch Chat- und Kanalreaktionen. Folge: Ein Fremder kann angezeigte Emojis entfernen, keine Nachrichten. Teil der Empfangsverifikation (TD-39) |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
 
 ## Wartbarkeit
@@ -170,6 +169,19 @@ Liste:
   Event-ID das echte Event nicht verdrängt. Damit sind die Absenderprüfungen
   (Löschen nur durch den Verfasser usw.) belastbar. Die fachliche
   Autorisierung (TD-40, TD-72) bleibt offen.
+- **TD-72 erledigt (08.11.2026, Gerätetest offen):** Der Dorfplatz-Löschpfad
+  bekommt den Signaturschlüssel des Kind-5 mitgeliefert. Beiträge werden nur
+  gelöscht, wenn der Unterzeichner ihr Verfasser ist (neu gespeichert:
+  `FeedPost.authorPubkey` aus dem empfangenen Event, sonst Kontaktschlüssel);
+  Reaktionen nur, wenn sie für den Unterzeichner gespeichert sind. Die
+  ungeprüfte `deleteReactionsByNostrEventIds` ist entfernt. Einschränkung:
+  Vorher empfangene Beiträge von Nicht-Kontakten haben keinen gespeicherten
+  Schlüssel und lassen sich von deren Verfasser nicht mehr fernlöschen.
+- **TD-25 ergänzt (08.11.2026):** Der Test „Kind-31012 revoke event arrives
+  before vote“ in `delegation_incoming_test.dart` ist zeitabhängig: Delegation
+  und Widerruf entstehen in derselben Millisekunde, und die Stale-Prüfung
+  (`updatedAtMs <= existing`) verwirft den Widerruf. Einzeln läuft er durch,
+  in der Gesamtsuite gelegentlich nicht.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

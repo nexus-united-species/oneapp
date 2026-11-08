@@ -16,11 +16,33 @@ bool isAuthorizedMessageDeleter({
   required String myDid,
   required String? myNostrPubkey,
   required String? Function(String did) contactNostrPubkey,
+}) =>
+    isAuthorizedAuthorKey(
+      recordedAuthorPubkey: message.nostrAuthorPubkey,
+      authorDid: message.fromDid,
+      signerPubkey: signerPubkey,
+      myDid: myDid,
+      myNostrPubkey: myNostrPubkey,
+      contactNostrPubkey: contactNostrPubkey,
+    );
+
+/// Generic form of [isAuthorizedMessageDeleter] for any authored item
+/// (chat message, Dorfplatz post): true only if [signerPubkey] is the
+/// author's key, resolved from [recordedAuthorPubkey], the own key or the
+/// contact's key for [authorDid].
+bool isAuthorizedAuthorKey({
+  required String? recordedAuthorPubkey,
+  required String authorDid,
+  required String signerPubkey,
+  required String myDid,
+  required String? myNostrPubkey,
+  required String? Function(String did) contactNostrPubkey,
 }) {
   if (signerPubkey.isEmpty) return false;
-  final expected = message.nostrAuthorPubkey ??
-      (message.fromDid == myDid ? myNostrPubkey : null) ??
-      contactNostrPubkey(message.fromDid);
+  final expected = (recordedAuthorPubkey?.isNotEmpty ?? false)
+      ? recordedAuthorPubkey
+      : (authorDid == myDid ? myNostrPubkey : null) ??
+          contactNostrPubkey(authorDid);
   if (expected == null || expected.isEmpty) return false;
   return expected.toLowerCase() == signerPubkey.toLowerCase();
 }
