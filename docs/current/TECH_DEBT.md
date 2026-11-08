@@ -34,7 +34,6 @@ Release-Reihenfolge steht separat in
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
-| TD-74 | DM ohne Relay-Verbindung geht verloren | Ist beim Senden kein Relay verbunden, wird das Kind-4-Event an 0 Relays geschickt (`[PUBLISH] kind=4 … → 0 relay(s)`) und weder gespeichert noch nach dem Wiederverbinden erneut gesendet; die Retry-Queue gibt es nur für Governance-Events. Die Nachricht steht beim Absender als gesendet da, kommt aber nie an. Verstößt gegen Offline-First. Am Gerät bestätigt 08.11.2026 |
 
 ## Mittel
 
@@ -152,6 +151,15 @@ Liste:
   Verfassers passt; eine vorhandene Event-ID wird nie ersetzt. Ist der
   Verfasser kein Kontakt, wird sein Nostr-Schlüssel nicht geprüft (Teil von
   TD-39). Vor dem Update empfangene Nachrichten bleiben ohne Event-ID.
+- **TD-74 erledigt (08.11.2026, Gerätetest offen):** Direktnachrichten,
+  Kanalbeiträge, Reaktionen und Löschungen, die kein Relay angenommen hat,
+  landen signiert und verschlüsselt in der neuen Tabelle `nostr_outbox`
+  (DB v25, nur `CREATE TABLE IF NOT EXISTS`). Sobald ein Relay (wieder)
+  verbunden ist, werden sie unverändert erneut gesendet und nach Annahme
+  entfernt; nach 7 Tagen verfallen sie. Die Warteschlange übersteht einen
+  Neustart. Präsenz, Profil und Governance sind ausgenommen (Governance hat
+  ihre eigene Retry-Queue). Offen: Die Oberfläche zeigt noch nicht an, dass
+  eine Nachricht wartet.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

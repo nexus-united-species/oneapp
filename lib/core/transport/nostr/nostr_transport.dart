@@ -25,6 +25,7 @@ import '../nexus_message.dart';
 import '../nexus_peer.dart';
 import 'nostr_event.dart';
 import 'nostr_keys.dart';
+import 'nostr_outbox.dart';
 import 'nostr_relay_manager.dart';
 import 'publish_result.dart';
 import 'publish_result_dao.dart';
@@ -60,9 +61,21 @@ class NostrTransport implements MessageTransport {
     required this.localDid,
     required this.localPseudonym,
     NostrRelayManager? relayManager,
+    NostrOutboxStore? outboxStore,
     this.presenceInterval = const Duration(seconds: 30),
     this.peerTimeout = const Duration(minutes: 2),
-  }) : _relayManager = relayManager ?? NostrRelayManager();
+  }) : _relayManager = relayManager ?? NostrRelayManager() {
+    // Production passes a PodNostrOutboxStore; the in-memory default keeps
+    // tests independent of the database.
+    _outbox = NostrOutbox(
+      outboxStore ?? MemoryNostrOutboxStore(),
+      (event) => _relayManager.publish(event),
+    );
+  }
+
+  /// Chat events no relay accepted yet, resent on reconnect (TD-74).
+  late final NostrOutbox _outbox;
+  StreamSubscription<String>? _relayConnectedSub;
 
   static final RegExp _nostrEventIdPattern =
       RegExp(r'^[0-9a-fA-F]{64}$');
@@ -402,6 +415,11 @@ class NostrTransport implements MessageTransport {
     await _eventSub?.cancel();
     _eventSub = _relayManager.onEvent.listen(_onRelayEvent);
 
+    // Resend queued chat events whenever a relay (re)connects (TD-74).
+    await _relayConnectedSub?.cancel();
+    _relayConnectedSub =
+        _relayManager.onRelayConnected.listen((_) => _outbox.flush());
+
     if (_keys != null) {
       _setupSubscriptions();
       await _publishMetadata();
@@ -474,6 +492,8 @@ class NostrTransport implements MessageTransport {
     }
     _channelSubIds.clear();
     await _eventSub?.cancel();
+    await _relayConnectedSub?.cancel();
+    _relayConnectedSub = null;
     await _relayManager.stop();
     _peers.clear();
     _peerLastPresence.clear();
@@ -605,7 +625,7 @@ class NostrTransport implements MessageTransport {
       print('[CHANNEL-DEL-PUB]   $tag');
     }
     print('[CHANNEL-DEL-PUB] Targeting $connectedRelays relay(s)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
   }
 
   /// Publishes a NIP-28 Kind-41 channel metadata update.
@@ -684,7 +704,7 @@ class NostrTransport implements MessageTransport {
     print('[MSG-DELETE] Publishing kind=5: eventId=${targetEventId.substring(0, 8)}…');
     print('[MSG-DELETE] e-tag: $targetEventId');
     print('[MSG-DELETE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
   }
 
   /// Publishes a Kind-30000 cell announcement so other nodes can discover the cell.
@@ -858,8 +878,14 @@ class NostrTransport implements MessageTransport {
     print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${targetEventId.substring(0, 8)}…');
     print('[REACTION-SEND] Tags: e=$targetEventId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
     return event.id;
+  }
+
+  /// Publishes a chat event (DM, channel post, reaction, deletion); if no
+  /// relay accepts it, it is queued and resent on reconnect (TD-74).
+  void _publishChatEvent(NostrEvent event) {
+    unawaited(_outbox.publish(event));
   }
 
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
@@ -1680,7 +1706,7 @@ class NostrTransport implements MessageTransport {
       _rememberSentNostrEventId(message.id, event.id);
       print('[NOSTR] Publishing Kind-42 channel=$channel '
           'id=${event.id.substring(0, 8)}…');
-      _relayManager.publishFireAndForget(event);
+      _publishChatEvent(event);
       return;
     }
 
@@ -1736,7 +1762,7 @@ class NostrTransport implements MessageTransport {
       ],
     );
     _rememberSentNostrEventId(message.id, event.id);
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
     print('[NOSTR] DM published, event id: ${event.id.substring(0, 8)}…');
   }
 

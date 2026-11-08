@@ -86,6 +86,7 @@ class NostrRelayManager {
   final Map<String, _PendingPublish> _pendingPublishes = {};
 
   final _eventController = StreamController<NostrEvent>.broadcast();
+  final _relayConnectedController = StreamController<String>.broadcast();
 
   bool _running = false;
 
@@ -93,6 +94,10 @@ class NostrRelayManager {
 
   /// Stream of all incoming events across all relays (deduplicated by ID).
   Stream<NostrEvent> get onEvent => _eventController.stream;
+
+  /// URL of each relay whose connection has just been established
+  /// (initially and after every reconnect).
+  Stream<String> get onRelayConnected => _relayConnectedController.stream;
 
   /// Snapshot of all relay statuses.
   List<RelayStatus> get statuses => List.unmodifiable(_statuses.values);
@@ -307,6 +312,7 @@ class NostrRelayManager {
       _statuses[url]?.latencyMs = latency;
       _statuses[url]?.state = RelayState.connected;
       _resubscribe(url);
+      _relayConnectedController.add(url);
     }).catchError((Object e) {
       print('[NOSTR] $url – handshake error: $e');
       _statuses[url]?.state = RelayState.error;

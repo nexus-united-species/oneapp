@@ -20,10 +20,20 @@ class FakeRelayManager extends NostrRelayManager {
   FakeRelayManager() : super(relayUrls: []);
 
   final _eventCtrl = StreamController<NostrEvent>.broadcast();
+  final _connectedCtrl = StreamController<String>.broadcast();
   final List<NostrEvent> published = [];
+
+  /// Whether publish() reports the event as accepted by a relay.
+  bool accepts = false;
 
   @override
   Stream<NostrEvent> get onEvent => _eventCtrl.stream;
+
+  @override
+  Stream<String> get onRelayConnected => _connectedCtrl.stream;
+
+  /// Simulates a relay (re)connecting.
+  void connectRelay() => _connectedCtrl.add('wss://fake.relay');
 
   @override
   bool get hasConnectedRelay => true;
@@ -42,8 +52,8 @@ class FakeRelayManager extends NostrRelayManager {
     published.add(event);
     return RelayPublishOutcome(
       eventId: event.id,
-      sentToRelays: const [],
-      acceptedRelays: const [],
+      sentToRelays: accepts ? const ['wss://fake.relay'] : const [],
+      acceptedRelays: accepts ? const ['wss://fake.relay'] : const [],
       rejections: const {},
       timedOut: false,
     );
@@ -524,6 +534,42 @@ void main() {
         ['t', NostrTransport.messageDeleteTag],
       ]);
 
+      await stopTransport(transport, relay);
+    });
+
+    // ── TD-74: outbox for chat events published while offline ───────────────
+
+    test('a DM-deletion nobody accepted is resent when a relay connects',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishDeletion(validTargetEventId);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      relay.accepts = true;
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(relay.published, hasLength(2));
+      expect(relay.published.last.id, relay.published.first.id,
+          reason: 'The signed event is resent unchanged');
+
+      // Delivered now: a further reconnect sends nothing again.
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(relay.published, hasLength(2));
+      await stopTransport(transport, relay);
+    });
+
+    test('an accepted reaction is not resent on reconnect', () async {
+      final (:transport, :relay) = await startTransport();
+      relay.accepts = true;
+
+      transport.publishReaction(validTargetEventId, '👍');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(relay.published, hasLength(1));
       await stopTransport(transport, relay);
     });
 

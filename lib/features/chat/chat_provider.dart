@@ -25,6 +25,7 @@ import '../../core/transport/nexus_message.dart';
 import '../../core/transport/message_transport.dart';
 import '../../core/transport/nexus_peer.dart';
 import '../../core/transport/nostr/nostr_keys.dart';
+import '../../core/transport/nostr/nostr_outbox.dart';
 import '../../core/transport/nostr/nostr_transport.dart';
 import '../../core/transport/transport_manager.dart';
 import '../../services/background_service.dart';
@@ -248,6 +249,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _nostrTransport ??= NostrTransport(
         localDid: identity.did,
         localPseudonym: identity.pseudonym,
+        // Unsent chat events survive restarts and go out on reconnect.
+        outboxStore: PodNostrOutboxStore(),
       );
       _manager.registerTransport(_nostrTransport!);
 
