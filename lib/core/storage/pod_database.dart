@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 24,
+      version: 25,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -141,6 +141,7 @@ class PodDatabase {
       'CREATE INDEX IF NOT EXISTS idx_pod_messages_nostr_event_id '
       'ON pod_messages(nostr_event_id)',
     );
+    await _createNostrOutboxTable(db);
 
     // Verifiable Credentials (prepared for Phase 2)
     await db.execute('''
@@ -1113,7 +1114,24 @@ class PodDatabase {
       );
       print('[DB-MIGRATION-24] pod_messages.nostr_event_id + index added');
     }
+
+    if (oldVersion < 25) {
+      // TD-74: outbox for signed chat events no relay has accepted yet.
+      await _createNostrOutboxTable(db);
+      print('[DB-MIGRATION-25] nostr_outbox table created');
+    }
   }
+
+  /// Signed Nostr chat events waiting for a relay (TD-74). The event JSON is
+  /// stored encrypted in `enc`; `kind` is kept in clear only for diagnostics.
+  static Future<void> _createNostrOutboxTable(Database db) => db.execute('''
+        CREATE TABLE IF NOT EXISTS nostr_outbox (
+          event_id   TEXT PRIMARY KEY,
+          kind       INTEGER NOT NULL,
+          enc        TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      ''');
 
   // ── Identity namespace ────────────────────────────────────────────────────
 
@@ -1283,6 +1301,89 @@ class PodDatabase {
       }
     }
     return result;
+  }
+
+  /// Returns the stored message with the internal UUID [messageId], decrypted,
+  /// with `conversation_id` and `message_id` added; null if unknown.
+  Future<Map<String, dynamic>?> findMessageById(String messageId) async {
+    final rows = await _database.query(
+      'pod_messages',
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    final plain = await PodEncryption.decrypt(row['enc'] as String, _key);
+    return {
+      ...jsonDecode(plain) as Map<String, dynamic>,
+      'conversation_id': row['conversation_id'],
+      'message_id': row['message_id'],
+    };
+  }
+
+  /// Replaces the stored data of [messageId] with [data] if the row has no
+  /// Nostr event ID yet and [data] carries one (TD-73: ID learned after a
+  /// LAN delivery). Returns true if a row was updated.
+  Future<bool> attachNostrEventId(
+    String messageId,
+    Map<String, dynamic> data,
+  ) async {
+    final nostrEventId = _validNostrEventIdOf(data);
+    if (nostrEventId == null) return false;
+    final enc = await PodEncryption.encrypt(jsonEncode(data), _key);
+    final updated = await _database.update(
+      'pod_messages',
+      {'enc': enc, 'nostr_event_id': nostrEventId},
+      where: 'message_id = ? AND nostr_event_id IS NULL',
+      whereArgs: [messageId],
+    );
+    return updated > 0;
+  }
+
+  // ── Nostr outbox (TD-74) ────────────────────────────────────────────────
+
+  /// Stores a signed event that no relay has accepted yet (encrypted).
+  Future<void> putOutboxEvent({
+    required String eventId,
+    required int kind,
+    required String json,
+  }) async {
+    await _database.insert(
+      'nostr_outbox',
+      {
+        'event_id': eventId,
+        'kind': kind,
+        'enc': await PodEncryption.encrypt(json, _key),
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// The decrypted JSON of all queued events, oldest first.
+  Future<List<String>> listOutboxEvents() async {
+    final rows = await _database.query(
+      'nostr_outbox',
+      orderBy: 'created_at ASC',
+    );
+    final result = <String>[];
+    for (final row in rows) {
+      try {
+        result.add(await PodEncryption.decrypt(row['enc'] as String, _key));
+      } catch (e) {
+        debugPrint('[DB] listOutboxEvents: decrypt failed: $e');
+      }
+    }
+    return result;
+  }
+
+  Future<void> deleteOutboxEvent(String eventId) async {
+    await _database.delete(
+      'nostr_outbox',
+      where: 'event_id = ?',
+      whereArgs: [eventId],
+    );
   }
 
   /// Soft-deletes a message (hidden from listMessages, data preserved).

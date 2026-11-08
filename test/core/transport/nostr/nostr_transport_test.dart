@@ -20,10 +20,20 @@ class FakeRelayManager extends NostrRelayManager {
   FakeRelayManager() : super(relayUrls: []);
 
   final _eventCtrl = StreamController<NostrEvent>.broadcast();
+  final _connectedCtrl = StreamController<String>.broadcast();
   final List<NostrEvent> published = [];
+
+  /// Whether publish() reports the event as accepted by a relay.
+  bool accepts = false;
 
   @override
   Stream<NostrEvent> get onEvent => _eventCtrl.stream;
+
+  @override
+  Stream<String> get onRelayConnected => _connectedCtrl.stream;
+
+  /// Simulates a relay (re)connecting.
+  void connectRelay() => _connectedCtrl.add('wss://fake.relay');
 
   @override
   bool get hasConnectedRelay => true;
@@ -42,18 +52,25 @@ class FakeRelayManager extends NostrRelayManager {
     published.add(event);
     return RelayPublishOutcome(
       eventId: event.id,
-      sentToRelays: const [],
-      acceptedRelays: const [],
+      sentToRelays: accepts ? const ['wss://fake.relay'] : const [],
+      acceptedRelays: accepts ? const ['wss://fake.relay'] : const [],
       rejections: const {},
       timedOut: false,
     );
   }
 
-  @override
-  String subscribe(Map<String, dynamic> filter) => generateSubId();
+  /// Open subscriptions by ID, so tests can inspect the filters in use.
+  final Map<String, Map<String, dynamic>> openSubscriptions = {};
 
   @override
-  void closeSubscription(String subId) {}
+  String subscribe(Map<String, dynamic> filter) {
+    final subId = generateSubId();
+    openSubscriptions[subId] = filter;
+    return subId;
+  }
+
+  @override
+  void closeSubscription(String subId) => openSubscriptions.remove(subId);
 
   void injectEvent(NostrEvent event) => _eventCtrl.add(event);
 
@@ -183,10 +200,11 @@ void main() {
       );
       await manager.sendMessage(msg, recipientDid: recipientDid);
 
-      // LAN should have sent it, BLE and Nostr should not
+      // LAN delivers it; Nostr gets a mirror copy so the message has a Nostr
+      // event ID for reactions and deletions (TD-73); BLE is not used.
       expect(lan.sent, contains(msg));
       expect(ble.sent, isEmpty);
-      expect(nostr.sent, isEmpty);
+      expect(nostr.sent, contains(msg));
     });
 
     test('peer merging: same DID visible on both LAN and Nostr', () async {
@@ -441,6 +459,7 @@ void main() {
       expect(relay.published.single.content, '👍');
       expect(relay.published.single.tags, [
         ['e', validTargetEventId],
+        ['t', NostrTransport.reactionTag],
       ]);
 
       await stopTransport(transport, relay);
@@ -512,8 +531,116 @@ void main() {
       expect(relay.published.single.kind, NostrKind.deletion);
       expect(relay.published.single.tags, [
         ['e', validTargetEventId],
+        ['t', NostrTransport.messageDeleteTag],
       ]);
 
+      await stopTransport(transport, relay);
+    });
+
+    // ── TD-74: outbox for chat events published while offline ───────────────
+
+    test('a DM-deletion nobody accepted is resent when a relay connects',
+        () async {
+      final (:transport, :relay) = await startTransport();
+
+      transport.publishDeletion(validTargetEventId);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      relay.accepts = true;
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(relay.published, hasLength(2));
+      expect(relay.published.last.id, relay.published.first.id,
+          reason: 'The signed event is resent unchanged');
+
+      // Delivered now: a further reconnect sends nothing again.
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(relay.published, hasLength(2));
+      await stopTransport(transport, relay);
+    });
+
+    test('an accepted reaction is not resent on reconnect', () async {
+      final (:transport, :relay) = await startTransport();
+      relay.accepts = true;
+
+      transport.publishReaction(validTargetEventId, '👍');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      relay.connectRelay();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(relay.published, hasLength(1));
+      await stopTransport(transport, relay);
+    });
+
+    // ── TD-69: filtered Kind-5/Kind-7 subscriptions ─────────────────────────
+
+    Future<List<Map<String, dynamic>>> subsForKind(
+      FakeRelayManager relay,
+      int kind,
+    ) async {
+      // Channel discovery (incl. the Kind-5 subscription) is set up async.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      return relay.openSubscriptions.values
+          .where((f) => (f['kinds'] as List).contains(kind))
+          .toList();
+    }
+
+    for (final kind in [NostrKind.reaction, NostrKind.deletion]) {
+      test('no Kind-$kind subscription pulls global traffic', () async {
+        final (:transport, :relay) = await startTransport();
+
+        final subs = await subsForKind(relay, kind);
+
+        expect(subs, isNotEmpty);
+        for (final filter in subs) {
+          expect(
+            filter.containsKey('#t') || filter.containsKey('authors'),
+            isTrue,
+            reason: 'Unfiltered subscription: $filter',
+          );
+        }
+        await stopTransport(transport, relay);
+      });
+    }
+
+    test('Kind-7 subscriptions cover N.E.X.U.S. reactions and own key',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final myPubkey = transport.localNostrPubkeyHex;
+
+      final subs = await subsForKind(relay, NostrKind.reaction);
+
+      expect(
+        subs.any((f) =>
+            (f['#t'] as List?)?.contains(NostrTransport.reactionTag) ?? false),
+        isTrue,
+      );
+      expect(
+        subs.any((f) => (f['authors'] as List?)?.contains(myPubkey) ?? false),
+        isTrue,
+      );
+      await stopTransport(transport, relay);
+    });
+
+    test('Kind-5 subscriptions cover message and channel deletions',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final myPubkey = transport.localNostrPubkeyHex;
+
+      final subs = await subsForKind(relay, NostrKind.deletion);
+      final tagged = subs.where((f) => f.containsKey('#t'));
+
+      expect(
+        tagged.any((f) =>
+            (f['#t'] as List).contains(NostrTransport.messageDeleteTag) &&
+            (f['#t'] as List).contains('nexus-channel-delete')),
+        isTrue,
+      );
+      expect(
+        subs.any((f) => (f['authors'] as List?)?.contains(myPubkey) ?? false),
+        isTrue,
+      );
       await stopTransport(transport, relay);
     });
 

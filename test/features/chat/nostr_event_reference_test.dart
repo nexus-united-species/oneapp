@@ -788,6 +788,208 @@ void main() {
     });
   });
 
+  group('ChatProvider – Nostr event ID learned after LAN delivery (TD-73)', () {
+    const myDid = 'did:key:lan-reference-test';
+    late PodDatabase pod;
+    late _FakeNostrTransport nostrTransport;
+    late ChatProvider provider;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      TransportManager.instance.clearTransports();
+      pod = await _openTestDb();
+      IdentityService.instance.setForTest(
+        NexusIdentity(
+          publicKeyHex: '11' * 32,
+          pseudonym: 'LAN-Test',
+          did: myDid,
+        ),
+      );
+      nostrTransport = _FakeNostrTransport();
+      TransportManager.instance.registerTransport(nostrTransport);
+      provider = ChatProvider(
+        nostrTransport: nostrTransport,
+        reactionNotification:
+            ({required title, required body, String? payload}) async {},
+      );
+    });
+
+    tearDown(() async {
+      provider.dispose();
+      TransportManager.instance.clearTransports();
+      await nostrTransport.close();
+      IdentityService.instance.clearForTest();
+    });
+
+    /// Stores [message] as if it had arrived over LAN (no Nostr event ID).
+    Future<NexusMessage> storeLanMessage({
+      String fromDid = 'did:key:bob',
+      bool loadIntoCache = true,
+    }) async {
+      final message = NexusMessage.create(
+        fromDid: fromDid,
+        toDid: NexusMessage.broadcastDid,
+        channel: '#kanal',
+        body: 'kam über LAN',
+      );
+      await pod.insertMessage(
+        conversationId: '#kanal',
+        senderDid: fromDid,
+        data: message.toJson(),
+      );
+      if (loadIntoCache) await provider.getMessages('#kanal');
+      return message;
+    }
+
+    Future<void> learn(NexusMessage copy) async {
+      await provider.handleNostrReference(copy);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    test('attaches the event ID so a later reaction finds the message',
+        () async {
+      final message = await storeLanMessage();
+
+      await learn(
+        message.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      final cached = (await provider.getMessages('#kanal')).single;
+      expect(cached.nostrEventId, _validEventId);
+      expect(cached.nostrAuthorPubkey, _bobNostrPubkey);
+      final stored = await pod.findMessagesByNostrEventIds({_validEventId});
+      expect(stored.single['message_id'], message.id);
+
+      await nostrTransport.emitReaction({
+        'referencedEventId': _validEventId,
+        'senderPubkey': _malloryNostrPubkey,
+        'emoji': '🔥',
+        'reactionEventId': _otherEventId,
+      });
+      expect(await provider.getMessageReactions(message.id), {
+        '🔥': [_malloryNostrPubkey],
+      });
+    });
+
+    test('attaches the event ID in a conversation that is not loaded',
+        () async {
+      final message = await storeLanMessage(loadIntoCache: false);
+
+      await learn(
+        message.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      final stored = await pod.findMessagesByNostrEventIds({_validEventId});
+      expect(stored.single['message_id'], message.id);
+    });
+
+    test('lets the author delete the message for everyone afterwards',
+        () async {
+      final message = await storeLanMessage();
+      await learn(
+        message.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      await nostrTransport.emitDeletion(_bobNostrPubkey, [_validEventId]);
+
+      expect(await provider.getMessages('#kanal'), isEmpty);
+    });
+
+    test('ignores a copy whose content differs', () async {
+      final message = await storeLanMessage();
+      final forged = NexusMessage.fromJson({
+        ...message.toJson(),
+        'body': 'gefälscht',
+      }).withNostrEventId(_validEventId, authorPubkey: _malloryNostrPubkey);
+
+      await learn(forged);
+
+      expect((await provider.getMessages('#kanal')).single.nostrEventId,
+          isNull);
+    });
+
+    test('ignores a copy of an own message signed by a foreign key',
+        () async {
+      final message = await storeLanMessage(fromDid: myDid);
+
+      await learn(
+        message.withNostrEventId(
+          _validEventId,
+          authorPubkey: _malloryNostrPubkey,
+        ),
+      );
+
+      expect((await provider.getMessages('#kanal')).single.nostrEventId,
+          isNull);
+    });
+
+    test('matches a decrypted DM by its signature, not its body', () async {
+      const bobDid = 'did:key:bob';
+      final wire = NexusMessage.create(
+        fromDid: bobDid,
+        toDid: myDid,
+        body: 'E2E-Chiffretext',
+      ).withSignature('c2lnbmF0dXI=');
+      // Stored after E2E decryption: same signature, plaintext body.
+      final decrypted = NexusMessage.fromJson({
+        ...wire.toJson(),
+        'body': 'Klartext',
+      });
+      final convId = ([myDid, bobDid]..sort()).join(':');
+      await pod.insertMessage(
+        conversationId: convId,
+        senderDid: bobDid,
+        data: decrypted.toJson(),
+      );
+      await provider.getMessages(convId);
+
+      await learn(
+        wire.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      final stored = await pod.findMessagesByNostrEventIds({_validEventId});
+      expect(stored.single['body'], 'Klartext');
+    });
+
+    test('attaches the event ID when the LAN copy is stored a moment later',
+        () async {
+      final message = NexusMessage.create(
+        fromDid: 'did:key:bob',
+        toDid: NexusMessage.broadcastDid,
+        channel: '#kanal',
+        body: 'noch unterwegs',
+      );
+
+      final learning = provider.handleNostrReference(
+        message.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await pod.insertMessage(
+        conversationId: '#kanal',
+        senderDid: message.fromDid,
+        data: message.toJson(),
+      );
+      await learning;
+
+      final stored = await pod.findMessagesByNostrEventIds({_validEventId});
+      expect(stored.single['message_id'], message.id);
+    });
+
+    test('keeps an event ID that is already known', () async {
+      final message = await storeLanMessage();
+      await learn(
+        message.withNostrEventId(_validEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      await learn(
+        message.withNostrEventId(_otherEventId, authorPubkey: _bobNostrPubkey),
+      );
+
+      expect((await provider.getMessages('#kanal')).single.nostrEventId,
+          _validEventId);
+    });
+  });
+
   group('ChatProvider – reaction cleanup (TD-70) and withdrawal (TD-71)', () {
     const myDid = 'did:key:reaction-cleanup-test';
     late PodDatabase pod;

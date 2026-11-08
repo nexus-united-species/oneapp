@@ -25,6 +25,7 @@ import '../../core/transport/nexus_message.dart';
 import '../../core/transport/message_transport.dart';
 import '../../core/transport/nexus_peer.dart';
 import '../../core/transport/nostr/nostr_keys.dart';
+import '../../core/transport/nostr/nostr_outbox.dart';
 import '../../core/transport/nostr/nostr_transport.dart';
 import '../../core/transport/transport_manager.dart';
 import '../../services/background_service.dart';
@@ -78,6 +79,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _reactionNotification =
             reactionNotification ?? _showReactionNotification {
     if (nostrTransport != null) _subscribeToReactions(nostrTransport);
+    _nostrReferenceSub = _manager.onNostrReference.listen(handleNostrReference);
   }
 
   static Future<void> _showReactionNotification({
@@ -168,12 +170,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<List<({String id, String? name})>>? _channelDeletedSub;
   StreamSubscription<Map<String, dynamic>>? _reactionSub;
   StreamSubscription<MessageDeletionRequest>? _deletionSub;
+  StreamSubscription<NexusMessage>? _nostrReferenceSub;
   Timer? _muteExpiryTimer;
 
   /// Reactions already being processed, so parallel relay deliveries of the
   /// same Kind-7 are stored and announced once (bounded, oldest dropped).
   final Set<String> _seenReactionKeys = <String>{};
   static const int _seenReactionCap = 2000;
+
+  /// How often [handleNostrReference] looks for the stored LAN copy.
+  static const int _nostrRefDbAttempts = 4;
+  static const Duration _nostrRefDbRetryDelay = Duration(milliseconds: 500);
 
   /// Registers the incoming Kind-7 and Kind-5 listeners, replacing any
   /// previous ones.
@@ -242,6 +249,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _nostrTransport ??= NostrTransport(
         localDid: identity.did,
         localPseudonym: identity.pseudonym,
+        // Unsent chat events survive restarts and go out on reconnect.
+        outboxStore: PodNostrOutboxStore(),
       );
       _manager.registerTransport(_nostrTransport!);
 
@@ -2851,6 +2860,92 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Attaches the Nostr event ID of a late Nostr copy to a message that
+  /// arrived first over LAN/BLE without one (TD-73), so reactions and
+  /// deletions referencing that event find it.
+  ///
+  /// The copy is only trusted if its content equals the stored message and
+  /// its signing key matches the author's known key (own key or contact);
+  /// an already known event ID is never replaced.
+  @visibleForTesting
+  Future<void> handleNostrReference(NexusMessage copy) async {
+    final eventId = copy.nostrEventId;
+    final authorPubkey = copy.nostrAuthorPubkey;
+    if (!NostrTransport.isValidNostrEventId(eventId) || authorPubkey == null) {
+      return;
+    }
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final myPubkey = nostrPubkeyHex;
+
+    bool isGenuineCopyOf(NexusMessage stored) {
+      if (stored.nostrEventId != null) return false;
+      // Received DMs are stored decrypted while the Nostr copy still carries
+      // the E2E ciphertext, so the bodies differ. The sender's Ed25519
+      // signature covers the wire content and identifies the same message;
+      // only unsigned messages fall back to comparing the body.
+      final sameWireContent =
+          stored.signature != null && copy.signature != null
+              ? stored.signature == copy.signature
+              : stored.signature == null &&
+                  copy.signature == null &&
+                  stored.body == copy.body;
+      final sameContent = sameWireContent &&
+          stored.fromDid == copy.fromDid &&
+          stored.toDid == copy.toDid &&
+          stored.channel == copy.channel &&
+          // Stored messages keep millisecond precision only.
+          stored.timestamp.millisecondsSinceEpoch ==
+              copy.timestamp.millisecondsSinceEpoch;
+      if (!sameContent) {
+        print('[NOSTR-REF] Rejected: content differs for msgId=${copy.id}');
+        return false;
+      }
+      final expected = stored.fromDid == myDid
+          ? myPubkey
+          : ContactService.instance.findByDid(stored.fromDid)?.nostrPubkey;
+      if (expected != null &&
+          expected.toLowerCase() != authorPubkey.toLowerCase()) {
+        print('[NOSTR-REF] Rejected: foreign key for msgId=${copy.id}');
+        return false;
+      }
+      return true;
+    }
+
+    // Synchronous cache update before the first await.
+    for (final messages in _conversationCache.values) {
+      final index = messages.indexWhere((m) => m.id == copy.id);
+      if (index < 0) continue;
+      if (!isGenuineCopyOf(messages[index])) return;
+      messages[index] =
+          messages[index].withNostrEventId(eventId!, authorPubkey: authorPubkey);
+      break;
+    }
+
+    // The LAN copy may still be on its way into the database (the Nostr copy
+    // often arrives while it is being persisted), so retry briefly.
+    NexusMessage? stored;
+    for (var attempt = 0; attempt < _nostrRefDbAttempts; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_nostrRefDbRetryDelay);
+      final row = await PodDatabase.instance.findMessageById(copy.id);
+      stored = row == null ? null : _messageFromStoredRow(row);
+      if (stored != null) break;
+    }
+    if (stored == null) {
+      print('[NOSTR-REF] msgId=${copy.id} not stored — event ID kept in '
+          'memory only');
+      return;
+    }
+    if (!isGenuineCopyOf(stored)) return;
+    final attached = await PodDatabase.instance.attachNostrEventId(
+      copy.id,
+      stored.withNostrEventId(eventId!, authorPubkey: authorPubkey).toJson(),
+    );
+    if (attached) {
+      print('[NOSTR-REF] Attached event ${eventId.substring(0, 8)}… to '
+          'LAN-delivered msgId=${copy.id}');
+    }
+  }
+
   /// Applies an incoming Kind-5 deletion to chat and channel messages (TD-66).
   ///
   /// Only messages published by the signing key are removed (see
@@ -3005,6 +3100,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _peersSub?.cancel();
     _reactionSub?.cancel();
     _deletionSub?.cancel();
+    _nostrReferenceSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
     // Only an initialized provider owns a running manager lifecycle. This also

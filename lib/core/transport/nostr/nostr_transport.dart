@@ -25,6 +25,7 @@ import '../nexus_message.dart';
 import '../nexus_peer.dart';
 import 'nostr_event.dart';
 import 'nostr_keys.dart';
+import 'nostr_outbox.dart';
 import 'nostr_relay_manager.dart';
 import 'publish_result.dart';
 import 'publish_result_dao.dart';
@@ -60,12 +61,31 @@ class NostrTransport implements MessageTransport {
     required this.localDid,
     required this.localPseudonym,
     NostrRelayManager? relayManager,
+    NostrOutboxStore? outboxStore,
     this.presenceInterval = const Duration(seconds: 30),
     this.peerTimeout = const Duration(minutes: 2),
-  }) : _relayManager = relayManager ?? NostrRelayManager();
+  }) : _relayManager = relayManager ?? NostrRelayManager() {
+    // Production passes a PodNostrOutboxStore; the in-memory default keeps
+    // tests independent of the database.
+    _outbox = NostrOutbox(
+      outboxStore ?? MemoryNostrOutboxStore(),
+      (event) => _relayManager.publish(event),
+    );
+  }
+
+  /// Chat events no relay accepted yet, resent on reconnect (TD-74).
+  late final NostrOutbox _outbox;
+  StreamSubscription<String>? _relayConnectedSub;
 
   static final RegExp _nostrEventIdPattern =
       RegExp(r'^[0-9a-fA-F]{64}$');
+
+  /// `t` tag on chat/channel Kind-7 reactions, so receivers can subscribe to
+  /// N.E.X.U.S. reactions instead of every reaction on the relay (TD-69).
+  static const String reactionTag = 'nexus-reaction';
+
+  /// `t` tag on chat/channel Kind-5 deletions (messages and reactions).
+  static const String messageDeleteTag = 'nexus-message-delete';
 
   static bool isValidNostrEventId(String? value) =>
       value != null && _nostrEventIdPattern.hasMatch(value);
@@ -141,6 +161,10 @@ class NostrTransport implements MessageTransport {
   String? _metadataSubId;
   String? _channelDiscoverySubId;
   String? _channelDeleteSubId;
+
+  /// Kind-5 from own key and contacts without a N.E.X.U.S. tag (older app
+  /// versions); the tagged subscription is [_channelDeleteSubId].
+  String? _deletionAuthorsSubId;
   String? _permitSubId;
 
   // Dedup set for incoming Kind-31006 permit events (synchronous check, no await).
@@ -285,6 +309,10 @@ class NostrTransport implements MessageTransport {
   String? _feedSubId;
   String? _reactionSubId;
 
+  /// Kind-7 from own key and contacts without a N.E.X.U.S. tag (older app
+  /// versions); the tagged subscription is [_reactionSubId].
+  String? _reactionAuthorsSubId;
+
   /// Dedicated author-based subscription for Kind-6 reposts.
   /// Public relays do NOT index Kind-6 by #t tags, so a tag-filtered sub
   /// never delivers reposts.  This sub uses only 'authors' + 'since' so the
@@ -387,6 +415,11 @@ class NostrTransport implements MessageTransport {
     await _eventSub?.cancel();
     _eventSub = _relayManager.onEvent.listen(_onRelayEvent);
 
+    // Resend queued chat events whenever a relay (re)connects (TD-74).
+    await _relayConnectedSub?.cancel();
+    _relayConnectedSub =
+        _relayManager.onRelayConnected.listen((_) => _outbox.flush());
+
     if (_keys != null) {
       _setupSubscriptions();
       await _publishMetadata();
@@ -431,6 +464,18 @@ class NostrTransport implements MessageTransport {
       _relayManager.closeSubscription(_reactionSubId!);
       _reactionSubId = null;
     }
+    if (_reactionAuthorsSubId != null) {
+      _relayManager.closeSubscription(_reactionAuthorsSubId!);
+      _reactionAuthorsSubId = null;
+    }
+    if (_channelDeleteSubId != null) {
+      _relayManager.closeSubscription(_channelDeleteSubId!);
+      _channelDeleteSubId = null;
+    }
+    if (_deletionAuthorsSubId != null) {
+      _relayManager.closeSubscription(_deletionAuthorsSubId!);
+      _deletionAuthorsSubId = null;
+    }
     if (_feedRepostSubId != null) _relayManager.closeSubscription(_feedRepostSubId!);
     if (_proposalSubId != null) _relayManager.closeSubscription(_proposalSubId!);
     if (_voteSubId != null) _relayManager.closeSubscription(_voteSubId!);
@@ -447,6 +492,8 @@ class NostrTransport implements MessageTransport {
     }
     _channelSubIds.clear();
     await _eventSub?.cancel();
+    await _relayConnectedSub?.cancel();
+    _relayConnectedSub = null;
     await _relayManager.stop();
     _peers.clear();
     _peerLastPresence.clear();
@@ -578,7 +625,7 @@ class NostrTransport implements MessageTransport {
       print('[CHANNEL-DEL-PUB]   $tag');
     }
     print('[CHANNEL-DEL-PUB] Targeting $connectedRelays relay(s)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
   }
 
   /// Publishes a NIP-28 Kind-41 channel metadata update.
@@ -649,6 +696,7 @@ class NostrTransport implements MessageTransport {
       content: 'Nachricht gelöscht',
       tags: [
         ['e', targetEventId],
+        ['t', messageDeleteTag],
       ],
     );
     final connectedRelays =
@@ -656,7 +704,7 @@ class NostrTransport implements MessageTransport {
     print('[MSG-DELETE] Publishing kind=5: eventId=${targetEventId.substring(0, 8)}…');
     print('[MSG-DELETE] e-tag: $targetEventId');
     print('[MSG-DELETE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
   }
 
   /// Publishes a Kind-30000 cell announcement so other nodes can discover the cell.
@@ -822,6 +870,7 @@ class NostrTransport implements MessageTransport {
       content: emoji,
       tags: [
         ['e', targetEventId],
+        ['t', reactionTag],
       ],
     );
     final connectedRelays =
@@ -829,8 +878,14 @@ class NostrTransport implements MessageTransport {
     print('[REACTION-SEND] Publishing kind=7: emoji=$emoji target=${targetEventId.substring(0, 8)}…');
     print('[REACTION-SEND] Tags: e=$targetEventId');
     print('[REACTION-SEND] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
     return event.id;
+  }
+
+  /// Publishes a chat event (DM, channel post, reaction, deletion); if no
+  /// relay accepts it, it is queued and resent on reconnect (TD-74).
+  void _publishChatEvent(NostrEvent event) {
+    unawaited(_outbox.publish(event));
   }
 
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
@@ -1651,7 +1706,7 @@ class NostrTransport implements MessageTransport {
       _rememberSentNostrEventId(message.id, event.id);
       print('[NOSTR] Publishing Kind-42 channel=$channel '
           'id=${event.id.substring(0, 8)}…');
-      _relayManager.publishFireAndForget(event);
+      _publishChatEvent(event);
       return;
     }
 
@@ -1707,7 +1762,7 @@ class NostrTransport implements MessageTransport {
       ],
     );
     _rememberSentNostrEventId(message.id, event.id);
-    _relayManager.publishFireAndForget(event);
+    _publishChatEvent(event);
     print('[NOSTR] DM published, event id: ${event.id.substring(0, 8)}…');
   }
 
@@ -1867,6 +1922,12 @@ class NostrTransport implements MessageTransport {
     });
     print('[NOSTR] Metadata refresh sub: $_metadataSubId  '
         '(${pubkeys.length} contacts)');
+
+    // New contacts must also reach the author-based Kind-7/Kind-5 subs.
+    final authors = _knownAuthorPubkeys();
+    final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    _subscribeReactionAuthors(nowSeconds - 7 * 86400, authors);
+    _subscribeDeletionAuthors(authors);
   }
 
   void _startPresenceTimer() {
@@ -2062,26 +2123,18 @@ class NostrTransport implements MessageTransport {
     });
     print('[NOSTR] Feed sub: $_feedSubId');
 
-    // NIP-25 reactions contain an e-tag but do not require a Dorfplatz t-tag.
-    // Subscribe without #t so chat/channel reactions reach _handleReaction().
-    if (_reactionSubId != null) {
-      _relayManager.closeSubscription(_reactionSubId!);
-    }
-    _reactionSubId = _relayManager.subscribe({
-      'kinds': [NostrKind.reaction],
-      'since': nowSeconds - 7 * 86400,
-    });
-    print('[NOSTR] Reaction sub (no #t filter): $_reactionSubId');
+    // Own key + known contacts: author filter for subscriptions that must not
+    // pull the relay's global traffic.
+    final feedAuthors = _knownAuthorPubkeys();
+
+    // Chat/channel reactions (TD-69): N.E.X.U.S.-tagged ones from anyone,
+    // plus untagged ones (older app versions) from own key and contacts.
+    // Previously unfiltered, which pulled every reaction on the relay.
+    _setupReactionSubscriptions(nowSeconds - 7 * 86400, feedAuthors);
 
     // Author-based feed subscription: fetch own posts + known contacts' posts
     // from the last 30 days.  This restores posts after a seed-phrase restore
     // when the local DB is empty but Nostr still holds the events.
-    final feedAuthors = <String>{
-      if (myPubkey.isNotEmpty) myPubkey,
-      ...ContactService.instance.contacts
-          .where((c) => c.nostrPubkey != null && c.nostrPubkey!.isNotEmpty)
-          .map((c) => c.nostrPubkey!),
-    };
     if (feedAuthors.isNotEmpty) {
       _relayManager.subscribe({
         'kinds': [NostrKind.textNote],
@@ -2704,17 +2757,73 @@ class NostrTransport implements MessageTransport {
     print('[CHANNEL-SYNC] Subscribing since=0 (all-time, tombstone-filtered)');
     print('[CHANNEL-SYNC] subId=$_channelDiscoverySubId');
 
-    // Subscribe to ALL Kind-5 deletion events — no #t filter because public
-    // relays do not index custom tags like nexus-channel-delete.  The Dart-side
-    // router in _onRelayEvent inspects t-tags and dispatches to
-    // _handleChannelDeletion or _handleFeedDeletion accordingly.
+    // Kind-5 deletions (TD-69): channel and message deletions by their
+    // N.E.X.U.S. tag, plus untagged ones (older app versions) from own key
+    // and contacts. Dorfplatz deletions come through the feed subscription.
+    // The router in _onRelayEvent still dispatches by t-tag.
+    _setupDeletionSubscriptions(_knownAuthorPubkeys());
+  }
+
+  /// Own Nostr key plus the keys of all known contacts.
+  Set<String> _knownAuthorPubkeys() => {
+        if (_keys != null) _keys!.publicKeyHex,
+        ...ContactService.instance.contacts
+            .where((c) => c.nostrPubkey != null && c.nostrPubkey!.isNotEmpty)
+            .map((c) => c.nostrPubkey!),
+      };
+
+  /// (Re)creates the two Kind-7 subscriptions for chat/channel reactions.
+  void _setupReactionSubscriptions(int since, Set<String> authors) {
+    if (_reactionSubId != null) {
+      _relayManager.closeSubscription(_reactionSubId!);
+    }
+    _reactionSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.reaction],
+      '#t': [reactionTag],
+      'since': since,
+    });
+    _subscribeReactionAuthors(since, authors);
+    print('[NOSTR] Reaction subs: #t=$reactionTag ($_reactionSubId), '
+        '${authors.length} known authors ($_reactionAuthorsSubId)');
+  }
+
+  void _subscribeReactionAuthors(int since, Set<String> authors) {
+    if (_reactionAuthorsSubId != null) {
+      _relayManager.closeSubscription(_reactionAuthorsSubId!);
+      _reactionAuthorsSubId = null;
+    }
+    if (authors.isEmpty) return;
+    _reactionAuthorsSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.reaction],
+      'authors': authors.toList(),
+      'since': since,
+    });
+  }
+
+  void _subscribeDeletionAuthors(Set<String> authors) {
+    if (_deletionAuthorsSubId != null) {
+      _relayManager.closeSubscription(_deletionAuthorsSubId!);
+      _deletionAuthorsSubId = null;
+    }
+    if (authors.isEmpty) return;
+    _deletionAuthorsSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.deletion],
+      'authors': authors.toList(),
+    });
+  }
+
+  /// (Re)creates the two Kind-5 subscriptions for channel/message deletions.
+  void _setupDeletionSubscriptions(Set<String> authors) {
     if (_channelDeleteSubId != null) {
       _relayManager.closeSubscription(_channelDeleteSubId!);
     }
     _channelDeleteSubId = _relayManager.subscribe({
       'kinds': [NostrKind.deletion],
+      '#t': ['nexus-channel-delete', messageDeleteTag],
     });
-    print('[CHANNEL-SYNC] Kind-5 sub (all, no #t filter): $_channelDeleteSubId');
+    _subscribeDeletionAuthors(authors);
+    print('[CHANNEL-SYNC] Kind-5 subs: tagged ($_channelDeleteSubId), '
+        '${authors.length} known authors ($_deletionAuthorsSubId)');
   }
 
   void _handleChannelCreateEvent(NostrEvent event) {

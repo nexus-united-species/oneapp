@@ -34,7 +34,6 @@ Release-Reihenfolge steht separat in
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
-| TD-69 | Ungefilterte Abos holen weltweiten Fremdverkehr | Reaktionsabo ohne `#t`/`#p`/`authors` ([nostr_transport.dart:2036](../../lib/core/transport/nostr/nostr_transport.dart)) und Kind-5-Abo liefern Events fremder Nostr-Nutzer: im Test 3.816 Reaktionen von 763 und 24.082 Löschungen von 239 fremden Absendern in rund 6 Stunden, Log auf 177 MB. Kostet Akku, Datenvolumen und Leistung; jede fremde Löschung wird gegen alle Beiträge verglichen |
 
 ## Mittel
 
@@ -132,6 +131,35 @@ Liste:
   Reaktions-Event gemeldet und beim Gegenüber entfernt, aber nur, wenn der
   Kind-5 vom Reagierenden selbst stammt. TD-71 umfasst nur noch das eigene
   Zweitgerät. Neu: TD-72.
+- **TD-69 erledigt (07.11.2026, Gerätetest offen):** Die Kind-7- und
+  Kind-5-Abos holen keinen weltweiten Fremdverkehr mehr. Chat- und
+  Kanalreaktionen tragen jetzt `t=nexus-reaction`, Nachrichten- und
+  Reaktionslöschungen `t=nexus-message-delete`. Abonniert werden diese
+  Markierungen (bei Kind-5 zusätzlich `nexus-channel-delete`) sowie
+  unmarkierte Events vom eigenen Schlüssel und von Kontakten; Letzteres wird
+  mit der Kontaktliste alle 30 Minuten erneuert. Einschränkung: Reaktionen und
+  Löschungen älterer App-Versionen von Absendern, die kein Kontakt sind
+  (etwa in Kanälen), kommen nicht mehr an.
+- **TD-73 erledigt (08.11.2026, Gerätetest offen):** Über LAN zugestellte
+  Nachrichten bekommen ihre Nostr-Event-ID nachträglich. Direktnachrichten an
+  einen LAN-Partner gehen zusätzlich über Nostr. Kommt die Nostr-Kopie einer
+  bereits zugestellten Nachricht an, trägt der Empfänger deren Event-ID nach
+  (Cache und Datenbank), statt die Kopie wegzuwerfen; das gilt auch für
+  Kanalbeiträge. Nachgetragen wird nur, wenn Absender, Empfänger, Zeitpunkt
+  und die Ed25519-Signatur des Absenders übereinstimmen (bei unsignierten
+  Nachrichten der Text) und der Nostr-Schlüssel zum bekannten Schlüssel des
+  Verfassers passt; eine vorhandene Event-ID wird nie ersetzt. Ist der
+  Verfasser kein Kontakt, wird sein Nostr-Schlüssel nicht geprüft (Teil von
+  TD-39). Vor dem Update empfangene Nachrichten bleiben ohne Event-ID.
+- **TD-74 erledigt (08.11.2026, Gerätetest offen):** Direktnachrichten,
+  Kanalbeiträge, Reaktionen und Löschungen, die kein Relay angenommen hat,
+  landen signiert und verschlüsselt in der neuen Tabelle `nostr_outbox`
+  (DB v25, nur `CREATE TABLE IF NOT EXISTS`). Sobald ein Relay (wieder)
+  verbunden ist, werden sie unverändert erneut gesendet und nach Annahme
+  entfernt; nach 7 Tagen verfallen sie. Die Warteschlange übersteht einen
+  Neustart. Präsenz, Profil und Governance sind ausgenommen (Governance hat
+  ihre eigene Retry-Queue). Offen: Die Oberfläche zeigt noch nicht an, dass
+  eine Nachricht wartet.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
