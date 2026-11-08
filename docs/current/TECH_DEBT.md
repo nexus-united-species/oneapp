@@ -11,10 +11,8 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Auswirkung | Zielrichtung |
 |---|---|---|---|
-| TD-36 / F-001 | UUIDs in Nostr-`e`-Tags | Relay-Ablehnung; Reaktionen/Löschungen fehlen auf anderen Geräten | reale 64-Hex-Event-ID persistieren und nutzen |
 | TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
 | TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
-| TD-39 / V-002 | Keine Signaturprüfung eingehender Nostr-Events | gefälschte Events können Zustand verändern | `NostrEvent.verify()` vor Dispatch, kompatibel ausrollen |
 | TD-40 / V-003/V-005 | Keine vollständige Senderautorisierung | unberechtigte Zellauflösung, Votes oder Anträge möglich | Pubkey gegen Rolle/Mitgliedschaft prüfen |
 
 ## Hoch – vor breiter Nutzung
@@ -160,6 +158,18 @@ Liste:
   Neustart. Präsenz, Profil und Governance sind ausgenommen (Governance hat
   ihre eigene Retry-Queue). Offen: Die Oberfläche zeigt noch nicht an, dass
   eine Nachricht wartet.
+- **TD-36 / F-001 erledigt:** Mit PR #4 (07.11.2026) in den Hauptstand
+  übernommen und im Zwei-Geräte-Test bestätigt.
+- **TD-39 / V-002 erledigt (08.11.2026, Gerätetest offen):** Jedes
+  eingehende Nostr-Event wird vor der Weitergabe auf korrekte Event-ID und
+  Schnorr-Signatur geprüft (`NostrEventVerifier` im `NostrRelayManager`);
+  ungültige Events werden mit `[NOSTR-VERIFY] Rejected` verworfen. Die
+  Prüfung läuft stapelweise in einem Hintergrund-Isolate (rund 25 ms pro
+  Event in reinem Dart), Reihenfolge und Deduplizierung bleiben erhalten;
+  dedupliziert wird erst nach der Prüfung, damit eine Fälschung mit fremder
+  Event-ID das echte Event nicht verdrängt. Damit sind die Absenderprüfungen
+  (Löschen nur durch den Verfasser usw.) belastbar. Die fachliche
+  Autorisierung (TD-40, TD-72) bleibt offen.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'nostr_event.dart';
+import 'nostr_event_verifier.dart';
 import 'publish_result.dart';
 
 /// Default public Nostr relays.
@@ -380,8 +381,18 @@ class NostrRelayManager {
     }
   }
 
-  /// Seen event IDs for relay-level deduplication.
-  final Set<String> _seenEventIds = {};
+  /// Verifies ID and signature of every incoming event before it is passed
+  /// on (TD-39) and deduplicates across relays.
+  late final NostrEventVerifier _verifier =
+      NostrEventVerifier(onValid: _eventController.add);
+
+  /// Feeds a raw relay message through the normal receive path (tests).
+  @visibleForTesting
+  void debugHandleMessage(String url, String data) => _handleMessage(url, data);
+
+  /// Completes once all received events are verified (tests).
+  @visibleForTesting
+  Future<void> get debugVerifierIdle => _verifier.idle;
 
   static String _shortUrl(String url) =>
       url.replaceAll('wss://', '').replaceAll('ws://', '');
@@ -445,14 +456,9 @@ class NostrRelayManager {
               'created_at=${event.createdAt} '
               '(relay: ${_shortUrl(url)})');
 
-          // Relay-level deduplication
-          final isNew = !_seenEventIds.contains(event.id);
-          print('[SYNC] Event is new: $isNew  id=${event.id.substring(0, 8)}');
-          if (!isNew) return;
-          if (_seenEventIds.length > 5000) _seenEventIds.clear();
-          _seenEventIds.add(event.id);
-
-          _eventController.add(event);
+          // Signature check + cross-relay deduplication; only valid events
+          // reach _eventController (TD-39).
+          _verifier.add(event);
 
         case 'OK':
           // ["OK", eventId, accepted, message]
