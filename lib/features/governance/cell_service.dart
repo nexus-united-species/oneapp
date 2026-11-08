@@ -96,6 +96,25 @@ class CellService {
   VoidCallback? onGovernanceMembershipChanged;
 
   List<Cell> get myCells => List.unmodifiable(_myCells);
+
+  /// `{cellId: {did: departedAtMs}}` for members who left or were removed.
+  final Map<String, Map<String, int>> _departures = {};
+
+  /// When [did] left [cellId] (ms since epoch), or null if never recorded.
+  int? departedAtMs(String cellId, String did) => _departures[cellId]?[did];
+
+  /// Records a departure in memory synchronously, then persists it.
+  Future<void> _recordDeparture(
+      String cellId, String did, String action) async {
+    final departedAt = DateTime.now().toUtc().millisecondsSinceEpoch;
+    (_departures[cellId] ??= {})[did] = departedAt;
+    try {
+      await PodDatabase.instance
+          .upsertCellDeparture(cellId, did, departedAt, action);
+    } catch (e) {
+      print('[CELL] Departure persist failed for $cellId: $e');
+    }
+  }
   List<Cell> get discoveredCells => List.unmodifiable(_discovered);
 
   /// Returns true if [cellId] has been permanently tombstoned (dissolved or
@@ -288,6 +307,16 @@ class CellService {
         print('[ZOMBIE-V3] WipeAt at load: ${rawWipeAt ?? "NOT SET"}');
       }
       // ─────────────────────────────────────────────────────────────────────
+
+      // ── Austritte laden (zählende Stimmen nach Austritt) ────────────────
+      try {
+        final departures = await PodDatabase.instance.listCellDepartures();
+        _departures
+          ..clear()
+          ..addAll(departures);
+      } catch (e) {
+        print('[CELLS-INIT] Departures load failed: $e');
+      }
 
       // ── Schritt 4: Eigene Zellen aus DB laden ─────────────────────────────
       print('[CELLS-INIT] Schritt 4: Eigene Zellen aus SQLite laden');
@@ -998,8 +1027,10 @@ class CellService {
     }
 
     // Remove locally first.
-    await PodDatabase.instance.deleteCellMember(cellId, memberDid);
     _members[cellId]?.removeWhere((m) => m.did == memberDid);
+    final departure = _recordDeparture(cellId, memberDid, 'removed');
+    await PodDatabase.instance.deleteCellMember(cellId, memberDid);
+    await departure;
 
     // Update member count on cell.
     final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
@@ -1114,7 +1145,9 @@ class CellService {
 
     // Default path: action == 'left' or 'removed' for someone other than me.
     _members[cellId]?.removeWhere((m) => m.did == targetDid);
+    final departure = _recordDeparture(cellId, targetDid, action);
     await PodDatabase.instance.deleteCellMember(cellId, targetDid);
+    await departure;
 
     // Update member count.
     final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
@@ -1695,8 +1728,13 @@ class CellService {
       (_members[cellId] ??= []).add(member);
 
   @visibleForTesting
+  void setDepartureForTest(String cellId, String did, int departedAtMs) =>
+      (_departures[cellId] ??= {})[did] = departedAtMs;
+
+  @visibleForTesting
   void clearForTest() {
     _myCells.clear();
     _members.clear();
+    _departures.clear();
   }
 }

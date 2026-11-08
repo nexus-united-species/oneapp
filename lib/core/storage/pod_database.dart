@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 25,
+      version: 26,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -142,6 +142,7 @@ class PodDatabase {
       'ON pod_messages(nostr_event_id)',
     );
     await _createNostrOutboxTable(db);
+    await _createCellDeparturesTable(db);
 
     // Verifiable Credentials (prepared for Phase 2)
     await db.execute('''
@@ -1120,7 +1121,25 @@ class PodDatabase {
       await _createNostrOutboxTable(db);
       print('[DB-MIGRATION-25] nostr_outbox table created');
     }
+
+    if (oldVersion < 26) {
+      // Votes of members who left after voting started no longer count.
+      await _createCellDeparturesTable(db);
+      print('[DB-MIGRATION-26] cell_departures table created');
+    }
   }
+
+  /// Members who left or were removed from a cell. `departed_at` (ms) stays
+  /// in clear so it can be compared without decrypting; details are in `enc`.
+  static Future<void> _createCellDeparturesTable(Database db) => db.execute('''
+        CREATE TABLE IF NOT EXISTS cell_departures (
+          cell_id     TEXT NOT NULL,
+          did         TEXT NOT NULL,
+          departed_at INTEGER NOT NULL,
+          enc         TEXT NOT NULL,
+          PRIMARY KEY (cell_id, did)
+        )
+      ''');
 
   /// Signed Nostr chat events waiting for a relay (TD-74). The event JSON is
   /// stored encrypted in `enc`; `kind` is kept in clear only for diagnostics.
@@ -1384,6 +1403,37 @@ class PodDatabase {
       where: 'event_id = ?',
       whereArgs: [eventId],
     );
+  }
+
+  // ── Cell departures ───────────────────────────────────────────────────────
+
+  /// Records (or refreshes) that [did] left [cellId] at [departedAtMs].
+  Future<void> upsertCellDeparture(
+      String cellId, String did, int departedAtMs, String action) async {
+    final enc = await PodEncryption.encrypt(
+        jsonEncode({'action': action}), _key);
+    await _database.insert(
+      'cell_departures',
+      {
+        'cell_id': cellId,
+        'did': did,
+        'departed_at': departedAtMs,
+        'enc': enc,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// All recorded departures as `{cellId: {did: departedAtMs}}`.
+  Future<Map<String, Map<String, int>>> listCellDepartures() async {
+    final rows = await _database.query('cell_departures',
+        columns: ['cell_id', 'did', 'departed_at']);
+    final result = <String, Map<String, int>>{};
+    for (final row in rows) {
+      (result[row['cell_id'] as String] ??= {})[row['did'] as String] =
+          row['departed_at'] as int;
+    }
+    return result;
   }
 
   /// Soft-deletes a message (hidden from listMessages, data preserved).

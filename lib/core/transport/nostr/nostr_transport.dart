@@ -11,6 +11,7 @@ import 'package:cryptography/cryptography.dart' show AesCbc, MacAlgorithm,
 
 import '../../../core/config/system_config.dart';
 import '../../../core/contacts/contact_service.dart';
+import '../../../core/identity/identity_proof.dart';
 import '../../../core/identity/identity_service.dart';
 import '../../../core/identity/profile.dart';
 import '../../../core/identity/profile_service.dart';
@@ -370,6 +371,19 @@ class NostrTransport implements MessageTransport {
     _encryptionPublicKeyHex = hexKey;
   }
 
+  Map<String, String>? _identityProof;
+
+  /// Sets the signed DID ↔ Nostr-key binding attached to governance events
+  /// that receivers must authorize (ADR-0001, TD-40).
+  void setIdentityProof(Map<String, String> proof) {
+    _identityProof = Map.unmodifiable(proof);
+  }
+
+  Map<String, dynamic> _withIdentityProof(Map<String, dynamic> content) => {
+        ...content,
+        if (_identityProof != null) IdentityProof.contentKey: _identityProof,
+      };
+
   /// Persists the timestamp of the last received message so that the next
   /// [_setupSubscriptions] call fetches only events newer than this point.
   /// Call this whenever a message is received (from any transport).
@@ -720,7 +734,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.cellAnnounce,
-      content: jsonEncode(cellJson),
+      content: jsonEncode(_withIdentityProof(cellJson)),
       tags: [
         ['d', cellId],
         ['t', 'nexus-cell'],
@@ -817,7 +831,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.cellAnnounce,
-      content: jsonEncode({...cellJson, 'deleted': true}),
+      content: jsonEncode(_withIdentityProof({...cellJson, 'deleted': true})),
       tags: [
         ['d', cellId],
         ['t', 'nexus-cell'],
@@ -825,7 +839,8 @@ class NostrTransport implements MessageTransport {
       ],
     );
     _relayManager.publishFireAndForget(event);
-    print('[CELL-DEL] Publishing deleted-flag Kind-30000: $cellId ($cellName)');
+    print('[CELL-DEL] Publishing deleted-flag Kind-30000: $cellId ($cellName)'
+        ' idProof=${_identityProof != null}');
   }
 
   /// Publishes a Kind-31005 cell member update (leave or remove).
@@ -850,7 +865,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.cellMemberUpdate,
-      content: jsonEncode(payload),
+      content: jsonEncode(_withIdentityProof(payload)),
       tags: [
         ['t', 'nexus-cell-member-update'],
         ['cell', cellId],
@@ -976,7 +991,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.proposalEvent,
-      content: jsonEncode(content),
+      content: jsonEncode(_withIdentityProof(content)),
       tags: tags,
     );
     print('[PROPOSAL-PUB] Event built: id=${event.id.substring(0, 16)}… '
@@ -1116,7 +1131,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.voteEvent,
-      content: jsonEncode(content),
+      content: jsonEncode(_withIdentityProof(content)),
       tags: tags,
     );
     print('[VOTE-PUB] Tags: ${event.tags}');
@@ -1380,7 +1395,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.delegationEvent,
-      content: jsonEncode(content),
+      content: jsonEncode(_withIdentityProof(content)),
       tags: tags,
     );
 
@@ -2645,6 +2660,8 @@ class NostrTransport implements MessageTransport {
           'id': cellId,
           'name': cellName,
           'nostrTag': data['nostrTag'] as String? ?? 'nexus-cell-$cellId',
+          '_nostr_pubkey': event.pubkey,
+          IdentityProof.contentKey: data[IdentityProof.contentKey],
         });
         return;
       }
@@ -2739,7 +2756,7 @@ class NostrTransport implements MessageTransport {
       final targetDid = data['targetDid'] as String? ?? '';
       print('[CELL] Kind-31005 member-$action event received for cell: $cellId '
           '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
-      _cellMemberUpdateController.add(data);
+      _cellMemberUpdateController.add({...data, '_nostr_pubkey': event.pubkey});
     } catch (e) {
       print('[CELL] Cell member-update parse FAILED: $e');
     }

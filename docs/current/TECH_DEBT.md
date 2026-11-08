@@ -13,7 +13,7 @@ Release-Reihenfolge steht separat in
 |---|---|---|---|
 | TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
 | TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
-| TD-40 / V-003/V-005 | Keine vollständige Senderautorisierung | unberechtigte Zellauflösung, Votes oder Anträge möglich | Pubkey gegen Rolle/Mitgliedschaft prüfen |
+| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | offen: Beitrittsbestätigung (Kind 31004), Decision Records (31013), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | DID-Nachweis auf 31004/31013 ausweiten; Wählerfilter mit TD-37 vervollständigen |
 
 ## Hoch – vor breiter Nutzung
 
@@ -177,6 +177,49 @@ Liste:
   ungeprüfte `deleteReactionsByNostrEventIds` ist entfernt. Einschränkung:
   Vorher empfangene Beiträge von Nicht-Kontakten haben keinen gespeicherten
   Schlüssel und lassen sich von deren Verfasser nicht mehr fernlöschen.
+- **TD-40 weitgehend erledigt (08.11.2026, Gerätetest offen):** ADR-0001 ist
+  angenommen. Jedes Gerät signiert einmal mit seinem DID-Schlüssel (Ed25519)
+  die Zuordnung zu seinem Nostr-Schlüssel (`IdentityProof`, Feld `_idProof`
+  im Event-Inhalt). Geprüft wird an der Empfangsgrenze im `ChatProvider`
+  (Regeln in `governance_authorization.dart`), abgelehnte Events loggen
+  `[CELL-AUTH]` bzw. `[GOV-AUTH]`:
+  - Zellauflösung: nur der Gründer (`createdBy`).
+  - Zell-Ankündigung (Entdecken, Umbenennen): nur der Gründer; `createdBy`
+    einer bekannten Zelle lässt sich nicht von außen ändern.
+  - Mitglieder-Update: Austritt nur durch das Mitglied selbst, Beitritt und
+    Entfernen nur durch Gründer oder lokal bekannte Moderatoren; der Gründer
+    ist nicht entfernbar.
+  - Antrag: neu nur durch den Antragsteller, der als Mitglied bekannt sein
+    muss; bearbeiten und zurückziehen nur durch ihn; Abstimmung starten auch
+    Gründer/Moderator. Andere Mitglieder dürfen nur die automatischen
+    Fristwechsel melden (Abstimmung → beendet → entschieden → archiviert);
+    von ihren Events wird nur der Status übernommen, Inhalt, Optionen,
+    Kategorie und Frist werden verworfen.
+  - Stimme: nur die im Inhalt genannte `voterDid`.
+  - Delegation: nur die delegierende Person.
+
+  Events älterer App-Versionen ohne Nachweis werden abgelehnt; ein Gerät,
+  das alte Anträge/Stimmen von Relays neu einliest, übernimmt sie nicht.
+  Gründerwechsel und Moderatorenrolle werden weiterhin nicht synchronisiert,
+  Moderatoren-Aktionen gelten daher nur auf Geräten, die die Rolle kennen.
+  Governance-Events werden in Empfangsreihenfolge geprüft und verarbeitet;
+  Auflösungen noch unbekannter Zellen werden vorgemerkt und beim Eintreffen
+  der Gründer-Ankündigung angewendet. Bekannte Restlücke: Wer eine Zell-ID
+  kennt, kann sie auf einem Gerät, das die Zelle noch nie gesehen hat, mit
+  sich selbst als Gründer zuerst ankündigen; die echte Ankündigung wird dort
+  dann abgelehnt.
+- **Stimmberechtigung bei Austritt (08.11.2026, Gerätetest offen):** Regel
+  „Start-Liste minus Austritte“. Jedes Gerät merkt sich Austritte und
+  Entfernungen dauerhaft (Tabelle `cell_departures`, DB v26, additiv). Stimmen
+  von Personen, deren Austritt nach dem Abstimmungsstart liegt, zählen weder
+  in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
+  bleiben sie. Wer nach dem Start beitritt, ist mangels eingefrorener
+  Start-Liste (TD-37) noch nicht ausgeschlossen. Die Anzeige zeigt nie mehr
+  Stimmen als Stimmberechtigte („2 von 1“ behoben).
+- **Zellen älterer App-Versionen (08.11.2026):** Beim ersten Entdecken werden
+  Zell-Ankündigungen auch ohne DID-Nachweis angezeigt (`[CELL-AUTH] Legacy
+  discovery`). Jede spätere Änderung verlangt den Nachweis des Gründers; eine
+  unbelegte Ankündigung mit mir als Gründer wird nie übernommen.
 - **TD-25 ergänzt (08.11.2026):** Der Test „Kind-31012 revoke event arrives
   before vote“ in `delegation_incoming_test.dart` ist zeitabhängig: Delegation
   und Widerruf entstehen in derselben Millisekunde, und die Stale-Prüfung

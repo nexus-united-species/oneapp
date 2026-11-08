@@ -17,6 +17,7 @@ import '../../core/crypto/channel_encryption.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
+import '../../core/identity/identity_proof.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/ble/ble_transport.dart';
@@ -24,6 +25,7 @@ import '../../core/transport/lan/lan_transport.dart';
 import '../../core/transport/nexus_message.dart';
 import '../../core/transport/message_transport.dart';
 import '../../core/transport/nexus_peer.dart';
+import '../../core/transport/nostr/nostr_event.dart';
 import '../../core/transport/nostr/nostr_keys.dart';
 import '../../core/transport/nostr/nostr_outbox.dart';
 import '../../core/transport/nostr/nostr_transport.dart';
@@ -42,6 +44,7 @@ import 'group_channel.dart';
 import 'group_channel_service.dart';
 import '../dorfplatz/feed_service.dart';
 import '../governance/cell.dart';
+import '../governance/governance_authorization.dart';
 import '../governance/cell_founding_permit.dart';
 import '../governance/cell_founding_permit_service.dart';
 import '../governance/cell_join_request.dart';
@@ -627,23 +630,144 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── G2 Governance wiring ──────────────────────────────────────────────────
 
+  /// Serializes the async authorization so governance events reach
+  /// ProposalService in arrival order (a vote change must not overtake the
+  /// original vote).
+  Future<void> _governanceAuthChain = Future.value();
+
+  void _authorizeGovernanceEvent(
+    NostrEvent event,
+    Future<GovernanceAuthDecision> Function(
+            NostrEvent, Map<String, dynamic>)
+        authorize,
+    Future<void> Function(NostrEvent) handle,
+  ) {
+    final shortId = event.id.substring(0, 8);
+    _governanceAuthChain = _governanceAuthChain.then((_) async {
+      final content = _decodeJsonObject(event.content);
+      if (content == null) {
+        print('[GOV-AUTH] kind=${event.kind} id=$shortId… rejected: '
+            'malformed content');
+        return;
+      }
+      final decision = await authorize(event, content);
+      final NostrEvent accepted;
+      switch (decision) {
+        case GovernanceAuthDecision.allowed:
+          accepted = event;
+        case GovernanceAuthDecision.allowedStatusOnly:
+          accepted = _statusOnlyProposalEvent(event);
+        case GovernanceAuthDecision.allowedLegacyDiscovery:
+        case GovernanceAuthDecision.unknownCell:
+        case GovernanceAuthDecision.missingProof:
+        case GovernanceAuthDecision.notAuthorized:
+          print('[GOV-AUTH] kind=${event.kind} id=$shortId… rejected: '
+              '${decision.name}');
+          return;
+      }
+      // Await the handler so the next event is authorized against the state
+      // this one produced (a status change right after a new proposal).
+      await handle(accepted).timeout(_governanceHandlerTimeout,
+          onTimeout: () => print('[GOV-AUTH] id=$shortId… handler slow, '
+              'continuing with next event'));
+    }).catchError((Object e) {
+      // Keep the chain alive for the next event.
+      print('[GOV-AUTH] kind=${event.kind} id=$shortId… check failed: $e');
+    });
+  }
+
+  static const _governanceHandlerTimeout = Duration(seconds: 20);
+
+  /// Strips everything but the status transition from a proposal event that
+  /// was signed by a member who is neither creator nor manager. The event
+  /// was already verified; ProposalService does not re-check signatures.
+  static NostrEvent _statusOnlyProposalEvent(NostrEvent event) {
+    const keptTags = {'d', 't', 'type', 'status', 'version'};
+    return NostrEvent(
+      id: event.id,
+      pubkey: event.pubkey,
+      createdAt: event.createdAt,
+      kind: event.kind,
+      tags: [
+        for (final tag in event.tags)
+          if (tag.isNotEmpty && keptTags.contains(tag[0])) tag,
+      ],
+      content: '{}',
+      sig: event.sig,
+    );
+  }
+
+  static Map<String, dynamic>? _decodeJsonObject(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  String? _governanceCellId(NostrEvent event) => event
+      .tagValues('t')
+      .where((v) => v.startsWith('nexus-cell-'))
+      .map((v) => v.substring('nexus-cell-'.length))
+      .firstOrNull;
+
+  Future<GovernanceAuthDecision> _authorizeIncomingProposal(
+    NostrEvent event,
+    Map<String, dynamic> content,
+  ) {
+    final cellId = _governanceCellId(event) ?? '';
+    final proposalId = event.tagValue('d') ?? '';
+    return authorizeProposalEvent(
+      existing: ProposalService.instance.getProposal(proposalId),
+      content: content,
+      statusTag: event.tagValue('status'),
+      cell: _knownCell(cellId),
+      members: CellService.instance.membersOf(cellId),
+      signerPubkey: event.pubkey,
+      idProof: content[IdentityProof.contentKey],
+    );
+  }
+
+  Future<GovernanceAuthDecision> _authorizeIncomingVote(
+    NostrEvent event,
+    Map<String, dynamic> content,
+  ) =>
+      authorizeVote(
+        content: content,
+        signerPubkey: event.pubkey,
+        idProof: content[IdentityProof.contentKey],
+      );
+
+  Future<GovernanceAuthDecision> _authorizeIncomingDelegation(
+    NostrEvent event,
+    Map<String, dynamic> content,
+  ) =>
+      authorizeDelegation(
+        content: content,
+        signerPubkey: event.pubkey,
+        idProof: content[IdentityProof.contentKey],
+      );
+
   void _wireGovernanceTransport() {
     final transport = _nostrTransport;
     if (transport == null) return;
 
-    // Incoming governance events → ProposalService handlers.
-    transport.onProposalEvent.listen((event) {
-      ProposalService.instance.handleIncomingProposal(event);
-    });
-    transport.onVoteEvent.listen((event) {
-      ProposalService.instance.handleIncomingVote(event);
-    });
+    // Incoming governance events → sender authorization (TD-40) →
+    // ProposalService handlers. Decision records are not authorized yet:
+    // every device finalizes, and their hash check is TD-41.
+    transport.onProposalEvent.listen((event) => _authorizeGovernanceEvent(
+        event, _authorizeIncomingProposal,
+        ProposalService.instance.handleIncomingProposal));
+    transport.onVoteEvent.listen((event) => _authorizeGovernanceEvent(
+        event, _authorizeIncomingVote,
+        ProposalService.instance.handleIncomingVote));
     transport.onDecisionRecordEvent.listen((event) {
       ProposalService.instance.handleIncomingDecisionRecord(event);
     });
-    transport.onDelegationEvent.listen((event) {
-      ProposalService.instance.handleIncomingDelegationEvent(event);
-    });
+    transport.onDelegationEvent.listen((event) => _authorizeGovernanceEvent(
+        event, _authorizeIncomingDelegation,
+        ProposalService.instance.handleIncomingDelegationEvent));
 
     // Outgoing: ProposalService → NostrTransport publish methods.
     ProposalService.instance.onPublishProposalToNostr = (params) async {
@@ -747,13 +871,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _nostrTransport?.updateGovernanceCellIds(cellIds);
   }
 
-  void _onCellAnnounced(Map<String, dynamic> data) {
+  Future<void> _onCellAnnounced(Map<String, dynamic> data) async {
     try {
       final nostrCreatedAt = data['_created_at'] as int?;
       // Remove internal nostr fields before passing to Cell.fromJson.
       final cellJson = Map<String, dynamic>.from(data)
         ..remove('_nostr_pubkey')
-        ..remove('_created_at');
+        ..remove('_created_at')
+        ..remove('_own_device')
+        ..remove(IdentityProof.contentKey);
       final ownDevice = data['_own_device'] as bool? ?? false;
       final cell = Cell.fromJson(cellJson);
       print('[CELL-UPDATE] _onCellAnnounced: cellId=${cell.id}, name="${cell.name}", version=n/a, self=$ownDevice');
@@ -771,11 +897,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       // ─────────────────────────────────────────────────────────────────────
 
-      CellService.instance.addDiscoveredCell(
-        cell,
-        nostrCreatedAt: nostrCreatedAt,
-        ownDevice: ownDevice,
-      );
+      // TD-40: discovery and renames only from the proven founder.
+      // Synchronous lock: parallel relay copies of the same announcement.
+      final lockKey = '${cell.id}|$nostrCreatedAt|${data['_nostr_pubkey']}';
+      if (!_cellAnnouncementsInFlight.add(lockKey)) return;
+      try {
+        final decision = await authorizeCellAnnouncement(
+          existing: _knownCell(cell.id),
+          incoming: cell,
+          signerPubkey: data['_nostr_pubkey'] as String? ?? '',
+          idProof: data[IdentityProof.contentKey],
+        );
+        final isLegacy =
+            decision == GovernanceAuthDecision.allowedLegacyDiscovery;
+        final myDid = IdentityService.instance.currentIdentity?.did;
+        // An unproven claim must never make me founder (auto-recovery).
+        final isUnsafeLegacy = isLegacy && cell.createdBy == myDid;
+        if ((decision != GovernanceAuthDecision.allowed && !isLegacy) ||
+            isUnsafeLegacy) {
+          print('[CELL-AUTH] Announcement rejected for ${cell.id}: '
+              '${isUnsafeLegacy ? 'unproven own-founder claim' : decision.name}');
+          return;
+        }
+        if (isLegacy) {
+          print('[CELL-AUTH] Legacy discovery without proof: ${cell.id}');
+        }
+        if (CellService.instance.isTombstoned(cell.id)) return;
+
+        // A founder-signed dissolution arrived before we knew the cell.
+        if (_pendingCellDissolutions[cell.id] == cell.createdBy) {
+          print('[CELL-AUTH] Applying pending dissolution for ${cell.id}');
+          _pendingCellDissolutions.remove(cell.id);
+          await CellService.instance.handleCellDeleted(cell.id, cell.name);
+          return;
+        }
+
+        await CellService.instance.addDiscoveredCell(
+          cell,
+          nostrCreatedAt: nostrCreatedAt,
+          ownDevice: ownDevice,
+        );
+      } finally {
+        _cellAnnouncementsInFlight.remove(lockKey);
+      }
     } catch (e) {
       debugPrint('[CHAT] Cell announced parse error: $e');
     }
@@ -853,6 +1017,61 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    // TD-40: only the founder may dissolve. Lock synchronously so parallel
+    // relay copies do not both pass the async check.
+    if (!_cellDeletionsInFlight.add(cellId)) return;
+    try {
+      final decision = await authorizeCellDissolution(
+        cell: _knownCell(cellId),
+        signerPubkey: data['_nostr_pubkey'] as String? ?? '',
+        idProof: data[IdentityProof.contentKey],
+      );
+      if (decision == GovernanceAuthDecision.unknownCell) {
+        await _rememberPendingDissolution(cellId, data);
+        return;
+      }
+      if (decision != GovernanceAuthDecision.allowed) {
+        print('[CELL-AUTH] Dissolution rejected for $cellId: ${decision.name}');
+        return;
+      }
+      if (CellService.instance.isTombstoned(cellId)) return;
+      await _applyCellDeletion(cellId, cellName);
+    } finally {
+      _cellDeletionsInFlight.remove(cellId);
+    }
+  }
+
+  final Set<String> _cellDeletionsInFlight = {};
+  final Set<String> _cellAnnouncementsInFlight = {};
+  final Set<String> _memberUpdatesInFlight = {};
+
+  /// Proven signer DID of dissolutions for cells not known yet. Applied when
+  /// that cell's founder-signed announcement arrives later (no zombie cell).
+  final Map<String, String> _pendingCellDissolutions = {};
+  static const _maxPendingDissolutions = 200;
+
+  Future<void> _rememberPendingDissolution(
+      String cellId, Map<String, dynamic> data) async {
+    final did = await IdentityProof.verifiedDid(
+      proof: data[IdentityProof.contentKey],
+      nostrPubkeyHex: data['_nostr_pubkey'] as String? ?? '',
+    );
+    if (did == null) {
+      print('[CELL-AUTH] Dissolution for unknown cell $cellId without proof');
+      return;
+    }
+    if (_pendingCellDissolutions.length >= _maxPendingDissolutions) {
+      _pendingCellDissolutions.remove(_pendingCellDissolutions.keys.first);
+    }
+    _pendingCellDissolutions[cellId] = did;
+    print('[CELL-AUTH] Dissolution for unknown cell $cellId remembered');
+  }
+
+  Cell? _knownCell(String cellId) => CellService.instance.allKnownCells
+      .where((c) => c.id == cellId)
+      .firstOrNull;
+
+  Future<void> _applyCellDeletion(String cellId, String cellName) async {
     await CellService.instance.handleCellDeleted(cellId, cellName);
     await deleteCellChannels(cellId);
     print('[CELL-DEL] Removing cell + channels from local DB: $cellId');
@@ -877,6 +1096,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final myDid = IdentityService.instance.currentIdentity?.did ?? '';
     final wasRemoved = action == 'removed' && targetDid == myDid;
 
+    // TD-40: leave only by the member, join/remove only by founder or
+    // moderator. Member records exist only for cells I belong to.
+    // Synchronous lock: parallel relay copies must not apply twice.
+    final lockKey = '$cellId|$targetDid|$action';
+    if (!_memberUpdatesInFlight.add(lockKey)) return;
+    try {
+      final decision = await authorizeMemberUpdate(
+        cell: CellService.instance.myCells
+            .where((c) => c.id == cellId)
+            .firstOrNull,
+        members: CellService.instance.membersOf(cellId),
+        action: action,
+        targetDid: targetDid,
+        signerPubkey: data['_nostr_pubkey'] as String? ?? '',
+        idProof: data[IdentityProof.contentKey],
+      );
+      if (decision != GovernanceAuthDecision.allowed) {
+        print('[CELL-AUTH] Member update ($action) rejected for $cellId: '
+            '${decision.name}');
+        return;
+      }
+      await _applyMemberUpdate(cellId, targetDid, action, wasRemoved);
+    } finally {
+      _memberUpdatesInFlight.remove(lockKey);
+    }
+  }
+
+  Future<void> _applyMemberUpdate(
+      String cellId, String targetDid, String action, bool wasRemoved) async {
     await CellService.instance.handleMemberLeft(cellId, targetDid, action);
 
     if (wasRemoved) {
@@ -1017,7 +1265,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (mnemonic == null) return;
       final seed64 = Bip39.mnemonicToSeed(mnemonic);
       await _nostrTransport?.initKeys(seed64);
+      await _initIdentityProof(identity);
     } catch (_) {}
+  }
+
+  /// Signs the DID ↔ Nostr-key binding once so governance events can carry
+  /// it (ADR-0001, TD-40).
+  Future<void> _initIdentityProof(dynamic identity) async {
+    try {
+      final transport = _nostrTransport;
+      final nostrPubkey = transport?.localNostrPubkeyHex;
+      final did = identity?.did as String?;
+      if (transport == null || nostrPubkey == null || did == null) return;
+      final keyPair = await IdentityService.instance.getSigningKeyPair();
+      if (keyPair == null) return;
+      final proof = await IdentityProof.create(
+        signingKeyPair: keyPair,
+        did: did,
+        nostrPubkeyHex: nostrPubkey,
+      );
+      transport.setIdentityProof(proof);
+      print('[ID-PROOF] Identity binding signed for ${nostrPubkey.substring(0, 8)}…');
+    } catch (e) {
+      print('[ID-PROOF] Identity binding failed: $e');
+    }
   }
 
   Future<void> _initEncryptionKeys() async {
