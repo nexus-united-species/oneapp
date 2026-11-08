@@ -79,6 +79,17 @@ class CellService {
   final Set<String> _deletedCellIds = {};
   static const _deletedCellsKey = 'nexus_deleted_cell_ids';
 
+  // Cells I left or was removed from: cellId -> when (ms). Unlike dismissed
+  // cells they stay visible in discovery and can be joined again; a
+  // membership confirmation is only accepted when issued after leaving and
+  // answering a pending request of mine.
+  final Map<String, int> _leftCells = {};
+  static const _leftTombstoneType = 'cell_left';
+  static const _legacyLeaveReason = 'leave_or_removed';
+
+  /// True if I left [cellId] (or was removed) and have not rejoined.
+  bool hasLeft(String cellId) => _leftCells.containsKey(cellId);
+
   // Unix-seconds timestamp of the last data wipe.  Cell announcements whose
   // Nostr created_at predates this are silently ignored so old zombie cells
   // from the relay do not re-appear after a cleanup.
@@ -227,9 +238,76 @@ class CellService {
 
     _deletedCellIds.addAll(cellTombstones);
     _dismissedCellIds.addAll(cellDismissed);
+    await _loadLeftCells();
 
     print('[TOMBSTONE] Loaded from SQLite:'
         ' ${cellTombstones.length} tombstones, ${cellDismissed.length} dismissed');
+  }
+
+  /// Loads left cells and takes them off the dismissed list. Older app
+  /// versions stored a leave as `cell_dismissed` with reason
+  /// [_legacyLeaveReason]; those rows are converted once.
+  Future<void> _loadLeftCells() async {
+    final leftRows =
+        await PodDatabase.instance.listTombstoneRows(_leftTombstoneType);
+    final legacyRows = (await PodDatabase.instance
+            .listTombstoneRows('cell_dismissed'))
+        .where((r) => r['reason'] == _legacyLeaveReason)
+        .toList();
+    for (final row in [...leftRows, ...legacyRows]) {
+      final id = row['id'] as String;
+      final atMs = ((row['created_at'] as int?) ?? 0) * 1000;
+      final previous = _leftCells[id];
+      if (previous == null || atMs > previous) _leftCells[id] = atMs;
+    }
+    _dismissedCellIds.removeAll(_leftCells.keys);
+    for (final row in legacyRows) {
+      final id = row['id'] as String;
+      await PodDatabase.instance.addTombstone(
+          id: id, type: _leftTombstoneType, reason: 'migrated_leave');
+      await PodDatabase.instance.removeTombstone(id: id, type: 'cell_dismissed');
+    }
+    if (legacyRows.isNotEmpty) {
+      print('[CELL-LEAVE] Migrated ${legacyRows.length} leave marker(s) '
+          'from dismissed to left');
+    }
+  }
+
+  /// Marks [cellId] as left in memory (synchronous) and keeps the cell
+  /// visible in discovery. Persist with [_persistLeft].
+  void _markLeftInMemory(String cellId) {
+    _leftCells[cellId] = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final cell = _myCells.where((c) => c.id == cellId).firstOrNull;
+    _discovered.removeWhere((c) => c.id == cellId);
+    if (cell != null) _discovered.add(cell);
+  }
+
+  Future<void> _persistLeft(String cellId, String reason) async {
+    await PodDatabase.instance
+        .addTombstone(id: cellId, type: _leftTombstoneType, reason: reason);
+    // Drop an older dismissed marker so the cell stays discoverable.
+    if (!_dismissedCellIds.contains(cellId)) {
+      await PodDatabase.instance
+          .removeTombstone(id: cellId, type: 'cell_dismissed');
+    }
+  }
+
+  /// Whether a membership confirmation for a cell I left is a genuine
+  /// rejoin: issued after I left, answering a pending request of mine.
+  bool _isRejoinConfirmation(String cellId, CellMember member) {
+    final leftAt = _leftCells[cellId];
+    if (leftAt == null) return true;
+    final hasPendingRequest =
+        _myRequests.any((r) => r.cellId == cellId && r.isPending);
+    return hasPendingRequest &&
+        member.joinedAt.toUtc().millisecondsSinceEpoch > leftAt;
+  }
+
+  /// Clears the left marker after a confirmed rejoin.
+  Future<void> _clearLeft(String cellId) async {
+    _leftCells.remove(cellId);
+    await PodDatabase.instance
+        .removeTombstone(id: cellId, type: _leftTombstoneType);
   }
 
   Future<void> load() async {
@@ -346,8 +424,9 @@ class CellService {
           await PodDatabase.instance.deleteCell(cell.id);
           continue;
         }
-        if (_dismissedCellIds.contains(cell.id)) {
-          if (kDebugMode) print('[ZOMBIE-V2] Removing dismissed DB cell: "${cell.name}" ${cell.id}');
+        if (_dismissedCellIds.contains(cell.id) ||
+            _leftCells.containsKey(cell.id)) {
+          if (kDebugMode) print('[ZOMBIE-V2] Removing dismissed/left DB cell: "${cell.name}" ${cell.id}');
           await PodDatabase.instance.deleteCell(cell.id);
           continue;
         }
@@ -472,9 +551,10 @@ class CellService {
         if (kDebugMode) print('[ZOMBIE-V3] Decision: BLOCKED (tombstoned)');
         return; // dissolved — never restore
       }
-      if (_dismissedCellIds.contains(cell.id)) {
-        if (kDebugMode) print('[ZOMBIE-V3] Decision: BLOCKED (dismissed)');
-        return; // left — never restore
+      if (_dismissedCellIds.contains(cell.id) ||
+          _leftCells.containsKey(cell.id)) {
+        if (kDebugMode) print('[ZOMBIE-V3] Decision: BLOCKED (dismissed/left)');
+        return; // left — never restore from backup
       }
       if (_myCells.any((c) => c.id == cell.id)) {
         if (kDebugMode) print('[ZOMBIE-V3] Decision: BLOCKED (already in myCells)');
@@ -931,34 +1011,6 @@ class CellService {
     }
   }
 
-  /// Persists [cellId] to the dismissed list so it never re-appears in
-  /// discovery after a Nostr re-subscription.  Used for voluntary leave/remove.
-  ///
-  /// NOTE: Always writes SharedPreferences even if [cellId] is already in the
-  /// in-memory set.  [leaveCell] adds to [_dismissedCellIds] synchronously
-  /// BEFORE calling this — the early-return guard was the original bug that
-  /// prevented the dismissed list from ever being persisted on voluntary leave.
-  Future<void> _dismissCell(String cellId) async {
-    _dismissedCellIds.add(cellId); // idempotent Set.add
-    _discovered.removeWhere((c) => c.id == cellId);
-    // SQLite (primary)
-    await PodDatabase.instance.addTombstone(
-      id: cellId, type: 'cell_dismissed', reason: 'leave_or_removed');
-    // SharedPreferences (fallback)
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        _dismissedKey, jsonEncode(_dismissedCellIds.toList()));
-    // Verify the write actually landed.
-    final verify = prefs.getString(_dismissedKey);
-    if (verify == null) {
-      print('[CELL-LEAVE] WARNING: No persistent leave marker found! SharedPrefs write may have failed.');
-    } else {
-      print('[CELL-LEAVE] Verified: dismissed list saved'
-          ' (${_dismissedCellIds.length} entries, contains=$cellId:'
-          ' ${_dismissedCellIds.contains(cellId)})');
-    }
-    print('[CELL-DEL] Adding $cellId to block list');
-  }
 
   /// The local user leaves a cell (exit right always available).
   ///
@@ -976,9 +1028,9 @@ class CellService {
       print('[CELL-LEAVE] WARNING: onPublishMemberUpdate is null — Kind-31005 NOT sent!');
     }
 
-    // Dismiss in-memory immediately (synchronous).
-    _dismissedCellIds.add(cellId);
-    _discovered.removeWhere((c) => c.id == cellId);
+    // Mark as left in memory immediately (synchronous). The cell stays
+    // visible in discovery and can be joined again.
+    _markLeftInMemory(cellId);
 
     // Remove from memory + notify UI immediately (no await before here).
     _myCells.removeWhere((c) => c.id == cellId);
@@ -989,9 +1041,8 @@ class CellService {
     _notify();
 
     // Async persistence + DB cleanup after UI is updated.
-    await _dismissCell(cellId); // persists dismissed list (idempotent)
-    print('[CELL-LEAVE] Persistent leave marker set: cellId=$cellId'
-        ' (dismissedCount=${_dismissedCellIds.length})');
+    await _persistLeft(cellId, 'leave');
+    print('[CELL-LEAVE] Persistent leave marker set: cellId=$cellId');
     await PodDatabase.instance.deleteCellMember(cellId, myDid);
     print('[CELL-LEAVE] Local DB membership removed: cellId=$cellId, memberId=$myDid');
     await PodDatabase.instance.deleteCell(cellId);
@@ -1075,9 +1126,8 @@ class CellService {
     final myDid = IdentityService.instance.currentIdentity?.did;
 
     if (action == 'removed' && targetDid == myDid) {
-      // I was removed — dismiss in-memory immediately (synchronous).
-      _dismissedCellIds.add(cellId);
-      _discovered.removeWhere((c) => c.id == cellId);
+      // I was removed — mark as left in memory immediately (synchronous).
+      _markLeftInMemory(cellId);
 
       // Remove from memory + notify UI immediately (no await before here).
       _myCells.removeWhere((c) => c.id == cellId);
@@ -1088,7 +1138,7 @@ class CellService {
       onGovernanceMembershipChanged?.call();
 
       // Async persistence + DB cleanup after UI is updated.
-      await _dismissCell(cellId); // idempotent persist
+      await _persistLeft(cellId, 'removed');
       await PodDatabase.instance.deleteCellMember(cellId, myDid!);
       await PodDatabase.instance.deleteCell(cellId);
       await PodDatabase.instance.deleteCellJoinRequestsByCell(cellId);
@@ -1266,6 +1316,11 @@ class CellService {
       print('[CELL-IMPORT] Decision: BLOCKED reason=tombstoned');
       return;
     }
+    if (!_isRejoinConfirmation(cell.id, member)) {
+      print('[JOIN] Ignoring stale membership confirmation for left cell: '
+          '${cell.id}');
+      return;
+    }
     if (_dismissedCellIds.contains(cell.id)) {
       print('[JOIN] Ignoring membership confirmation for dismissed cell: ${cell.id}');
       if (kDebugMode) print('[ZOMBIE-V2] Decision: REJECTED (reason: dismissed/left)');
@@ -1293,7 +1348,8 @@ class CellService {
       // Guard 2 (post-await): a dissolution event may have arrived and saved
       // its tombstone while we were waiting for the DB write above.
       if (_deletedCellIds.contains(cell.id) ||
-          _dismissedCellIds.contains(cell.id)) {
+          _dismissedCellIds.contains(cell.id) ||
+          !_isRejoinConfirmation(cell.id, member)) {
         // Undo BOTH the DB insert and the in-memory additions — tombstone wins.
         _myCells.removeWhere((c) => c.id == cell.id);
         _members.remove(cell.id);
@@ -1313,6 +1369,11 @@ class CellService {
         print('[ZOMBIE-V2] Decision: ADDED to myCells (source: membership_confirmed)');
       }
       print('[CELL-IMPORT] Decision: ALLOWED reason=membership_confirmed_Kind31004');
+    }
+
+    if (hasLeft(cell.id)) {
+      print('[JOIN] Rejoined previously left cell: ${cell.id}');
+      await _clearLeft(cell.id);
     }
 
     (_members[cell.id] ??= []).removeWhere((m) => m.did == member.did);

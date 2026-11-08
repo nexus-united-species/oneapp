@@ -220,6 +220,14 @@ Liste:
   Zell-Ankündigungen auch ohne DID-Nachweis angezeigt (`[CELL-AUTH] Legacy
   discovery`). Jede spätere Änderung verlangt den Nachweis des Gründers; eine
   unbelegte Ankündigung mit mir als Gründer wird nie übernommen.
+- **Austritt getrennt von Ausblenden (08.11.2026, Gerätetest offen):** Wer
+  eine Zelle verlässt oder entfernt wird, setzte sie bisher auf dieselbe
+  Sperrliste wie ausgeblendete Zellen: Sie verschwand aus „Entdecken“, und
+  ein Wiederbeitritt wurde blockiert. Jetzt eigene Markierung (Tombstone-Typ
+  `cell_left` mit Zeitpunkt); alte Austritte (`cell_dismissed`/
+  `leave_or_removed`) werden beim Start umgestellt. Eine Beitrittsbestätigung
+  für eine verlassene Zelle gilt nur, wenn eine eigene offene Anfrage besteht
+  und die Bestätigung nach dem Austritt ausgestellt wurde.
 - **TD-25 ergänzt (08.11.2026):** Der Test „Kind-31012 revoke event arrives
   before vote“ in `delegation_incoming_test.dart` ist zeitabhängig: Delegation
   und Widerruf entstehen in derselben Millisekunde, und die Stale-Prüfung

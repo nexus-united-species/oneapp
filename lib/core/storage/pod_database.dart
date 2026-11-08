@@ -2829,6 +2829,15 @@ class PodDatabase {
     return rows.isNotEmpty;
   }
 
+  /// Tombstone rows of [type] with `id`, `reason` and `created_at` (seconds).
+  Future<List<Map<String, Object?>>> listTombstoneRows(String type) =>
+      _database.query(
+        'tombstones',
+        columns: ['id', 'reason', 'created_at'],
+        where: 'type = ?',
+        whereArgs: [type],
+      );
+
   Future<Set<String>> listTombstones(String type) async {
     final rows = await _database.query(
       'tombstones',
