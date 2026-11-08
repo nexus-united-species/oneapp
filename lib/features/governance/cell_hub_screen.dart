@@ -267,6 +267,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
               selectedCategory: _selectedCategory,
               onCategoryChanged: (cat) =>
                   setState(() => _selectedCategory = cat),
+              isAdmin: isAdmin,
             )
           : _FilledState(
               myCells: myCells,
@@ -287,6 +288,7 @@ class _CellHubScreenState extends State<CellHubScreen> {
               myPendingRequests: myPending,
               myGeohash: _myGeohash,
               gpsUnavailable: _gpsUnavailable,
+              isAdmin: isAdmin,
             ),
     );
   }
@@ -306,6 +308,7 @@ class _EmptyState extends StatelessWidget {
   final List<Cell> allKnownCells;
   final String selectedCategory;
   final ValueChanged<String> onCategoryChanged;
+  final bool isAdmin;
 
   const _EmptyState({
     required this.onCreateTap,
@@ -319,6 +322,7 @@ class _EmptyState extends StatelessWidget {
     required this.allKnownCells,
     required this.selectedCategory,
     required this.onCategoryChanged,
+    required this.isAdmin,
   });
 
   @override
@@ -372,6 +376,12 @@ class _EmptyState extends StatelessWidget {
           myGeohash: myGeohash,
           gpsUnavailable: gpsUnavailable,
         ),
+
+        // Admins see every known local cell, also far away or without location.
+        if (isAdmin)
+          _AdminRemoteCellsSection(
+            cells: remoteLocalCellsForAdmin(allKnownCells, nearby),
+          ),
 
         // Recommended: cells where contacts are members
         if (recommended.isNotEmpty) ...[
@@ -636,6 +646,7 @@ class _FilledState extends StatelessWidget {
   final List<CellFoundingPermit> myPendingRequests;
   final String? myGeohash;
   final bool gpsUnavailable;
+  final bool isAdmin;
 
   const _FilledState({
     required this.myCells,
@@ -651,6 +662,7 @@ class _FilledState extends StatelessWidget {
     required this.myPendingRequests,
     required this.myGeohash,
     required this.gpsUnavailable,
+    required this.isAdmin,
   });
 
   @override
@@ -688,6 +700,12 @@ class _FilledState extends StatelessWidget {
           myGeohash: myGeohash,
           gpsUnavailable: gpsUnavailable,
         ),
+
+        // Admins see every known local cell, also far away or without location.
+        if (isAdmin)
+          _AdminRemoteCellsSection(
+            cells: remoteLocalCellsForAdmin(allKnownCells, nearby),
+          ),
 
         // Recommended: cells where contacts are members
         if (recommended.isNotEmpty) ...[
@@ -1030,6 +1048,53 @@ class _NearbySection extends StatelessWidget {
           delegate: SliverChildBuilderDelegate(
             (context, i) => _DiscoveredCellTile(cell: nearbyCells[i]),
             childCount: nearbyCells.length,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Local cells that the nearby section does not show (too far away or
+/// without location), sorted by name. Shown to admins only.
+@visibleForTesting
+List<Cell> remoteLocalCellsForAdmin(List<Cell> all, List<Cell> nearby) {
+  final nearbyIds = {for (final c in nearby) c.id};
+  return all
+      .where((c) => c.cellType == CellType.local && !nearbyIds.contains(c.id))
+      .toList()
+    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+}
+
+class _AdminRemoteCellsSection extends StatelessWidget {
+  final List<Cell> cells;
+
+  const _AdminRemoteCellsSection({required this.cells});
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverMainAxisGroup(
+      slivers: [
+        _SectionHeader(
+            title: 'Weitere lokale Gemeinschaften (Admin, ${cells.length})'),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              cells.isEmpty
+                  ? 'Keine weiteren lokalen Gemeinschaften bekannt.'
+                  : 'Weiter entfernt oder ohne Standort. Nur für Admins sichtbar.',
+              style: TextStyle(
+                color: AppColors.onDark.withValues(alpha: 0.5),
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, i) => _DiscoveredCellTile(cell: cells[i]),
+            childCount: cells.length,
           ),
         ),
       ],
