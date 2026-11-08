@@ -160,6 +160,10 @@ class FeedPost {
   final DateTime createdAt;
   final String? nostrEventId;
 
+  /// Nostr key that signed the received post event (TD-72); only this key
+  /// may delete the post. Null for own posts and posts stored before.
+  final String? authorPubkey;
+
   /// ID of the original post being reposted (Kind-6 reposts).
   final String? repostOf;
 
@@ -189,6 +193,7 @@ class FeedPost {
     required this.visibility,
     required this.createdAt,
     this.nostrEventId,
+    this.authorPubkey,
     this.repostOf,
     this.repostComment,
     this.repostOriginalAuthorPseudonym,
@@ -223,6 +228,7 @@ class FeedPost {
         visibility: visibility ?? this.visibility,
         createdAt: createdAt,
         nostrEventId: nostrEventId ?? this.nostrEventId,
+        authorPubkey: authorPubkey,
         repostOf: repostOf,
         repostComment: repostComment,
         repostOriginalAuthorPseudonym: repostOriginalAuthorPseudonym,
@@ -244,6 +250,7 @@ class FeedPost {
         'visibility': visibility.name,
         'createdAt': createdAt.millisecondsSinceEpoch,
         if (nostrEventId != null) 'nostrEventId': nostrEventId,
+        if (authorPubkey != null) 'authorPubkey': authorPubkey,
         if (repostOf != null) 'repostOf': repostOf,
         if (repostComment != null) 'repostComment': repostComment,
         if (repostOriginalAuthorPseudonym != null)
@@ -278,6 +285,10 @@ class FeedPost {
         createdAt:
             DateTime.fromMillisecondsSinceEpoch(json['createdAt'] as int),
         nostrEventId: json['nostrEventId'] as String?,
+        // The transport sets '_nostrPubkey' from the verified event; it wins
+        // over an 'authorPubkey' claimed inside received content.
+        authorPubkey: json['_nostrPubkey'] as String? ??
+            json['authorPubkey'] as String?,
         repostOf: json['repostOf'] as String?,
         repostComment: json['repostComment'] as String?,
         repostOriginalAuthorPseudonym:

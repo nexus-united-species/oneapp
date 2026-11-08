@@ -2131,18 +2131,6 @@ class PodDatabase {
     );
   }
 
-  /// Deletes all reactions whose [nostr_event_id] is in [eventIds].
-  /// Returns the number of deleted rows.
-  Future<int> deleteReactionsByNostrEventIds(Set<String> eventIds) async {
-    if (eventIds.isEmpty) return 0;
-    final placeholders = List.filled(eventIds.length, '?').join(', ');
-    return _database.delete(
-      'message_reactions',
-      where: 'nostr_event_id IN ($placeholders)',
-      whereArgs: eventIds.toList(),
-    );
-  }
-
   /// Deletes every reaction on the messages [messageIds] (TD-70).
   Future<int> deleteReactionsForMessages(Set<String> messageIds) async {
     if (messageIds.isEmpty) return 0;

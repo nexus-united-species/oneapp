@@ -263,7 +263,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .listen((data) => FeedService.instance.handleIncomingComment(data));
       _subscribeToReactions(_nostrTransport!);
       _nostrTransport!.onFeedDelete
-          .listen((ids) => FeedService.instance.handleIncomingDelete(ids));
+          .listen(FeedService.instance.handleIncomingDelete);
 
       // Wire CellService to Nostr for join requests and membership confirmations.
       // These bypass the contact system so strangers can apply to join cells.

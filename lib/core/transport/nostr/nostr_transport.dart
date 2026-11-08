@@ -288,12 +288,14 @@ class NostrTransport implements MessageTransport {
   Stream<Map<String, dynamic>> get onFeedReaction =>
       _feedReactionController.stream;
 
-  /// Emits a list of Nostr event IDs when a Kind-5 deletion request arrives.
+  /// Emits the signer and target IDs when a Kind-5 deletion request arrives.
   final _feedDeleteController =
-      StreamController<List<String>>.broadcast();
+      StreamController<MessageDeletionRequest>.broadcast();
 
-  /// Stream of Nostr event IDs to delete, from incoming Kind-5 events.
-  Stream<List<String>> get onFeedDelete => _feedDeleteController.stream;
+  /// Incoming Kind-5 deletions for the Dorfplatz, with the signing key so
+  /// the receiver can check that the signer authored the target (TD-72).
+  Stream<MessageDeletionRequest> get onFeedDelete =>
+      _feedDeleteController.stream;
 
   // Lives as long as the transport singleton, like the other event streams:
   // stop()/start() reuse it, so it is intentionally never closed.
@@ -2596,7 +2598,9 @@ class NostrTransport implements MessageTransport {
     final prefix = isDorfplatz ? 'FEED-DELETE-RECV' : 'MSG-DELETE-RECV';
     print('[$prefix] Kind-5 received from $shortSender…: '
         '${ids.length} e-tag(s), t-tags=$tTags');
-    _feedDeleteController.add(ids);
+    _feedDeleteController.add(
+      MessageDeletionRequest(authorPubkey: event.pubkey, eventIds: ids),
+    );
   }
 
   void _handleCellAnnounceEvent(NostrEvent event) {

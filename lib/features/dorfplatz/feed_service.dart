@@ -7,8 +7,12 @@ import '../../core/contacts/contact_service.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/nostr/nostr_event.dart';
+import '../../core/transport/nostr/nostr_transport.dart'
+    show MessageDeletionRequest;
 import '../../services/notification_service.dart';
 import '../../services/notification_settings.dart';
+import '../chat/message_deletion_policy.dart';
+import '../chat/message_reaction_policy.dart';
 import 'feed_post.dart';
 
 /// Callback type for publishing events to Nostr.
@@ -385,7 +389,7 @@ class FeedService {
       if (matchingPost != null) {
         // Save the incoming reaction so it shows up in the UI immediately.
         // Store reactionEventId so a later Kind-5 deletion can find this row
-        // via deleteReactionsByNostrEventIds.
+        // via deleteReactionsByNostrEventIdsFrom (only by the reactor).
         await PodDatabase.instance.upsertReaction(
           messageId: matchingPost.id,
           emoji: emoji,
@@ -464,38 +468,71 @@ class FeedService {
     _streamController.add(null);
   }
 
-  /// Handles incoming Kind-5 deletion events from other peers.
+  /// Handles an incoming Kind-5 deletion from another peer (TD-72).
   ///
-  /// [nostrEventIds] is the list of Nostr event IDs extracted from ['e'] tags.
-  /// Posts whose [FeedPost.nostrEventId] matches are soft-deleted locally.
-  Future<void> handleIncomingDelete(List<String> nostrEventIds) async {
-    if (nostrEventIds.isEmpty) return;
-    final idSet = nostrEventIds.toSet();
-    print('[FEED-DELETE-RECV] Kind-5 received: ${nostrEventIds.length} IDs — '
-        'checking ${_posts.where((p) => !_mutedAuthors.contains(p.authorDid)).length} cached posts');
-    for (final post in _posts) {
-      final nostrId = post.nostrEventId ?? 'null';
-      for (final eTag in nostrEventIds) {
-        final shortNostr = nostrId.length >= 8 ? nostrId.substring(0, 8) : nostrId;
-        final shortETag = eTag.length >= 8 ? eTag.substring(0, 8) : eTag;
-        print('[FEED-DELETE-RECV] Comparing nostrEventId=$shortNostr… with e-tag=$shortETag…');
+  /// Posts whose [FeedPost.nostrEventId] is targeted are soft-deleted only if
+  /// the request is signed by the post's author; reactions are removed only
+  /// if they were recorded for the signer.
+  Future<void> handleIncomingDelete(MessageDeletionRequest request) async {
+    final idSet = request.eventIds.toSet();
+    if (idSet.isEmpty) return;
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final signer = request.authorPubkey;
+    final shortSigner = signer.length >= 8 ? signer.substring(0, 8) : signer;
+    String? contactKey(String did) =>
+        ContactService.instance.findByDid(did)?.nostrPubkey;
+
+    // Synchronous state lock before the first await: relays deliver the same
+    // Kind-5 several times in parallel.
+    final toDelete = <FeedPost>[];
+    _posts.removeWhere((post) {
+      if (post.nostrEventId == null || !idSet.contains(post.nostrEventId)) {
+        return false;
       }
-    }
-    final toDelete = _posts.where((p) => p.nostrEventId != null && idSet.contains(p.nostrEventId)).toList();
+      final allowed = isAuthorizedAuthorKey(
+        recordedAuthorPubkey: post.authorPubkey,
+        authorDid: post.authorDid,
+        signerPubkey: signer,
+        myDid: myDid,
+        // Own deletions never reach this path (skipped by the transport).
+        myNostrPubkey: null,
+        contactNostrPubkey: contactKey,
+      );
+      if (!allowed) {
+        print('[FEED-DELETE-RECV] Rejected: $shortSigner… is not the author '
+            'of post ${post.id}');
+        return false;
+      }
+      toDelete.add(post);
+      return true;
+    });
 
     for (final post in toDelete) {
       await PodDatabase.instance.softDeleteFeedPost(post.id);
-      _posts.remove(post);
     }
-    print('[FEED-DELETE-RECV] Matches removed: ${toDelete.length}');
+    if (toDelete.isNotEmpty) {
+      print('[FEED-DELETE-RECV] Removed ${toDelete.length} post(s) '
+          'by $shortSigner…');
+    }
 
-    // Also remove reactions whose own Nostr event ID matches (reaction deletions).
+    // Withdrawn reactions: only those recorded for the signer.
     final removedReactions =
-        await PodDatabase.instance.deleteReactionsByNostrEventIds(idSet);
+        await PodDatabase.instance.deleteReactionsByNostrEventIdsFrom(
+      idSet,
+      reactorIdsForSigner(
+        signerPubkey: signer,
+        myDid: myDid,
+        myNostrPubkey: null,
+        contactDidForNostrPubkey: (pubkey) =>
+            ContactService.instance.contacts
+                .where((c) => c.nostrPubkey?.toLowerCase() == pubkey)
+                .firstOrNull
+                ?.did,
+      ),
+    );
     if (removedReactions > 0) {
-      for (final reactionId in nostrEventIds) {
-        print('[DORFPLATZ-REACT-DELETE-RECV] Reaction deleted: $reactionId');
-      }
+      print('[DORFPLATZ-REACT-DELETE-RECV] $removedReactions reaction(s) '
+          'withdrawn by $shortSigner…');
     }
 
     if (toDelete.isNotEmpty || removedReactions > 0) {
