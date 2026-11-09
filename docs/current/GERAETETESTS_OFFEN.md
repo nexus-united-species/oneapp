@@ -25,6 +25,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| 1162510 | Windows (normales Mitglied): in einer Zelle den Tab mit den Anträgen öffnen | Knopf für einen neuen Antrag ist sichtbar (wie über Agora) |
+| 2398096 | Antrag offen lassen, während das andere Gerät seine Stimme delegiert | „Dir wurde 1 Stimme delegiert“ erscheint ohne Seitenwechsel |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
 | 5fd72b5 | Optional, aufwendig: einem Gerät fehlen Stimmen (offline bis nach der eigenen Auszählung) | Oranger Hinweis „… meldet ein anderes Ergebnis“, ⚠️-Eintrag in der Historie |
