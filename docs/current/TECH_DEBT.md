@@ -262,6 +262,21 @@ Liste:
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
   bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
   („2 von 1“ behoben).
+- **TD-75 Schema bei Neuinstallation unvollständig (09.11.2026 behoben,
+  Gerätetest offen):** `_onCreate` legte nur den Stand von Schema v12 an;
+  alle späteren Spalten und Tabellen gab es nur in den Migrationsschritten,
+  die eine Neuinstallation nie durchläuft. Es fehlten u. a.
+  `proposals.voting_mode`/`eligible_voters_json`,
+  `proposal_votes.selected_option_id`, `group_channels.nostr_event_id`, alle
+  v1.3-Felder von `decision_records` und die Tabelle `proposal_options` —
+  auf neu installierten Geräten scheiterten Auszählungen mit einem
+  SQL-Fehler. Jetzt führt die Neuinstallation nach den Basistabellen alle
+  Schritte ab v13 aus (alle additiv und abgesichert; der Umbenennungsschritt
+  v12 nicht). DB v28 repariert bereits neu installierte Geräte, indem sie
+  dieselben Schritte noch einmal anwendet; auf vollständigen Schemata ändert
+  das nichts. Test: `test/core/storage/fresh_install_schema_test.dart`.
+  Regel für künftige Migrationen: jeder Schritt muss additiv und
+  wiederholbar sein, da er auch bei Neuinstallation und Reparatur läuft.
 - **Eingefrorene Start-Liste, TD-37 (09.11.2026, Gerätetest offen):** Wer die
   Abstimmung startet, friert die bestätigten Mitglieder samt Gründer als
   `eligibleVoters` ein (`voting_snapshot.dart`, Log `[TALLY-SNAPSHOT]`) und
