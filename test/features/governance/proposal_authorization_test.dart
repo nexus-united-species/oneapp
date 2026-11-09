@@ -220,6 +220,42 @@ void main() {
       );
     });
 
+    test('a replayed older status never moves a proposal backwards',
+        () async {
+      // Relays replay the creator's "voting started" event on every start.
+      for (final current in [
+        ProposalStatus.VOTING_ENDED,
+        ProposalStatus.DECIDED,
+        ProposalStatus.ARCHIVED,
+      ]) {
+        expect(
+          await proposalEvent(creator,
+              existing: withStatus(current), status: 'voting'),
+          GovernanceAuthDecision.notAuthorized,
+          reason: current.name,
+        );
+      }
+      expect(
+        await proposalEvent(creator,
+            existing: withStatus(ProposalStatus.VOTING), status: 'discussion'),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
+    test('a withdrawn proposal stays withdrawn, a decided one is not withdrawn',
+        () async {
+      expect(
+        await proposalEvent(creator,
+            existing: withStatus(ProposalStatus.WITHDRAWN), status: 'voting'),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await proposalEvent(creator,
+            existing: withStatus(ProposalStatus.DECIDED), status: 'withdrawn'),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
     test('the creator may still withdraw during a running vote', () async {
       final running = withStatus(ProposalStatus.VOTING,
           endsAt: DateTime.utc(2026, 11, 16, 10));

@@ -175,9 +175,34 @@ bool _isStatusChangeDue(
   }
 }
 
+/// Lifecycle order of a proposal; a status may only move forward.
+const _lifecycleOrder = [
+  ProposalStatus.DRAFT,
+  ProposalStatus.DISCUSSION,
+  ProposalStatus.VOTING,
+  ProposalStatus.VOTING_ENDED,
+  ProposalStatus.DECIDED,
+  ProposalStatus.ARCHIVED,
+];
+
+/// Whether moving from [from] to [to] goes backwards. Relays keep the
+/// creator's older events (e.g. "voting started") and replay them on every
+/// start; applying them reset decided proposals to VOTING (TD-77).
+/// WITHDRAWN is final, and a proposal can no longer be withdrawn once
+/// decided.
+bool _isStatusRegression(ProposalStatus from, ProposalStatus to) {
+  if (from == ProposalStatus.WITHDRAWN) return true;
+  if (to == ProposalStatus.WITHDRAWN) {
+    return from == ProposalStatus.DECIDED || from == ProposalStatus.ARCHIVED;
+  }
+  return _lifecycleOrder.indexOf(to) < _lifecycleOrder.indexOf(from);
+}
+
 /// Kind-31010 proposal events.
 ///
 /// - New proposal: only its creator, who must be a known cell member.
+/// - The status never moves backwards ([_isStatusRegression]), whoever
+///   sends it.
 /// - Status changes that end or decide a vote: only when due on this
 ///   device's clock, for every sender including the creator
 ///   ([_isStatusChangeDue]).
@@ -212,7 +237,8 @@ Future<GovernanceAuthDecision> authorizeProposalEvent({
 
   if (status != null &&
       status != existing.status &&
-      !_isStatusChangeDue(existing, status, now)) {
+      (_isStatusRegression(existing.status, status) ||
+          !_isStatusChangeDue(existing, status, now))) {
     return GovernanceAuthDecision.notAuthorized;
   }
 

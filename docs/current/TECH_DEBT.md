@@ -262,6 +262,18 @@ Liste:
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
   bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
   („2 von 1“ behoben).
+- **TD-77 Status springt beim Start zurück (09.11.2026 im Gerätetest
+  gefunden und behoben):** Relays heben ältere Antrags-Events des
+  Antragstellers auf (z. B. „Abstimmung gestartet“) und liefern sie bei
+  jedem Start erneut aus. Weil der Antragsteller jeden Status setzen durfte,
+  sprang ein entschiedener Antrag dadurch auf „Abstimmung läuft“ zurück
+  (`Status: DECIDED → VOTING`), samt alter Frist. Jetzt geht der Status nur
+  vorwärts (Entwurf → Diskussion → Abstimmung → beendet → entschieden →
+  archiviert); Rückschritte werden für jeden Absender abgelehnt. Ein
+  zurückgezogener Antrag bleibt zurückgezogen, ein entschiedener kann nicht
+  mehr zurückgezogen werden. Bereits zurückgesprungene Anträge laufen bis
+  zur alten Frist weiter und werden dann von der eigenen Auszählung wieder
+  auf „entschieden“ gesetzt (vorhandener Entscheidungsdatensatz bleibt).
 - **TD-76 Vorzeitiges Abstimmungsende von außen (09.11.2026 im Gerätetest
   gefunden und behoben):** Die TD-40-Regeln erlaubten jedem Mitglied die
   „automatischen“ Statuswechsel und dem Antragsteller jeden Status, ohne die
