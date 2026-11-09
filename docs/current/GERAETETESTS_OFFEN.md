@@ -29,7 +29,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | a728672 | Gemeinschaften-Bildschirm auf beiden Geräten nach unten scrollen | Handy zeigt „Weitere lokale Gemeinschaften (Admin, …)“, Windows zeigt diesen Bereich nicht |
 | ef7f637 | Auf dem Handy einer Zelle beitreten, die Windows gegründet hat; auf Windows bestätigen | Zelle erscheint auf dem Handy unter „Meine Zellen“; im Log kein `[CELL-AUTH] Membership confirmation rejected` |
 | ef7f637 | Handy-App beenden, während eine Beitrittsanfrage offen ist; auf Windows bestätigen; Handy neu starten | Zelle erscheint nach dem Start trotzdem unter „Meine Zellen“ |
-| (31013) | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
+| 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
 
 ## Erledigt
 
