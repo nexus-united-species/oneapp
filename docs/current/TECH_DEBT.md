@@ -11,7 +11,7 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Auswirkung | Zielrichtung |
 |---|---|---|---|
-| TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
+| TD-37 / F-002 | Seit 09.11.2026 eingefroren und übertragen (Gerätetest offen) | Anträge ohne Liste (vor diesem Stand gestartet) zählen weiter geräteabhängig | nach dem Gerätetest schließen |
 | TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
 | TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) und Absender der Decision Records (31013) seit 09.11.2026 geprüft (Gerätetest offen); offen: Inhalt der Decision Records (TD-41), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | Wählerfilter mit TD-37 vervollständigen |
 
@@ -231,9 +231,24 @@ Liste:
   Entfernungen dauerhaft (Tabelle `cell_departures`, DB v26, additiv). Stimmen
   von Personen, deren Austritt nach dem Abstimmungsstart liegt, zählen weder
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
-  bleiben sie. Wer nach dem Start beitritt, ist mangels eingefrorener
-  Start-Liste (TD-37) noch nicht ausgeschlossen. Die Anzeige zeigt nie mehr
-  Stimmen als Stimmberechtigte („2 von 1“ behoben).
+  bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
+  („2 von 1“ behoben).
+- **Eingefrorene Start-Liste, TD-37 (09.11.2026, Gerätetest offen):** Wer die
+  Abstimmung startet, friert die bestätigten Mitglieder samt Gründer als
+  `eligibleVoters` ein (`voting_snapshot.dart`, Log `[TALLY-SNAPSHOT]`) und
+  schickt die Liste mit `votingStartedAt` im Antrags-Event mit. Empfänger
+  übernehmen sie einmal, zusammen mit der Startzeit und nur solange sie
+  selbst noch nicht ausgezählt haben; eine spätere Liste ersetzt sie nicht.
+  Abweichungen zur eigenen Mitgliederliste loggt `[TALLY-SNAPSHOT-DIFF]`.
+  Wer nicht auf der Liste steht, sieht beim Abstimmen einen Hinweis, dass
+  seine Stimme nicht zählt. Nur Events von
+  Antragsteller oder Gründer/Moderator tragen Inhalt (TD-40). Gezählt werden
+  nur Stimmen von Personen auf der Liste, abzüglich Austritten nach dem Start;
+  wer später beitritt, stimmt nicht mit ab. Anträge ohne Liste (vor diesem
+  Stand gestartet) zählen weiter mit der aktuellen Mitgliederliste.
+  Restrisiko: Die Liste ist nur so vollständig wie die Mitgliederliste des
+  startenden Geräts (TD-33), und ein böswilliger Antragsteller kann eine
+  falsche Liste schicken.
 - **Zellen älterer App-Versionen (08.11.2026):** Beim ersten Entdecken werden
   Zell-Ankündigungen auch ohne DID-Nachweis angezeigt (`[CELL-AUTH] Legacy
   discovery`). Jede spätere Änderung verlangt den Nachweis des Gründers; eine

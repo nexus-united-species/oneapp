@@ -813,6 +813,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         votingMode: params['votingMode'] as String?,
         proposalOptions: (params['proposalOptions'] as List?)
             ?.cast<Map<String, dynamic>>(),
+        votingStartedAtSeconds: params['votingStartedAt'] as int?,
+        eligibleVoters: (params['eligibleVoters'] as List?)?.cast<String>(),
       );
     };
 

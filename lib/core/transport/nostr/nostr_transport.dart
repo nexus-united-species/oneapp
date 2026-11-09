@@ -957,6 +957,8 @@ class NostrTransport implements MessageTransport {
     String? editReason,
     String? votingMode,
     List<Map<String, dynamic>>? proposalOptions,
+    int? votingStartedAtSeconds,
+    List<String>? eligibleVoters,
   }) async {
     print('[PROPOSAL-PUB] === START === proposalId=$proposalId v=$version '
         'status=$status');
@@ -988,6 +990,10 @@ class NostrTransport implements MessageTransport {
       if (votingMode != null) 'votingMode': votingMode,
       if (proposalOptions != null && proposalOptions.isNotEmpty)
         'proposalOptions': proposalOptions,
+      // TD-37: frozen voting snapshot.
+      if (votingStartedAtSeconds != null)
+        'votingStartedAt': votingStartedAtSeconds,
+      if (eligibleVoters != null) 'eligibleVoters': eligibleVoters,
     };
     final event = NostrEvent.create(
       keys: _keys!,

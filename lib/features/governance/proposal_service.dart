@@ -25,6 +25,7 @@ import 'proposal_option.dart';
 import 'tally_helpers.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
+import 'voting_snapshot.dart';
 
 /// A single discussion message attached to a proposal.
 class ProposalDiscussionMessage {
@@ -715,6 +716,13 @@ class ProposalService {
     p.status = ProposalStatus.VOTING;
     p.votingStartedAt = DateTime.now().toUtc();
     p.votingEndsAt = DateTime.now().toUtc().add(const Duration(days: 7));
+    // TD-37: freeze who may vote, so every device tallies the same list.
+    p.eligibleVoters = buildEligibleVoterSnapshot(
+      CellService.instance.membersOf(p.cellId),
+      founderDid: cell?.createdBy,
+    );
+    print('[TALLY-SNAPSHOT] ${p.id}: ${p.eligibleVoters!.length} eligible '
+        'voters frozen at voting start');
     await _saveProposalToDb(p);
 
     print('[PROPOSAL] startVoting: $proposalId, ends ${p.votingEndsAt}');
@@ -2182,17 +2190,43 @@ class ProposalService {
       {bool log = false}) {
     final cutoffMs =
         (p.votingStartedAt ?? p.createdAt).toUtc().millisecondsSinceEpoch;
+    // TD-37: with a frozen snapshot only listed voters count.
+    final snapshot = p.eligibleVoters?.toSet();
     final counted = votes.where((v) {
+      if (snapshot != null && !snapshot.contains(v.voterDid)) return false;
       final departedAt =
           CellService.instance.departedAtMs(p.cellId, v.voterDid);
       return departedAt == null || departedAt < cutoffMs;
     }).toList();
     final dropped = votes.length - counted.length;
     if (log && dropped > 0) {
-      print('[TALLY-ELIGIBLE] ${p.id}: $dropped vote(s) of departed '
-          'members not counted');
+      print('[TALLY-ELIGIBLE] ${p.id}: $dropped vote(s) of departed or '
+          'not eligible voters not counted');
     }
     return counted;
+  }
+
+  /// TD-37: adopts a received voting snapshot once (see voting_snapshot.dart).
+  void _adoptVotingSnapshot(
+      Proposal p, ProposalStatus status, Map<String, dynamic> content) {
+    if (!adoptVotingSnapshot(p, status, content)) return;
+    final snapshot = p.eligibleVoters!;
+    print('[TALLY-SNAPSHOT] ${p.id}: adopted ${snapshot.length} eligible '
+        'voters');
+    final founderDid = CellService.instance.allKnownCells
+        .where((c) => c.id == p.cellId)
+        .firstOrNull
+        ?.createdBy;
+    final diff = snapshotDifferences(
+      snapshot,
+      CellService.instance.membersOf(p.cellId),
+      founderDid: founderDid,
+    );
+    if (diff.missing.isNotEmpty || diff.unknown.isNotEmpty) {
+      print('[TALLY-SNAPSHOT-DIFF] ${p.id}: '
+          'missing=${diff.missing.length} ${diff.missing} '
+          'unknown=${diff.unknown.length} ${diff.unknown}');
+    }
   }
 
   Future<List<ProposalEdit>> getEditHistory(String proposalId) async {
@@ -2474,6 +2508,7 @@ class ProposalService {
           existing.version = version;
         }
         existing.status = newStatus;
+        _adoptVotingSnapshot(existing, newStatus, content);
         if (category != null) existing.category = category;
         if (votingEndsAtStr != null) {
           final ts = int.tryParse(votingEndsAtStr);
@@ -2522,6 +2557,7 @@ class ProposalService {
         // fall into this else-branch because _proposals[proposalId] is still null.
         // Locking the map BEFORE the DB await prevents UNIQUE-constraint failures
         // and phantom duplicates.
+        _adoptVotingSnapshot(proposal, newStatus, content);
         _proposals[proposalId] = proposal;
 
         await _saveProposalToDb(proposal);
@@ -3324,6 +3360,10 @@ class ProposalService {
       if (editReason != null) 'editReason': editReason,
       'votingMode': p.votingMode.name,
       if (optionsForWire != null) 'proposalOptions': optionsForWire,
+      // TD-37: frozen voting snapshot.
+      if (p.votingStartedAt != null)
+        'votingStartedAt': p.votingStartedAt!.millisecondsSinceEpoch ~/ 1000,
+      if (p.eligibleVoters != null) 'eligibleVoters': p.eligibleVoters,
     });
   }
 

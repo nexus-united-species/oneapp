@@ -563,7 +563,9 @@ class _DetailsTab extends StatelessWidget {
     // Votes of members who left after voting started no longer count.
     final votes = ProposalService.instance.getCountedVotes(p.id);
     final members = CellService.instance.membersOf(p.cellId);
-    final confirmedMembers = members.where((m) => m.isConfirmed).length;
+    // TD-37: during and after voting the frozen snapshot is the base.
+    final confirmedMembers = p.eligibleVoters?.length ??
+        members.where((m) => m.isConfirmed).length;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1092,6 +1094,12 @@ class _VotingCard extends StatelessWidget {
         .reduce((a, b) => a > b ? a : b);
     final participation = votes.length / total;
     final quorumPct = (proposal.quorumRequired * 100).round();
+    // TD-37: whoever was not on the frozen list at voting start can vote,
+    // but the vote is not counted. Say so instead of failing silently.
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    final snapshot = proposal.eligibleVoters;
+    final isNotEligible =
+        snapshot != null && myDid != null && !snapshot.contains(myDid);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1123,6 +1131,18 @@ class _VotingCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+
+          if (isNotEligible) ...[
+            Text(
+              'Du warst beim Start dieser Abstimmung noch nicht als Mitglied '
+              'erfasst. Deine Stimme wird deshalb nicht mitgezählt.',
+              style: TextStyle(
+                color: Colors.orange.shade300,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
 
           // Already voted notice
           if (hasVoted) ...[
