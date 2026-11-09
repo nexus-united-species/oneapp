@@ -47,7 +47,7 @@ class _GovernanceScreenState extends State<GovernanceScreen>
 
   bool _isConfirmedMemberOf(Cell cell) {
     final m = CellService.instance.myMembershipIn(cell.id);
-    return m?.isConfirmed ?? false;
+    return m?.canCreateProposals ?? false;
   }
 
   void _syncSelectedCell() {
