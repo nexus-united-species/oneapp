@@ -33,7 +33,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 0698c8f | Mit dem Knopf „Force beenden“ in einem Antrag auf einem Gerät auszählen; das andere Gerät normal laufen lassen | Auf dem zweiten Gerät erscheint `[TALLY-LOCAL]` erst nach Ablauf von Frist und Nachfrist bzw. bei eigener Auszählung; beide zeigen dasselbe Ergebnis; kein `[TALLY-MISMATCH]` |
 | 5fd72b5 | Nur möglich, wenn einem Gerät Stimmen fehlen: Handy offline schalten, auf Windows abstimmen, Frist ablaufen lassen, Handy erst nach seiner eigenen Auszählung wieder online | Beim Ergebnis auf dem Handy erscheint der orange Hinweis „… meldet ein anderes Ergebnis“, in der Historie ein ⚠️-Eintrag. Optional, aufwendig |
 | 2d346db | Antrag mit Optionen (Einzelauswahl) abstimmen; auf einem Gerät kurz vor der Auszählung das Netz trennen, nach der Auszählung wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
-| (TD-34) | Beim ersten Start nach dem Update | Log zeigt `[DB-MIGRATION-27]`; App startet normal; nach einer Auszählung zeigt das Ergebnis „x Stimmen von N Stimmberechtigten“ mit N = Anzahl aus `[TALLY-SNAPSHOT]` |
+| 5f23cc2 | Beim ersten Start nach dem Update | Log zeigt `[DB-MIGRATION-27]`; App startet normal; nach einer Auszählung zeigt das Ergebnis „x Stimmen von N Stimmberechtigten“ mit N = Anzahl aus `[TALLY-SNAPSHOT]` |
 | 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
 
 ## Erledigt
