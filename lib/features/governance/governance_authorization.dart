@@ -215,6 +215,46 @@ Future<GovernanceAuthDecision> authorizeVote({
       : GovernanceAuthDecision.notAuthorized;
 }
 
+/// Clock skew tolerated between devices when a decision record arrives
+/// shortly before the local voting deadline.
+const decisionRecordClockSkew = Duration(minutes: 1);
+
+/// Kind-31013 decision records. Every member device tallies on its own and
+/// publishes the same record, so any proven member of the cell may send one.
+/// - The proposal must be known locally and belong to the cell named in the
+///   event. An unknown proposal is tallied locally once it arrives (a stored
+///   record would make the device skip its own tally).
+/// - Only for a running or ended vote with a deadline that has passed (an
+///   early "result" would end the vote on receivers before everyone voted).
+/// The record's content is not re-checked here; that is the hash check of
+/// TD-41.
+Future<GovernanceAuthDecision> authorizeDecisionRecord({
+  required String cellId,
+  required Cell? cell,
+  required List<CellMember> members,
+  required Proposal? proposal,
+  required DateTime now,
+  required String signerPubkey,
+  required Object? idProof,
+}) async {
+  if (cell == null || cell.id != cellId) {
+    return GovernanceAuthDecision.unknownCell;
+  }
+  final endsAt = proposal?.votingEndsAt;
+  final isDue = proposal != null &&
+      proposal.cellId == cellId &&
+      (proposal.status == ProposalStatus.VOTING ||
+          proposal.status == ProposalStatus.VOTING_ENDED) &&
+      endsAt != null &&
+      !now.add(decisionRecordClockSkew).isBefore(endsAt);
+  if (!isDue) return GovernanceAuthDecision.notAuthorized;
+  final did = await _provenDid(signerPubkey, idProof);
+  if (did == null) return GovernanceAuthDecision.missingProof;
+  return _isMember(did, cell, members)
+      ? GovernanceAuthDecision.allowed
+      : GovernanceAuthDecision.notAuthorized;
+}
+
 /// Kind-31012 delegations: only the delegator creates, revokes or
 /// supersedes their own delegation.
 Future<GovernanceAuthDecision> authorizeDelegation({

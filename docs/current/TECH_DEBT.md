@@ -13,7 +13,7 @@ Release-Reihenfolge steht separat in
 |---|---|---|---|
 | TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
 | TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
-| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) seit 09.11.2026 geprüft (Gerätetest offen); offen: Decision Records (31013), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | DID-Nachweis auf 31013 ausweiten; Wählerfilter mit TD-37 vervollständigen |
+| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) und Absender der Decision Records (31013) seit 09.11.2026 geprüft (Gerätetest offen); offen: Inhalt der Decision Records (TD-41), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | Wählerfilter mit TD-37 vervollständigen |
 
 ## Hoch – vor breiter Nutzung
 
@@ -208,6 +208,13 @@ Liste:
     nicht. Bestätigt ein Moderator statt des Gründers, verwirft das Gerät des
     Bewerbers die Bestätigung. Lösbar erst mit übertragbaren Mitgliederlisten
     (TD-33/TD-37) oder einem vom Gründer signierten Moderatoren-Nachweis.
+  - Entscheidungsprotokoll (Kind 31013, seit 09.11.2026): jedes Gerät zählt
+    selbst aus und veröffentlicht dasselbe Protokoll, darum darf jedes
+    nachgewiesene Mitglied der Zelle senden. Der Antrag muss zur genannten
+    Zelle gehören, und das Protokoll darf nicht früher als 5 Minuten vor
+    Fristende eintreffen. Ob die Zahlen stimmen, prüft das noch nicht: ein
+    Mitglied kann nach Fristende ein falsches Ergebnis schicken, das
+    Empfänger ohne eigene Auszählung übernehmen. Das ist TD-41.
 
   Events älterer App-Versionen ohne Nachweis werden abgelehnt; ein Gerät,
   das alte Anträge/Stimmen von Relays neu einliest, übernimmt sie nicht.

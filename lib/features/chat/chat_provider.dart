@@ -739,6 +739,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         idProof: content[IdentityProof.contentKey],
       );
 
+  Future<GovernanceAuthDecision> _authorizeIncomingDecisionRecord(
+    NostrEvent event,
+    Map<String, dynamic> content,
+  ) {
+    final cellId = _governanceCellId(event) ?? '';
+    final proposalId = content['proposalId'] as String? ?? '';
+    return authorizeDecisionRecord(
+      cellId: cellId,
+      cell: CellService.instance.myCells
+          .where((c) => c.id == cellId)
+          .firstOrNull,
+      members: CellService.instance.membersOf(cellId),
+      proposal: ProposalService.instance.getProposal(proposalId),
+      now: DateTime.now().toUtc(),
+      signerPubkey: event.pubkey,
+      idProof: content[IdentityProof.contentKey],
+    );
+  }
+
   Future<GovernanceAuthDecision> _authorizeIncomingDelegation(
     NostrEvent event,
     Map<String, dynamic> content,
@@ -754,17 +773,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (transport == null) return;
 
     // Incoming governance events → sender authorization (TD-40) →
-    // ProposalService handlers. Decision records are not authorized yet:
-    // every device finalizes, and their hash check is TD-41.
+    // ProposalService handlers. Decision records are checked for the sender
+    // only; the hash check of their content is TD-41.
     transport.onProposalEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingProposal,
         ProposalService.instance.handleIncomingProposal));
     transport.onVoteEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingVote,
         ProposalService.instance.handleIncomingVote));
-    transport.onDecisionRecordEvent.listen((event) {
-      ProposalService.instance.handleIncomingDecisionRecord(event);
-    });
+    transport.onDecisionRecordEvent.listen((event) => _authorizeGovernanceEvent(
+        event, _authorizeIncomingDecisionRecord,
+        ProposalService.instance.handleIncomingDecisionRecord));
     transport.onDelegationEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingDelegation,
         ProposalService.instance.handleIncomingDelegationEvent));

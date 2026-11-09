@@ -1256,7 +1256,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.decisionRecord,
-      content: jsonEncode(recordContent),
+      content: jsonEncode(_withIdentityProof(recordContent)),
       tags: tags,
     );
     print('[DECISION-PUB] Tags: ${event.tags}');
