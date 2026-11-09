@@ -3129,6 +3129,8 @@ class ProposalService {
         await PodDatabase.instance.upsertDelegation(updated.toMap());
         print('[DELEGATION] Status update from wire: $delegationId '
             '${existing.status.name} → ${parsedStatus.name}');
+        // UI refresh only (open proposal shows delegations); no auto-action.
+        _notify();
         return;
       }
 
@@ -3179,6 +3181,9 @@ class ProposalService {
 
       print('[DELEGATION] handleIncoming: persisted new $delegationId '
           'status=${parsedStatus.name}');
+      // UI refresh only: an open proposal showed incoming delegations only
+      // after leaving and reopening it. No auto-action (§31.3).
+      _notify();
     } catch (e) {
       print('[DELEGATION] handleIncomingDelegationEvent error: $e');
     }

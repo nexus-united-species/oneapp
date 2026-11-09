@@ -815,6 +815,19 @@ void main() {
       expect(row['status'], equals('ACTIVE'));
     });
 
+    test('notifies listeners so an open proposal shows the delegation',
+        () async {
+      var notified = 0;
+      final sub = ProposalService.instance.stream.listen((_) => notified++);
+      addTearDown(sub.cancel);
+
+      await ProposalService.instance.handleIncomingDelegationEvent(
+          _makeIncomingEvent(delegationId: 'del_incoming_notify'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(notified, greaterThan(0));
+    });
+
     test(
         'writes DELEGATION_CREATED audit when status=ACTIVE and not previously known',
         () async {
