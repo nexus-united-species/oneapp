@@ -11,9 +11,9 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Auswirkung | Zielrichtung |
 |---|---|---|---|
-| TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
-| TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
-| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | offen: Beitrittsbestätigung (Kind 31004), Decision Records (31013), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | DID-Nachweis auf 31004/31013 ausweiten; Wählerfilter mit TD-37 vervollständigen |
+| TD-37 / F-002 | Seit 09.11.2026 eingefroren und übertragen (Gerätetest offen) | Anträge ohne Liste (vor diesem Stand gestartet) zählen weiter geräteabhängig | nach dem Gerätetest schließen |
+| TD-38 / F-003 | Seit 09.11.2026 nutzt der Retry denselben Payload-Builder wie der Erstversand (Gerätetest offen) | – | nach dem Livetest mit Relay-Ausfall schließen |
+| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) und Absender der Decision Records (31013) seit 09.11.2026 geprüft (Gerätetest offen); offen: Inhalt der Decision Records (TD-41), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | Wählerfilter mit TD-37 vervollständigen |
 
 ## Hoch – vor breiter Nutzung
 
@@ -21,8 +21,8 @@ Release-Reihenfolge steht separat in
 |---|---|---|
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
 | TD-33 | Zellmitglieder-Sync divergiert | Android/Windows zeigten unterschiedliche Mitgliederzahlen; F-002 verschärft das Problem |
-| TD-34 | `eligibleVotersCount` fehlt im Decision Record | Nenner wird fragil aus Beteiligung rekonstruiert |
-| TD-41 | `content_hash`/Hash-Kette werden beim Empfang nicht geprüft | lokale Hash-Kette existiert, ist aber keine durchgesetzte Manipulationsprüfung |
+| TD-34 | Seit 09.11.2026 in Modell, DB (v27, additiv), Wire-Format und Vergleich (Gerätetest offen) | ältere Records ohne Zahl: Nenner weiter aus der Beteiligung rekonstruiert |
+| TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
 | TD-57 | Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
@@ -37,7 +37,7 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Hinweis |
 |---|---|---|
-| TD-25 | UI-/Navigation-Test-Failures | 11 bekannte Fehler in der geprüften Auswahl; meist veraltete Labels plus realer Desktop-Overflow. Messung 06.11.2026: zusätzlich 5 Fehler in den TransportManager-Tests |
+| TD-25 | UI-/Navigation-Tests seit 09.11.2026 grün | Tests an Dorfplatz-Tab, Agora-Kachel/-Karte und „Peers im Netzwerk“ angepasst; dabei zwei echte Überläufe in der Handy-Ansicht (400 px) behoben: Peer-Zeile unter dem Radar (44 px) und lange Abschnittstitel in Gemeinschaften (9,6 px). Offen bleiben 4 LAN-Discovery- und 5 TransportManager-Tests (Volllauf 09.11.2026: 1674 grün, 9 rot) |
 | TD-28 | `publish_results.vote_id` polymorph | Feld trägt je nach `event_kind` auch DecisionRecord-/Delegation-IDs; später in `payload_id` umbenennen |
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | seltener partieller Secure-Storage-Zustand; nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Init-Race kann UNIQUE-Kollision erzeugen; Abstimmung ohne Pubkey ablehnen |
@@ -197,6 +197,53 @@ Liste:
     Kategorie und Frist werden verworfen.
   - Stimme: nur die im Inhalt genannte `voterDid`.
   - Delegation: nur die delegierende Person.
+  - Beitrittsbestätigung (Kind 31004, seit 09.11.2026): nur für eine bekannte
+    Zelle mit offener eigener Beitrittsanfrage, nur für mich als einfaches
+    Mitglied, nur solange ich noch nicht Mitglied bin, unterschrieben vom
+    Gründer oder einem lokal bekannten Moderator (`confirmedBy`). Der
+    Gründer der bekannten Zelle darf sich nicht ändern, übernommen werden
+    die lokal bekannten Zelldaten. Bestätigungen, die vor der
+    Zell-Ankündigung eintreffen, werden bis zu deren Eintreffen gehalten.
+    **Einschränkung:** Ein Bewerber kennt die Moderatoren einer Zelle noch
+    nicht. Bestätigt ein Moderator statt des Gründers, verwirft das Gerät des
+    Bewerbers die Bestätigung. Lösbar erst mit übertragbaren Mitgliederlisten
+    (TD-33/TD-37) oder einem vom Gründer signierten Moderatoren-Nachweis.
+  - Entscheidungsprotokoll (Kind 31013, seit 09.11.2026): jedes Gerät zählt
+    selbst aus und veröffentlicht dasselbe Protokoll, darum darf jedes
+    nachgewiesene Mitglied der Zelle senden. Der Antrag muss zur genannten
+    Zelle gehören, die Abstimmung muss laufen oder beendet sein, und Frist
+    samt Nachfrist für späte Stimmen müssen nach der eigenen Uhr abgelaufen
+    sein.
+- **Zahl der Stimmberechtigten im Protokoll, TD-34 (09.11.2026, Gerätetest
+  offen):** `DecisionRecord.eligibleVotersCount` (Spalte
+  `eligible_voters_count`, Migration v27 per `ALTER TABLE`, nullable) wird
+  aus der eingefrorenen Liste (TD-37) gesetzt, im Kind-31013-Inhalt
+  mitgeschickt, bei der Beteiligungsanzeige als Nenner genutzt und beim
+  Vergleich (TD-41) geprüft, wenn beide Seiten sie haben. In den Hash ging
+  die Zahl schon vorher ein.
+- **Retry der Entscheidungsprotokolle, TD-38 (09.11.2026, Gerätetest offen):**
+  Der Wiederholungsversand baute den Inhalt bisher von Hand nach; es
+  fehlten `cellId`, `votingMode`, `resultReason`, `optionResultsJson`,
+  `tieOptionIdsJson` und die gewählten Optionen der Stimmen. Seit TD-41
+  hätten Empfänger bei Abstimmungen mit Optionen deshalb eine falsche
+  Abweichung gemeldet. Jetzt erzeugt `decisionRecordRetryContent` den
+  Inhalt mit demselben Builder wie der Erstversand; ein Regressionstest
+  vergleicht beide. Ist der Antrag lokal nicht mehr bekannt, entfällt der
+  Retry (`[RETRY] Decision record retry skipped`).
+- **Eigene Auszählung hat Vorrang, TD-41 (09.11.2026, Gerätetest offen):**
+  Ein empfangenes Entscheidungsprotokoll löst zuerst die eigene Auszählung
+  aus (`[TALLY-LOCAL]`); übernommen wird es nie, auch nicht, wenn keine
+  eigene Auszählung möglich ist (`[TALLY-SKIP-ADOPT]`). Weicht es vom eigenen
+  Ergebnis ab, loggt das Gerät `[TALLY-MISMATCH]` mit beiden Zahlenreihen
+  (`decision_record_comparison.dart`), speichert einen Historien-Eintrag
+  `RESULT_MISMATCH` und zeigt beim Ergebnis einen Hinweis mit Absender und
+  gemeldeten Zahlen (`result_mismatch_notice.dart`). Der `content_hash` wird bewusst nicht
+  verglichen: Ihn berechnet der Absender selbst, und er enthält den Hash des
+  vorigen Protokolls auf dem Absendergerät. Mehrere gleichzeitige
+  Auszählungen (Scheduler, App-Start, Empfang) warten aufeinander.
+  Abweichungen zwischen ehrlichen Geräten bleiben möglich, wenn einem Gerät
+  Stimmen fehlen; die eingefrorene Liste (TD-37) beseitigt nur die
+  Unterschiede in der Mitgliederliste.
 
   Events älterer App-Versionen ohne Nachweis werden abgelehnt; ein Gerät,
   das alte Anträge/Stimmen von Relays neu einliest, übernimmt sie nicht.
@@ -213,9 +260,63 @@ Liste:
   Entfernungen dauerhaft (Tabelle `cell_departures`, DB v26, additiv). Stimmen
   von Personen, deren Austritt nach dem Abstimmungsstart liegt, zählen weder
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
-  bleiben sie. Wer nach dem Start beitritt, ist mangels eingefrorener
-  Start-Liste (TD-37) noch nicht ausgeschlossen. Die Anzeige zeigt nie mehr
-  Stimmen als Stimmberechtigte („2 von 1“ behoben).
+  bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
+  („2 von 1“ behoben).
+- **TD-77 Status springt beim Start zurück (09.11.2026 im Gerätetest
+  gefunden und behoben):** Relays heben ältere Antrags-Events des
+  Antragstellers auf (z. B. „Abstimmung gestartet“) und liefern sie bei
+  jedem Start erneut aus. Weil der Antragsteller jeden Status setzen durfte,
+  sprang ein entschiedener Antrag dadurch auf „Abstimmung läuft“ zurück
+  (`Status: DECIDED → VOTING`), samt alter Frist. Jetzt geht der Status nur
+  vorwärts (Entwurf → Diskussion → Abstimmung → beendet → entschieden →
+  archiviert); Rückschritte werden für jeden Absender abgelehnt. Ein
+  zurückgezogener Antrag bleibt zurückgezogen, ein entschiedener kann nicht
+  mehr zurückgezogen werden. Bereits zurückgesprungene Anträge laufen bis
+  zur alten Frist weiter und werden dann von der eigenen Auszählung wieder
+  auf „entschieden“ gesetzt (vorhandener Entscheidungsdatensatz bleibt).
+- **TD-76 Vorzeitiges Abstimmungsende von außen (09.11.2026 im Gerätetest
+  gefunden und behoben):** Die TD-40-Regeln erlaubten jedem Mitglied die
+  „automatischen“ Statuswechsel und dem Antragsteller jeden Status, ohne die
+  eigene Frist zu prüfen. Ein „Force beenden“ auf dem Handy setzte den
+  Antrag auf Windows deshalb über die Statusmeldungen auf „entschieden“,
+  obwohl die Frist dort noch lief; Windows zählte nie selbst aus und zeigte
+  „Ungültig“. Jetzt gilt für alle Absender, auch den Antragsteller:
+  „Abstimmung beendet“ nur nach Ablauf der Frist auf der eigenen Uhr,
+  „entschieden“ nie von außen (nur die eigene Auszählung setzt es),
+  „archiviert“ erst nach eigener Entscheidung. Zurückziehen bleibt dem
+  Antragsteller erlaubt. Bereits so beschädigte Anträge (entschieden ohne
+  Ergebnis) werden nicht automatisch geheilt.
+- **TD-75 Schema bei Neuinstallation unvollständig (09.11.2026 behoben,
+  Gerätetest offen):** `_onCreate` legte nur den Stand von Schema v12 an;
+  alle späteren Spalten und Tabellen gab es nur in den Migrationsschritten,
+  die eine Neuinstallation nie durchläuft. Es fehlten u. a.
+  `proposals.voting_mode`/`eligible_voters_json`,
+  `proposal_votes.selected_option_id`, `group_channels.nostr_event_id`, alle
+  v1.3-Felder von `decision_records` und die Tabelle `proposal_options` —
+  auf neu installierten Geräten scheiterten Auszählungen mit einem
+  SQL-Fehler. Jetzt führt die Neuinstallation nach den Basistabellen alle
+  Schritte ab v13 aus (alle additiv und abgesichert; der Umbenennungsschritt
+  v12 nicht). DB v28 repariert bereits neu installierte Geräte, indem sie
+  dieselben Schritte noch einmal anwendet; auf vollständigen Schemata ändert
+  das nichts. Test: `test/core/storage/fresh_install_schema_test.dart`.
+  Regel für künftige Migrationen: jeder Schritt muss additiv und
+  wiederholbar sein, da er auch bei Neuinstallation und Reparatur läuft.
+- **Eingefrorene Start-Liste, TD-37 (09.11.2026, Gerätetest offen):** Wer die
+  Abstimmung startet, friert die bestätigten Mitglieder samt Gründer als
+  `eligibleVoters` ein (`voting_snapshot.dart`, Log `[TALLY-SNAPSHOT]`) und
+  schickt die Liste mit `votingStartedAt` im Antrags-Event mit. Empfänger
+  übernehmen sie einmal, zusammen mit der Startzeit und nur solange sie
+  selbst noch nicht ausgezählt haben; eine spätere Liste ersetzt sie nicht.
+  Abweichungen zur eigenen Mitgliederliste loggt `[TALLY-SNAPSHOT-DIFF]`.
+  Wer nicht auf der Liste steht, sieht beim Abstimmen einen Hinweis, dass
+  seine Stimme nicht zählt. Nur Events von
+  Antragsteller oder Gründer/Moderator tragen Inhalt (TD-40). Gezählt werden
+  nur Stimmen von Personen auf der Liste, abzüglich Austritten nach dem Start;
+  wer später beitritt, stimmt nicht mit ab. Anträge ohne Liste (vor diesem
+  Stand gestartet) zählen weiter mit der aktuellen Mitgliederliste.
+  Restrisiko: Die Liste ist nur so vollständig wie die Mitgliederliste des
+  startenden Geräts (TD-33), und ein böswilliger Antragsteller kann eine
+  falsche Liste schicken.
 - **Zellen älterer App-Versionen (08.11.2026):** Beim ersten Entdecken werden
   Zell-Ankündigungen auch ohne DID-Nachweis angezeigt (`[CELL-AUTH] Legacy
   discovery`). Jede spätere Änderung verlangt den Nachweis des Gründers; eine

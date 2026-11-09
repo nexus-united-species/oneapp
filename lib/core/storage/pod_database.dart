@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 26,
+      version: schemaVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -97,7 +97,38 @@ class PodDatabase {
 
   // ── Schema ────────────────────────────────────────────────────────────────
 
+  /// Builds the schema of a fresh install on [db] (tests only).
+  @visibleForTesting
+  static Future<void> createSchemaForTest(Database db) =>
+      _onCreate(db, schemaVersion);
+
+  /// Builds only the v12-era base tables, as fresh installs of earlier
+  /// builds did, without the later migration steps (tests only).
+  @visibleForTesting
+  static Future<void> createBaseTablesForTest(Database db) =>
+      _createBaseTables(db);
+
+  /// Runs the upgrade path from [oldVersion] (tests only).
+  @visibleForTesting
+  static Future<void> upgradeForTest(Database db, int oldVersion) =>
+      _onUpgrade(db, oldVersion, schemaVersion);
+
+  /// Current schema version (see `_onUpgrade`).
+  static const schemaVersion = 28;
+
+  /// Fresh install: the base tables plus every additive step after v12.
   static Future<void> _onCreate(Database db, int version) async {
+    await _createBaseTables(db);
+    // The base tables reflect schema v12; columns and tables added later
+    // live only in the migration steps. Fresh installs used to skip them
+    // (e.g. decision_records.result_reason → every tally failed). Every
+    // step from v13 on is additive and guarded (IF NOT EXISTS /
+    // _hasColumn), so it is safe here. Steps up to v12 must not run: v12
+    // renames `proposals`.
+    await _migrateFrom(db, _freshInstallBaseVersion);
+  }
+
+  static Future<void> _createBaseTables(Database db) async {
     // Identity namespace: key/value store for profile and key metadata
     await db.execute('''
       CREATE TABLE pod_identity (
@@ -523,6 +554,11 @@ class PodDatabase {
     ''');
   }
 
+  /// Schema version the CREATE statements in [_createBaseTables] match.
+  /// Every migration step after it must stay additive and idempotent: it
+  /// also runs on fresh installs and in the v28 repair.
+  static const _freshInstallBaseVersion = 12;
+
   /// Returns true if [table] exists in the database.
   /// Used to guard RENAME / DROP migrations that have no IF NOT EXISTS variant.
   static Future<bool> _hasTable(Database db, String table) async {
@@ -542,7 +578,21 @@ class PodDatabase {
     return info.any((row) => row['name'] == column);
   }
 
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _onUpgrade(
+      Database db, int oldVersion, int newVersion) async {
+    await _migrateFrom(db, oldVersion);
+    if (oldVersion > _freshInstallBaseVersion && oldVersion < 28) {
+      // v28 repair: devices freshly installed with an earlier build got only
+      // the base tables and miss columns of v13+ (see _onCreate). Re-apply
+      // the additive steps; on complete schemas this changes nothing.
+      await _migrateFrom(db, _freshInstallBaseVersion);
+      print('[DB-MIGRATION-28] additive steps since v13 re-applied '
+          '(fresh-install repair)');
+    }
+  }
+
+  /// Applies every migration step after [oldVersion].
+  static Future<void> _migrateFrom(Database db, int oldVersion) async {
     if (oldVersion < 2) {
       // Add encryption_public_key column to contacts (unencrypted, for quick lookup)
       if (!await _hasColumn(db, 'pod_contacts', 'encryption_public_key')) {
@@ -1126,6 +1176,17 @@ class PodDatabase {
       // Votes of members who left after voting started no longer count.
       await _createCellDeparturesTable(db);
       print('[DB-MIGRATION-26] cell_departures table created');
+    }
+
+    if (oldVersion < 27) {
+      // TD-34: eligible voter count of a decision record. Additive and
+      // nullable; older records keep NULL.
+      if (!await _hasColumn(
+          db, 'decision_records', 'eligible_voters_count')) {
+        await db.execute('ALTER TABLE decision_records '
+            'ADD COLUMN eligible_voters_count INTEGER');
+      }
+      print('[DB-MIGRATION-27] decision_records.eligible_voters_count added');
     }
   }
 

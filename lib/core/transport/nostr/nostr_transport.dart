@@ -808,7 +808,8 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.cellMembershipConfirmed,
-      content: jsonEncode({'cell': cellJson, 'member': memberJson}),
+      content: jsonEncode(
+          _withIdentityProof({'cell': cellJson, 'member': memberJson})),
       tags: [
         ['t', 'nexus-cell-confirmed'],
         ['p', requesterNostrPubkeyHex],
@@ -956,6 +957,8 @@ class NostrTransport implements MessageTransport {
     String? editReason,
     String? votingMode,
     List<Map<String, dynamic>>? proposalOptions,
+    int? votingStartedAtSeconds,
+    List<String>? eligibleVoters,
   }) async {
     print('[PROPOSAL-PUB] === START === proposalId=$proposalId v=$version '
         'status=$status');
@@ -987,6 +990,10 @@ class NostrTransport implements MessageTransport {
       if (votingMode != null) 'votingMode': votingMode,
       if (proposalOptions != null && proposalOptions.isNotEmpty)
         'proposalOptions': proposalOptions,
+      // TD-37: frozen voting snapshot.
+      if (votingStartedAtSeconds != null)
+        'votingStartedAt': votingStartedAtSeconds,
+      if (eligibleVoters != null) 'eligibleVoters': eligibleVoters,
     };
     final event = NostrEvent.create(
       keys: _keys!,
@@ -1255,7 +1262,7 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.decisionRecord,
-      content: jsonEncode(recordContent),
+      content: jsonEncode(_withIdentityProof(recordContent)),
       tags: tags,
     );
     print('[DECISION-PUB] Tags: ${event.tags}');
@@ -2739,7 +2746,9 @@ class NostrTransport implements MessageTransport {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       final cellId = event.tagValue('cell') ?? '?';
       print('[JOIN] Membership confirmation received for cell: $cellId');
-      _cellMembershipConfirmedController.add(data);
+      // Signer pubkey for the TD-40 sender check in ChatProvider.
+      _cellMembershipConfirmedController
+          .add({...data, '_nostr_pubkey': event.pubkey});
     } catch (e) {
       print('[JOIN] Cell membership confirmation parse FAILED: $e');
     }

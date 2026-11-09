@@ -98,6 +98,45 @@ Future<GovernanceAuthDecision> authorizeMemberUpdate({
   return GovernanceAuthDecision.allowed;
 }
 
+/// Kind-31004 membership confirmations, received by the applicant.
+///
+/// - Only for a cell I know, am not yet a member of, and have a pending
+///   join request for (replays cannot overwrite an existing membership).
+/// - The confirmation must name me as a plain member of that cell.
+/// - The founder may never change: the cell in the payload must keep the
+///   founder of the locally known cell.
+/// - The signer must prove the DID given as `confirmedBy`, and that DID must
+///   be the founder or a moderator known locally. An applicant does not
+///   know the moderators of a cell yet, so in practice the founder confirms.
+Future<GovernanceAuthDecision> authorizeMembershipConfirmation({
+  required Cell? knownCell,
+  required List<CellMember> knownMembers,
+  required Cell payloadCell,
+  required CellMember member,
+  required String myDid,
+  required bool isAlreadyMember,
+  required bool hasPendingRequest,
+  required String signerPubkey,
+  required Object? idProof,
+}) async {
+  if (knownCell == null) return GovernanceAuthDecision.unknownCell;
+  final isWellFormed = myDid.isNotEmpty &&
+      member.did == myDid &&
+      member.cellId == knownCell.id &&
+      payloadCell.id == knownCell.id &&
+      payloadCell.createdBy == knownCell.createdBy &&
+      member.role == MemberRole.member;
+  if (!isWellFormed || isAlreadyMember || !hasPendingRequest) {
+    return GovernanceAuthDecision.notAuthorized;
+  }
+  final did = await _provenDid(signerPubkey, idProof);
+  if (did == null) return GovernanceAuthDecision.missingProof;
+  final isApprover = did != myDid && _isManager(did, knownCell, knownMembers);
+  return isApprover && did == member.confirmedBy
+      ? GovernanceAuthDecision.allowed
+      : GovernanceAuthDecision.notAuthorized;
+}
+
 bool _isManager(String did, Cell? cell, List<CellMember> members) =>
     (cell != null && did == cell.createdBy) ||
     members.any((m) => m.did == did && m.canManageRequests);
@@ -113,10 +152,61 @@ const _automaticTransitions = {
   ProposalStatus.DECIDED: ProposalStatus.ARCHIVED,
 };
 
+/// Whether a received change of [existing] to [status] may happen now,
+/// measured on this device's own clock. Every device ends a vote and
+/// tallies on its own (ProposalScheduler), so nobody may do it for others:
+/// - VOTING_ENDED only once the local voting deadline has passed,
+/// - DECIDED never from outside: only this device's own tally sets it (a
+///   received DECIDED would skip the tally and leave the proposal without
+///   result, TD-41),
+/// - ARCHIVED only after this device has decided.
+bool _isStatusChangeDue(
+    Proposal existing, ProposalStatus status, DateTime now) {
+  switch (status) {
+    case ProposalStatus.VOTING_ENDED:
+      final endsAt = existing.votingEndsAt;
+      return endsAt != null && !now.isBefore(endsAt);
+    case ProposalStatus.DECIDED:
+      return false;
+    case ProposalStatus.ARCHIVED:
+      return existing.status == ProposalStatus.DECIDED;
+    default:
+      return true;
+  }
+}
+
+/// Lifecycle order of a proposal; a status may only move forward.
+const _lifecycleOrder = [
+  ProposalStatus.DRAFT,
+  ProposalStatus.DISCUSSION,
+  ProposalStatus.VOTING,
+  ProposalStatus.VOTING_ENDED,
+  ProposalStatus.DECIDED,
+  ProposalStatus.ARCHIVED,
+];
+
+/// Whether moving from [from] to [to] goes backwards. Relays keep the
+/// creator's older events (e.g. "voting started") and replay them on every
+/// start; applying them reset decided proposals to VOTING (TD-77).
+/// WITHDRAWN is final, and a proposal can no longer be withdrawn once
+/// decided.
+bool _isStatusRegression(ProposalStatus from, ProposalStatus to) {
+  if (from == ProposalStatus.WITHDRAWN) return true;
+  if (to == ProposalStatus.WITHDRAWN) {
+    return from == ProposalStatus.DECIDED || from == ProposalStatus.ARCHIVED;
+  }
+  return _lifecycleOrder.indexOf(to) < _lifecycleOrder.indexOf(from);
+}
+
 /// Kind-31010 proposal events.
 ///
 /// - New proposal: only its creator, who must be a known cell member.
-/// - Creator: everything (edit, withdraw, status).
+/// - The status never moves backwards ([_isStatusRegression]), whoever
+///   sends it.
+/// - Status changes that end or decide a vote: only when due on this
+///   device's clock, for every sender including the creator
+///   ([_isStatusChangeDue]).
+/// - Creator: everything else (edit, withdraw, status).
 /// - Founder/moderator: may start voting (as in the UI).
 /// - Any other known member: only the automatic deadline transitions, and
 ///   only as a status change ([GovernanceAuthDecision.allowedStatusOnly]).
@@ -126,6 +216,7 @@ Future<GovernanceAuthDecision> authorizeProposalEvent({
   required String? statusTag,
   required Cell? cell,
   required List<CellMember> members,
+  required DateTime now,
   required String signerPubkey,
   required Object? idProof,
 }) async {
@@ -142,6 +233,13 @@ Future<GovernanceAuthDecision> authorizeProposalEvent({
     return isValidNew
         ? GovernanceAuthDecision.allowed
         : GovernanceAuthDecision.notAuthorized;
+  }
+
+  if (status != null &&
+      status != existing.status &&
+      (_isStatusRegression(existing.status, status) ||
+          !_isStatusChangeDue(existing, status, now))) {
+    return GovernanceAuthDecision.notAuthorized;
   }
 
   if (did == existing.creatorDid) return GovernanceAuthDecision.allowed;
@@ -172,6 +270,49 @@ Future<GovernanceAuthDecision> authorizeVote({
   final did = await _provenDid(signerPubkey, idProof);
   if (did == null) return GovernanceAuthDecision.missingProof;
   return did == content['voterDid']
+      ? GovernanceAuthDecision.allowed
+      : GovernanceAuthDecision.notAuthorized;
+}
+
+/// Kind-31013 decision records. Every member device tallies on its own and
+/// publishes the same record, so any proven member of the cell may send one.
+/// - The proposal must be known locally and belong to the cell named in the
+///   event. An unknown proposal is tallied locally once it arrives (a stored
+///   record would make the device skip its own tally).
+/// - Only for a running or ended vote whose deadline and grace period have
+///   passed (an early "result" would cut off votes on receivers).
+/// The record's content is not re-checked here; that is the hash check of
+/// TD-41.
+Future<GovernanceAuthDecision> authorizeDecisionRecord({
+  required String cellId,
+  required Cell? cell,
+  required List<CellMember> members,
+  required Proposal? proposal,
+  required DateTime now,
+  required String signerPubkey,
+  required Object? idProof,
+}) async {
+  if (cell == null || cell.id != cellId) {
+    return GovernanceAuthDecision.unknownCell;
+  }
+  // TD-41: not before the grace period for late votes has ended either;
+  // devices tally only then (ProposalScheduler).
+  final endsAt = proposal == null
+      ? null
+      : proposal.votingEndsAt
+          ?.add(Duration(hours: proposal.gracePeriodHours));
+  final isDue = proposal != null &&
+      proposal.cellId == cellId &&
+      (proposal.status == ProposalStatus.VOTING ||
+          proposal.status == ProposalStatus.VOTING_ENDED) &&
+      // No skew allowance: the deadline is this device's own, and an early
+      // record would trigger the tally before late votes arrived.
+      endsAt != null &&
+      !now.isBefore(endsAt);
+  if (!isDue) return GovernanceAuthDecision.notAuthorized;
+  final did = await _provenDid(signerPubkey, idProof);
+  if (did == null) return GovernanceAuthDecision.missingProof;
+  return _isMember(did, cell, members)
       ? GovernanceAuthDecision.allowed
       : GovernanceAuthDecision.notAuthorized;
 }

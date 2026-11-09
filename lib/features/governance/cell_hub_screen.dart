@@ -1124,13 +1124,17 @@ class _SectionHeader extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              title,
-              style: TextStyle(
-                color: AppColors.gold,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                letterSpacing: 1.1,
+            // Flexible: long titles wrap on narrow phones instead of
+            // overflowing.
+            Flexible(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  letterSpacing: 1.1,
+                ),
               ),
             ),
           ],

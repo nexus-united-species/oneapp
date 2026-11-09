@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nexus_oneapp/features/discover/discover_screen.dart';
+import 'package:nexus_oneapp/features/governance/governance_screen.dart';
 import 'package:nexus_oneapp/shared/theme/app_theme.dart';
 import 'package:nexus_oneapp/shared/widgets/nexus_scaffold.dart';
 
@@ -15,6 +16,7 @@ GoRouter _testRouter({String initialLocation = '/home'}) {
       GoRoute(path: '/home', builder: (_, __) => const _Tab('Home')),
       GoRoute(path: '/chat', builder: (_, __) => const _Tab('Chat')),
       GoRoute(path: '/governance', builder: (_, __) => const _Tab('Governance')),
+      GoRoute(path: '/dorfplatz', builder: (_, __) => const _Tab('Dorfplatz-Seite')),
       GoRoute(path: '/discover', builder: (_, __) => const DiscoverScreen()),
       GoRoute(path: '/wallet', builder: (_, __) => const _Tab('Wallet')),
       GoRoute(path: '/profile', builder: (_, __) => const _Tab('Profil')),
@@ -31,6 +33,7 @@ Widget _appFor(Widget child, {double width = 400, String initialLocation = '/hom
       GoRoute(path: '/home', builder: (_, __) => const _Tab('Home')),
       GoRoute(path: '/chat', builder: (_, __) => const _Tab('Chat')),
       GoRoute(path: '/governance', builder: (_, __) => const _Tab('Governance')),
+      GoRoute(path: '/dorfplatz', builder: (_, __) => const _Tab('Dorfplatz-Seite')),
       GoRoute(path: '/discover', builder: (_, __) => const DiscoverScreen()),
       GoRoute(path: '/wallet', builder: (_, __) => const _Tab('Wallet')),
       GoRoute(path: '/profile', builder: (_, __) => const _Tab('Profil')),
@@ -62,6 +65,7 @@ Widget _scaffoldApp(int index, {double width = 400}) {
       GoRoute(path: '/home', builder: (_, __) => const _Tab('Home')),
       GoRoute(path: '/chat', builder: (_, __) => const _Tab('Chat')),
       GoRoute(path: '/governance', builder: (_, __) => const _Tab('Governance')),
+      GoRoute(path: '/dorfplatz', builder: (_, __) => const _Tab('Dorfplatz-Seite')),
       GoRoute(path: '/discover', builder: (_, __) => const DiscoverScreen()),
       GoRoute(path: '/wallet', builder: (_, __) => const _Tab('Wallet')),
       GoRoute(path: '/profile', builder: (_, __) => const _Tab('Profil')),
@@ -100,12 +104,19 @@ void main() {
       await tester.pumpWidget(_appFor(const DiscoverScreen()));
       await tester.pumpAndSettle();
 
+      // The Agora tile sits in the Sphären section below the fold.
+      await tester.scrollUntilVisible(
+        find.text('Agora\nPolitik & Demokratie'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       // Agora tile label
-      expect(find.text('Agora – Politik'), findsOneWidget);
+      expect(find.text('Agora\nPolitik & Demokratie'), findsOneWidget);
 
       // No "Phase" badge next to it (active tile has no badge)
       final agoraTileFinder = find.ancestor(
-        of: find.text('Agora – Politik'),
+        of: find.text('Agora\nPolitik & Demokratie'),
         matching: find.byType(GestureDetector),
       );
       expect(agoraTileFinder, findsOneWidget);
@@ -152,14 +163,23 @@ void main() {
       expect(find.textContaining('Hestia'), findsOneWidget);
     });
 
-    testWidgets('tapping Agora tile navigates to Governance', (tester) async {
+    testWidgets('tapping Agora tile opens the governance screen',
+        (tester) async {
       await tester.pumpWidget(_appFor(const DiscoverScreen()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Agora – Politik'));
+      // The Agora tile sits in the Sphären section below the fold.
+      await tester.scrollUntilVisible(
+        find.text('Agora\nPolitik & Demokratie'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Agora\nPolitik & Demokratie'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Governance'), findsOneWidget);
+      // The tile pushes GovernanceScreen on the root navigator (no route).
+      expect(find.byType(GovernanceScreen), findsOneWidget);
     });
 
     testWidgets('tapping coming-soon Marktplatz tile does not navigate',
@@ -265,7 +285,7 @@ void main() {
       // Drawer content should be visible
       expect(find.text('Home'), findsWidgets);
       expect(find.text('Chat'), findsWidgets);
-      expect(find.text('Governance'), findsWidgets);
+      expect(find.text('Dorfplatz'), findsWidgets);
       expect(find.text('Profil'), findsWidgets);
     });
 
@@ -312,7 +332,7 @@ void main() {
       // All 5 main nav entries must appear in the drawer
       expect(find.text('Home'), findsWidgets); // also in bottom nav
       expect(find.text('Chat'), findsWidgets); // also in bottom nav
-      expect(find.text('Governance'), findsWidgets);
+      expect(find.text('Dorfplatz'), findsWidgets);
       expect(find.text('Entdecken'), findsWidgets);
       expect(find.text('Profil'), findsWidgets);
     });
@@ -343,14 +363,14 @@ void main() {
       expect(find.byType(DiscoverScreen), findsOneWidget);
     });
 
-    testWidgets('tapping Governance tab navigates to governance', (tester) async {
+    testWidgets('tapping Dorfplatz tab navigates to /dorfplatz', (tester) async {
       await tester.pumpWidget(_scaffoldApp(0, width: 400));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Governance').first);
+      await tester.tap(find.text('Dorfplatz').first);
       await tester.pumpAndSettle();
 
-      expect(find.text('Governance'), findsWidgets);
+      expect(find.text('Dorfplatz-Seite'), findsOneWidget);
     });
   });
 }

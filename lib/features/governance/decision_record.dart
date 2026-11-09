@@ -46,6 +46,10 @@ class DecisionRecord {
   /// WITHDRAWN_DURING_VOTING, WITHDRAWN_BY_MODERATION, oder null.
   final String? resultReason;
 
+  /// TD-34: number of eligible voters the tally used (frozen snapshot,
+  /// TD-37). Null for records created before it was stored.
+  final int? eligibleVotersCount;
+
   DecisionRecord({
     required this.recordId,
     required this.proposalId,
@@ -67,6 +71,7 @@ class DecisionRecord {
     this.optionResultsJson,
     this.tieOptionIdsJson,
     this.resultReason,
+    this.eligibleVotersCount,
   });
 
   static String generateId() {
@@ -97,6 +102,7 @@ class DecisionRecord {
         'option_results_json': optionResultsJson,
         'tie_option_ids_json': tieOptionIdsJson,
         'result_reason': resultReason,
+        'eligible_voters_count': eligibleVotersCount,
       };
 
   factory DecisionRecord.fromMap(Map<String, dynamic> map) {
@@ -127,6 +133,7 @@ class DecisionRecord {
       optionResultsJson: map['option_results_json'] as String?,
       tieOptionIdsJson: map['tie_option_ids_json'] as String?,
       resultReason: map['result_reason'] as String?,
+      eligibleVotersCount: map['eligible_voters_count'] as int?,
     );
   }
 }

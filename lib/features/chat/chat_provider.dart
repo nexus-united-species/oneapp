@@ -724,6 +724,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       statusTag: event.tagValue('status'),
       cell: _knownCell(cellId),
       members: CellService.instance.membersOf(cellId),
+      now: DateTime.now().toUtc(),
       signerPubkey: event.pubkey,
       idProof: content[IdentityProof.contentKey],
     );
@@ -738,6 +739,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         signerPubkey: event.pubkey,
         idProof: content[IdentityProof.contentKey],
       );
+
+  Future<GovernanceAuthDecision> _authorizeIncomingDecisionRecord(
+    NostrEvent event,
+    Map<String, dynamic> content,
+  ) {
+    final cellId = _governanceCellId(event) ?? '';
+    final proposalId = content['proposalId'] as String? ?? '';
+    return authorizeDecisionRecord(
+      cellId: cellId,
+      cell: CellService.instance.myCells
+          .where((c) => c.id == cellId)
+          .firstOrNull,
+      members: CellService.instance.membersOf(cellId),
+      proposal: ProposalService.instance.getProposal(proposalId),
+      now: DateTime.now().toUtc(),
+      signerPubkey: event.pubkey,
+      idProof: content[IdentityProof.contentKey],
+    );
+  }
 
   Future<GovernanceAuthDecision> _authorizeIncomingDelegation(
     NostrEvent event,
@@ -754,17 +774,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (transport == null) return;
 
     // Incoming governance events → sender authorization (TD-40) →
-    // ProposalService handlers. Decision records are not authorized yet:
-    // every device finalizes, and their hash check is TD-41.
+    // ProposalService handlers. Decision records are checked for the sender
+    // only; the hash check of their content is TD-41.
     transport.onProposalEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingProposal,
         ProposalService.instance.handleIncomingProposal));
     transport.onVoteEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingVote,
         ProposalService.instance.handleIncomingVote));
-    transport.onDecisionRecordEvent.listen((event) {
-      ProposalService.instance.handleIncomingDecisionRecord(event);
-    });
+    transport.onDecisionRecordEvent.listen((event) => _authorizeGovernanceEvent(
+        event, _authorizeIncomingDecisionRecord,
+        ProposalService.instance.handleIncomingDecisionRecord));
     transport.onDelegationEvent.listen((event) => _authorizeGovernanceEvent(
         event, _authorizeIncomingDelegation,
         ProposalService.instance.handleIncomingDelegationEvent));
@@ -794,6 +814,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         votingMode: params['votingMode'] as String?,
         proposalOptions: (params['proposalOptions'] as List?)
             ?.cast<Map<String, dynamic>>(),
+        votingStartedAtSeconds: params['votingStartedAt'] as int?,
+        eligibleVoters: (params['eligibleVoters'] as List?)?.cast<String>(),
       );
     };
 
@@ -937,6 +959,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           nostrCreatedAt: nostrCreatedAt,
           ownDevice: ownDevice,
         );
+
+        // A confirmation that arrived before this announcement.
+        final pendingConfirmation = _pendingConfirmations.remove(cell.id);
+        if (pendingConfirmation != null) {
+          await _onCellMembershipConfirmed(pendingConfirmation);
+        }
       } finally {
         _cellAnnouncementsInFlight.remove(lockKey);
       }
@@ -993,7 +1021,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (cellJson == null || memberJson == null) return;
       final cell = Cell.fromJson(cellJson);
       final member = CellMember.fromJson(memberJson);
-      await CellService.instance.handleMembershipConfirmed(cell, member);
+
+      // TD-40: only the proven founder (or a known moderator) may confirm,
+      // only a request of mine, and only once. The locally known cell is
+      // kept; the payload cell only has to match it.
+      // Synchronous lock per signer: parallel relay copies are checked once,
+      // and a forged copy cannot block the founder's confirmation.
+      final signer = data['_nostr_pubkey'] as String? ?? '';
+      final lockKey = '${cell.id}|$signer';
+      if (!_membershipConfirmationsInFlight.add(lockKey)) return;
+      try {
+        final knownCell = _knownCell(cell.id);
+        final decision = await authorizeMembershipConfirmation(
+          knownCell: knownCell,
+          knownMembers: CellService.instance.membersOf(cell.id),
+          payloadCell: cell,
+          member: member,
+          myDid: IdentityService.instance.currentIdentity?.did ?? '',
+          isAlreadyMember:
+              CellService.instance.myCells.any((c) => c.id == cell.id),
+          hasPendingRequest: CellService.instance.hasAppliedTo(cell.id),
+          signerPubkey: signer,
+          idProof: data[IdentityProof.contentKey],
+        );
+        if (decision == GovernanceAuthDecision.unknownCell) {
+          _rememberPendingConfirmation(cell.id, data);
+          return;
+        }
+        if (decision != GovernanceAuthDecision.allowed || knownCell == null) {
+          print('[CELL-AUTH] Membership confirmation rejected for '
+              '${cell.id}: ${decision.name}');
+          return;
+        }
+        await CellService.instance.handleMembershipConfirmed(knownCell, member);
+      } finally {
+        _membershipConfirmationsInFlight.remove(lockKey);
+      }
       print('[JOIN] Membership confirmed — cell "${cell.name}" added to My Cells');
     } catch (e) {
       debugPrint('[CHAT] Cell membership confirmed parse error: $e');
@@ -1044,6 +1107,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _cellDeletionsInFlight = {};
   final Set<String> _cellAnnouncementsInFlight = {};
   final Set<String> _memberUpdatesInFlight = {};
+  final Set<String> _membershipConfirmationsInFlight = {};
+
+  /// Confirmations that arrived before the cell's announcement (discovered
+  /// cells are kept in memory only, so after a restart the relays may
+  /// deliver them in either order). Re-checked once the cell is known.
+  final Map<String, Map<String, dynamic>> _pendingConfirmations = {};
+  static const _maxPendingConfirmations = 50;
+
+  void _rememberPendingConfirmation(String cellId, Map<String, dynamic> data) {
+    if (!_pendingConfirmations.containsKey(cellId) &&
+        _pendingConfirmations.length >= _maxPendingConfirmations) {
+      _pendingConfirmations.remove(_pendingConfirmations.keys.first);
+    }
+    _pendingConfirmations[cellId] = data;
+    print('[CELL-AUTH] Membership confirmation for unknown cell $cellId '
+        'kept until its announcement arrives');
+  }
 
   /// Proven signer DID of dissolutions for cells not known yet. Applied when
   /// that cell's founder-signed announcement arrives later (no zombie cell).

@@ -18,6 +18,7 @@ import 'proposal.dart';
 import 'proposal_edit_screen.dart';
 import 'proposal_option.dart';
 import 'proposal_service.dart';
+import 'result_mismatch_notice.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
 
@@ -563,7 +564,9 @@ class _DetailsTab extends StatelessWidget {
     // Votes of members who left after voting started no longer count.
     final votes = ProposalService.instance.getCountedVotes(p.id);
     final members = CellService.instance.membersOf(p.cellId);
-    final confirmedMembers = members.where((m) => m.isConfirmed).length;
+    // TD-37: during and after voting the frozen snapshot is the base.
+    final confirmedMembers = p.eligibleVoters?.length ??
+        members.where((m) => m.isConfirmed).length;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1092,6 +1095,12 @@ class _VotingCard extends StatelessWidget {
         .reduce((a, b) => a > b ? a : b);
     final participation = votes.length / total;
     final quorumPct = (proposal.quorumRequired * 100).round();
+    // TD-37: whoever was not on the frozen list at voting start can vote,
+    // but the vote is not counted. Say so instead of failing silently.
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    final snapshot = proposal.eligibleVoters;
+    final isNotEligible =
+        snapshot != null && myDid != null && !snapshot.contains(myDid);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1123,6 +1132,18 @@ class _VotingCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+
+          if (isNotEligible) ...[
+            Text(
+              'Du warst beim Start dieser Abstimmung noch nicht als Mitglied '
+              'erfasst. Deine Stimme wird deshalb nicht mitgezählt.',
+              style: TextStyle(
+                color: Colors.orange.shade300,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
 
           // Already voted notice
           if (hasVoted) ...[
@@ -1510,8 +1531,8 @@ class _GracePeriodBanner extends StatelessWidget {
 /// Builds the participation line from a [DecisionRecord].
 ///
 /// Source of Truth: yesVotes + noVotes + abstainVotes aus dem DecisionRecord.
-/// Denominator wird aus [DecisionRecord.participation] rückgerechnet, da
-/// eligibleVotersCount kein Modell-Feld ist und nicht im Wire transportiert wird.
+/// Nenner: [DecisionRecord.eligibleVotersCount] (TD-34); bei älteren Records
+/// ohne dieses Feld aus [DecisionRecord.participation] rückgerechnet.
 @visibleForTesting
 String buildParticipationText(DecisionRecord dr) {
   final num = dr.yesVotes + dr.noVotes + dr.abstainVotes;
@@ -1520,9 +1541,14 @@ String buildParticipationText(DecisionRecord dr) {
   final participation = dr.participation;
   final pct = (participation * 100).round();
 
-  if (participation <= 0) return 'Beteiligung: $pct%';
+  final storedCount = dr.eligibleVotersCount;
+  if (participation <= 0 && (storedCount == null || storedCount <= 0)) {
+    return 'Beteiligung: $pct%';
+  }
 
-  final den = (num / participation).round();
+  final den = storedCount != null && storedCount > 0
+      ? storedCount
+      : (num / participation).round();
   if (den == 0) return 'Beteiligung: $pct%';
 
   final stimmenLabel = num == 1 ? 'Stimme' : 'Stimmen';
@@ -1552,11 +1578,28 @@ class _ResultSectionState extends State<_ResultSection> {
   // non-null = loaded; may be empty if record not found or allVotes empty
   List<Vote>? _decisionVotes;
   DecisionRecord? _decisionRecord;
+  String? _mismatchText;
 
   @override
   void initState() {
     super.initState();
     _loadDecisionVotes();
+    _loadMismatch();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ResultSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A mismatch can arrive while the screen is open (service notify).
+    _loadMismatch();
+  }
+
+  Future<void> _loadMismatch() async {
+    final entries =
+        await ProposalService.instance.getAuditLog(widget.proposal.id);
+    if (!mounted) return;
+    final text = resultMismatchText(entries);
+    if (text != null) setState(() => _mismatchText = text);
   }
 
   Future<void> _loadDecisionVotes() async {
@@ -1628,6 +1671,8 @@ class _ResultSectionState extends State<_ResultSection> {
             ),
           ),
         ),
+        // TD-41: another device reported a different result.
+        if (_mismatchText != null) ResultMismatchNotice(text: _mismatchText!),
         const SizedBox(height: 12),
 
         // Stats card
@@ -2337,6 +2382,13 @@ class _AuditTile extends StatelessWidget {
         ('🔗', 'Delegation abgelaufen (Abstimmung nicht mehr aktiv)'),
       AuditEventType.DELEGATION_INVALIDATED =>
         ('🔗', 'Delegation ungültig (Delegator kein gültiges Mitglied)'),
+      AuditEventType.RESULT_MISMATCH => () {
+          final who = actor.isNotEmpty ? actor : 'Ein anderes Mitglied';
+          final result = _resultLabel(p['result']?.toString() ?? '');
+          return ('⚠️',
+              '$who meldet ein abweichendes Ergebnis: $result  (Ja: ${p['yes'] ?? '?'}, '
+              'Nein: ${p['no'] ?? '?'}, Enthaltung: ${p['abstain'] ?? '?'})');
+        }(),
     };
   }
 
