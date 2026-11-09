@@ -18,6 +18,7 @@ import 'proposal.dart';
 import 'proposal_edit_screen.dart';
 import 'proposal_option.dart';
 import 'proposal_service.dart';
+import 'result_mismatch_notice.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
 
@@ -1572,11 +1573,28 @@ class _ResultSectionState extends State<_ResultSection> {
   // non-null = loaded; may be empty if record not found or allVotes empty
   List<Vote>? _decisionVotes;
   DecisionRecord? _decisionRecord;
+  String? _mismatchText;
 
   @override
   void initState() {
     super.initState();
     _loadDecisionVotes();
+    _loadMismatch();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ResultSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A mismatch can arrive while the screen is open (service notify).
+    _loadMismatch();
+  }
+
+  Future<void> _loadMismatch() async {
+    final entries =
+        await ProposalService.instance.getAuditLog(widget.proposal.id);
+    if (!mounted) return;
+    final text = resultMismatchText(entries);
+    if (text != null) setState(() => _mismatchText = text);
   }
 
   Future<void> _loadDecisionVotes() async {
@@ -1648,6 +1666,8 @@ class _ResultSectionState extends State<_ResultSection> {
             ),
           ),
         ),
+        // TD-41: another device reported a different result.
+        if (_mismatchText != null) ResultMismatchNotice(text: _mismatchText!),
         const SizedBox(height: 12),
 
         // Stats card
@@ -2357,6 +2377,13 @@ class _AuditTile extends StatelessWidget {
         ('🔗', 'Delegation abgelaufen (Abstimmung nicht mehr aktiv)'),
       AuditEventType.DELEGATION_INVALIDATED =>
         ('🔗', 'Delegation ungültig (Delegator kein gültiges Mitglied)'),
+      AuditEventType.RESULT_MISMATCH => () {
+          final who = actor.isNotEmpty ? actor : 'Ein anderes Mitglied';
+          final result = _resultLabel(p['result']?.toString() ?? '');
+          return ('⚠️',
+              '$who meldet ein abweichendes Ergebnis: $result  (Ja: ${p['yes'] ?? '?'}, '
+              'Nein: ${p['no'] ?? '?'}, Enthaltung: ${p['abstain'] ?? '?'})');
+        }(),
     };
   }
 

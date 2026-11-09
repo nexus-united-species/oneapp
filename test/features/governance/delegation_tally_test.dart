@@ -1321,6 +1321,11 @@ void main() {
       expect(p.status, ProposalStatus.DECIDED);
       expect(p.resultSummary, 'approved');
       expect(p.resultNo, 0);
+      final mismatch =
+          await _readAuditByType(_propYna, AuditEventType.RESULT_MISMATCH);
+      expect(mismatch, hasLength(1));
+      expect(mismatch.single.payload['result'], 'rejected');
+      expect(mismatch.single.payload['no'], 5);
     });
 
     test('a concurrent second tally waits for the first one', () async {

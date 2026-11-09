@@ -20,6 +20,8 @@ enum AuditEventType {
   DELEGATION_SUPERSEDED,
   DELEGATION_EXPIRED,
   DELEGATION_INVALIDATED,
+  // TD-41 — another device reported a different result than the own tally.
+  RESULT_MISMATCH,
 }
 
 /// An immutable audit trail entry for a governance event.

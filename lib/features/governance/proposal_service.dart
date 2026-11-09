@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/identity/identity_proof.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/nostr/nostr_event.dart';
@@ -2900,10 +2901,11 @@ class ProposalService {
     }
   }
 
-  /// TD-41: logs when another device reports a different outcome. The own
-  /// result stays; a mismatch points to missing votes or a forged record.
-  void _logTallyMismatch(
-      DecisionRecord local, Map<String, dynamic> received, String eventId) {
+  /// TD-41: records when another device reports a different outcome (log
+  /// and audit entry, shown at the result). The own result stays; a
+  /// mismatch points to missing votes or a forged record.
+  Future<void> _recordTallyMismatch(
+      DecisionRecord local, Map<String, dynamic> received, String eventId) async {
     final fields = decisionRecordMismatches(local, received);
     if (fields.isEmpty) return;
     print('[TALLY-MISMATCH] ${local.proposalId}: received record '
@@ -2912,6 +2914,29 @@ class ProposalService {
         'N=${local.noVotes} A=${local.abstainVotes}; received: '
         'result=${received['result']} Y=${received['yesVotes']} '
         'N=${received['noVotes']} A=${received['abstainVotes']}');
+    // The sender DID was proven at the receive boundary (TD-40).
+    final proof = received[IdentityProof.contentKey];
+    final senderDid = proof is Map ? proof['did'] as String? ?? '' : '';
+    await addAuditEntry(AuditLogEntry(
+      entryId: AuditLogEntry.generateId(),
+      proposalId: local.proposalId,
+      cellId: local.cellId,
+      eventType: AuditEventType.RESULT_MISMATCH,
+      actorDid: senderDid,
+      actorPseudonym: senderDid.isEmpty
+          ? ''
+          : ContactService.instance.getDisplayName(senderDid),
+      timestamp: DateTime.now().toUtc(),
+      payload: {
+        'fields': fields,
+        'result': received['result'],
+        'yes': received['yesVotes'],
+        'no': received['noVotes'],
+        'abstain': received['abstainVotes'],
+      },
+      nostrEventId: eventId,
+    ));
+    _notify();
   }
 
   Future<void> handleIncomingDecisionRecord(NostrEvent event) async {
@@ -2955,7 +2980,7 @@ class ProposalService {
       // Skip if we already have this record (e.g. we created it).
       final existing = await _getDecisionRecordByProposal(proposalId);
       if (existing != null) {
-        _logTallyMismatch(existing, content, event.id);
+        await _recordTallyMismatch(existing, content, event.id);
         print('[PROPOSAL] Decision record already exists for $proposalId, skipping');
         return;
       }
