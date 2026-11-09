@@ -1045,6 +1045,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           idProof: data[IdentityProof.contentKey],
         );
         if (decision == GovernanceAuthDecision.unknownCell) {
+          // A dissolved cell is never announced again; relays still replay
+          // old confirmations for it, so do not keep those waiting.
+          if (CellService.instance.isTombstoned(cell.id)) {
+            print('[CELL-AUTH] Membership confirmation for dissolved cell '
+                '${cell.id} ignored');
+            return;
+          }
           _rememberPendingConfirmation(cell.id, data);
           return;
         }
