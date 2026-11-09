@@ -31,7 +31,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | ef7f637 | Handy-App beenden, während eine Beitrittsanfrage offen ist; auf Windows bestätigen; Handy neu starten | Zelle erscheint nach dem Start trotzdem unter „Meine Zellen“ |
 | 2a20285 | Neuen Antrag in einer Zelle mit beiden Geräten anlegen und Abstimmung starten; danach ein drittes Konto oder neues Mitglied beitreten lassen (falls möglich) | Beide Logs zeigen `[TALLY-SNAPSHOT]` mit derselben Anzahl; Anzeige „x von N“ gleich auf beiden Geräten; Stimme eines später Beigetretenen zählt nicht |
 | 0698c8f | Mit dem Knopf „Force beenden“ in einem Antrag auf einem Gerät auszählen; das andere Gerät normal laufen lassen | Auf dem zweiten Gerät erscheint `[TALLY-LOCAL]` erst nach Ablauf von Frist und Nachfrist bzw. bei eigener Auszählung; beide zeigen dasselbe Ergebnis; kein `[TALLY-MISMATCH]` |
-| (Abweichung) | Nur möglich, wenn einem Gerät Stimmen fehlen: Handy offline schalten, auf Windows abstimmen, Frist ablaufen lassen, Handy erst nach seiner eigenen Auszählung wieder online | Beim Ergebnis auf dem Handy erscheint der orange Hinweis „… meldet ein anderes Ergebnis“, in der Historie ein ⚠️-Eintrag. Optional, aufwendig |
+| 5fd72b5 | Nur möglich, wenn einem Gerät Stimmen fehlen: Handy offline schalten, auf Windows abstimmen, Frist ablaufen lassen, Handy erst nach seiner eigenen Auszählung wieder online | Beim Ergebnis auf dem Handy erscheint der orange Hinweis „… meldet ein anderes Ergebnis“, in der Historie ein ⚠️-Eintrag. Optional, aufwendig |
 | 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
 
 ## Erledigt
