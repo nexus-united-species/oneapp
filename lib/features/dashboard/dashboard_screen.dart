@@ -661,14 +661,21 @@ class _RadarCard extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _CountLabel(
-                    icon: Icons.bluetooth,
-                    label: 'Lokal: $localPeerCount Peers',
+                  // Flexible: on narrow phones both labels share the width
+                  // instead of overflowing (44 px at 400 px wide).
+                  Flexible(
+                    child: _CountLabel(
+                      icon: Icons.bluetooth,
+                      label: 'Lokal: $localPeerCount Peers',
+                    ),
                   ),
-                  _CountLabel(
-                    icon: Icons.language,
-                    label: _nodeCountLabel(),
-                    alignRight: true,
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: _CountLabel(
+                      icon: Icons.language,
+                      label: _nodeCountLabel(),
+                      alignRight: true,
+                    ),
                   ),
                 ],
               ),
@@ -707,11 +714,15 @@ class _CountLabel extends StatelessWidget {
     final children = [
       Icon(icon, size: 12, color: AppColors.gold.withValues(alpha: 0.8)),
       const SizedBox(width: 4),
-      Text(
-        label,
-        style: TextStyle(
-          color: AppColors.onDark.withValues(alpha: 0.8),
-          fontSize: 11,
+      Flexible(
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: AppColors.onDark.withValues(alpha: 0.8),
+            fontSize: 11,
+          ),
         ),
       ),
     ];

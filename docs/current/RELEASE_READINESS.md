@@ -23,8 +23,10 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
 - [x] Den realen 30-Pixel-Desktop-Overflow beheben. (09.11.2026: feste
   Kartenhöhe im Desktop-Raster, Regressionstest für 800–1920 px; Sichtprüfung
   unter Windows offen)
-- [ ] Die 11 bekannten Navigation-/Dashboard-Tests aktualisieren oder den
-  jeweils zugrunde liegenden Fehler dokumentiert beheben.
+- [x] Die 11 bekannten Navigation-/Dashboard-Tests aktualisieren oder den
+  jeweils zugrunde liegenden Fehler dokumentiert beheben. (09.11.2026:
+  Tests an die heutige Navigation angepasst, zwei Handy-Überläufe behoben;
+  offen nur LAN-/TransportManager-Tests)
 - [x] Versionsmetadaten und veröffentlichte Download-URLs synchronisiert:
   `version.json`, App und Installer stehen auf v0.2.0 / Build 12 und verweisen
   auf die vorhandenen Release-Assets unter `v0.2.0_alpha`.

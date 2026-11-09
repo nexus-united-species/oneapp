@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nexus_oneapp/core/router.dart' as app_router;
 import 'package:nexus_oneapp/features/dashboard/dashboard_screen.dart';
+import 'package:nexus_oneapp/features/governance/cell_hub_screen.dart';
 import 'package:nexus_oneapp/shared/theme/app_theme.dart';
 import 'package:nexus_oneapp/shared/widgets/nexus_scaffold.dart';
 import 'package:provider/provider.dart';
@@ -246,13 +247,19 @@ void main() {
       expect(find.text('Kontakte'), findsOneWidget);
     });
 
-    testWidgets('governance card shows placeholder text', (tester) async {
+    testWidgets('governance card invites to join a cell when in none',
+        (tester) async {
       await tester.pumpWidget(_dashboardApp());
       await tester.pump();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('governance_card')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
 
-      expect(find.text('Governance'), findsOneWidget);
+      expect(find.text('Agora — Politik & Demokratie'), findsOneWidget);
       expect(
-        find.textContaining('Entscheidungen'),
+        find.text('Tritt einer Gemeinschaft bei, um mitzumachen.'),
         findsOneWidget,
       );
     });
@@ -285,8 +292,12 @@ void main() {
       expect(find.text('Chat'), findsOneWidget);
     });
 
-    testWidgets('tapping governance card navigates to /governance',
+    testWidgets('tapping governance card opens the cell hub when in no cell',
         (tester) async {
+      // Match the real surface to the app size so the card is hittable.
+      tester.view.physicalSize = const Size(400, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(_dashboardApp());
       await tester.pump();
 
@@ -301,7 +312,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Governance'), findsOneWidget);
+      // Without a cell the card pushes the cell hub (not a route).
+      expect(find.byType(CellHubScreen), findsOneWidget);
     });
   });
 
@@ -364,7 +376,7 @@ void main() {
       expect(find.byType(NavigationDestination), findsNWidgets(5));
     });
 
-    testWidgets('tab labels are Home, Chat, Governance, Entdecken, Profil',
+    testWidgets('tab labels are Home, Chat, Dorfplatz, Entdecken, Profil',
         (tester) async {
       await tester.pumpWidget(_appWithDashboard(width: 400));
       await tester.pumpAndSettle();
@@ -372,7 +384,7 @@ void main() {
       // 'Home' appears in both navigation bar label and stub content → findsWidgets
       expect(find.text('Home'), findsWidgets);
       expect(find.text('Chat'), findsOneWidget);
-      expect(find.text('Governance'), findsOneWidget);
+      expect(find.text('Dorfplatz'), findsWidgets);
       expect(find.text('Entdecken'), findsOneWidget);
       expect(find.text('Profil'), findsOneWidget);
     });

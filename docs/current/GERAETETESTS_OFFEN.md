@@ -37,6 +37,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 4f1a73c | Beim ersten Start nach dem Update auf beiden Geräten | Log zeigt `[DB-MIGRATION-27]` und `[DB-MIGRATION-28]`; App startet normal, Zellen, Anträge und Chats sind vollständig da |
 | 4f1a73c | Optional, falls ein drittes Gerät oder Testkonto verfügbar: App frisch installieren, Zelle beitreten, abstimmen, auszählen | Kein `DatabaseException` im Log; Ergebnis wird angezeigt |
 | 63556cb | Windows: Startseite öffnen, Fenster schmal ziehen (knapp über der Handy-Ansicht) und breit ziehen | Keine gelb-schwarzen Streifen an den Karten; Untertitel enden notfalls mit „…“ |
+| (TD-25) | Handy: Startseite (Zeile „Lokal: … Peers“ unter dem Radar) und Gemeinschaften als Admin (Überschrift „Weitere lokale Gemeinschaften (Admin, …)“) ansehen | Keine gelb-schwarzen Streifen; lange Überschriften brechen um |
 | 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
 
 ## Erledigt

@@ -166,14 +166,14 @@ void main() {
       expect(find.text('QR-Code scannen'), findsOneWidget);
     });
 
-    testWidgets('bottom sheet lists Peers in der Nähe', (tester) async {
+    testWidgets('bottom sheet lists Peers im Netzwerk', (tester) async {
       await tester.pumpWidget(_chatApp());
       await tester.pump();
 
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
-      expect(find.text('Peers in der Nähe'), findsOneWidget);
+      expect(find.text('Peers im Netzwerk'), findsOneWidget);
     });
 
     testWidgets('bottom sheet lists Kontakte anzeigen', (tester) async {
@@ -197,7 +197,7 @@ void main() {
       // We search inside the modal route, not the whole tree.
       final optionTexts = [
         'QR-Code scannen',
-        'Peers in der Nähe',
+        'Peers im Netzwerk',
         'Kontakte anzeigen',
       ];
       for (final label in optionTexts) {
