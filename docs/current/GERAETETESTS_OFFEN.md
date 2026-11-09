@@ -34,8 +34,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 5fd72b5 | Nur möglich, wenn einem Gerät Stimmen fehlen: Handy offline schalten, auf Windows abstimmen, Frist ablaufen lassen, Handy erst nach seiner eigenen Auszählung wieder online | Beim Ergebnis auf dem Handy erscheint der orange Hinweis „… meldet ein anderes Ergebnis“, in der Historie ein ⚠️-Eintrag. Optional, aufwendig |
 | 2d346db | Antrag mit Optionen (Einzelauswahl) abstimmen; auf einem Gerät kurz vor der Auszählung das Netz trennen, nach der Auszählung wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
 | 5f23cc2 | Beim ersten Start nach dem Update | Log zeigt `[DB-MIGRATION-27]`; App startet normal; nach einer Auszählung zeigt das Ergebnis „x Stimmen von N Stimmberechtigten“ mit N = Anzahl aus `[TALLY-SNAPSHOT]` |
-| (TD-75) | Beim ersten Start nach dem Update auf beiden Geräten | Log zeigt `[DB-MIGRATION-27]` und `[DB-MIGRATION-28]`; App startet normal, Zellen, Anträge und Chats sind vollständig da |
-| (TD-75) | Optional, falls ein drittes Gerät oder Testkonto verfügbar: App frisch installieren, Zelle beitreten, abstimmen, auszählen | Kein `DatabaseException` im Log; Ergebnis wird angezeigt |
+| 4f1a73c | Beim ersten Start nach dem Update auf beiden Geräten | Log zeigt `[DB-MIGRATION-27]` und `[DB-MIGRATION-28]`; App startet normal, Zellen, Anträge und Chats sind vollständig da |
+| 4f1a73c | Optional, falls ein drittes Gerät oder Testkonto verfügbar: App frisch installieren, Zelle beitreten, abstimmen, auszählen | Kein `DatabaseException` im Log; Ergebnis wird angezeigt |
 | 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
 
 ## Erledigt
