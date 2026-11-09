@@ -35,7 +35,8 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
   berechtigten Gründer-Pubkey sowie Votes/Anträge nur durch bestätigte
   Mitglieder.
 - [ ] `eligibleVotersCount` in Decision Record, Datenbank, Wire-Format und Hash
-  explizit aufnehmen.
+  explizit aufnehmen. Code und Tests seit 09.11.2026 (TD-34), Gerätetest
+  offen.
 - [ ] `content_hash` und Hash-Kette beim Empfang neu berechnen und prüfen.
 - [ ] Produktentscheidung treffen: Governance-Daten bewusst öffentlich lassen
   oder vertraulich transportieren; danach Datenschutztexte angleichen.

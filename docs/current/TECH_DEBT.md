@@ -21,7 +21,7 @@ Release-Reihenfolge steht separat in
 |---|---|---|
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
 | TD-33 | Zellmitglieder-Sync divergiert | Android/Windows zeigten unterschiedliche Mitgliederzahlen; F-002 verschärft das Problem |
-| TD-34 | `eligibleVotersCount` fehlt im Decision Record | Nenner wird fragil aus Beteiligung rekonstruiert |
+| TD-34 | Seit 09.11.2026 in Modell, DB (v27, additiv), Wire-Format und Vergleich (Gerätetest offen) | ältere Records ohne Zahl: Nenner weiter aus der Beteiligung rekonstruiert |
 | TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
@@ -214,6 +214,13 @@ Liste:
     Zelle gehören, die Abstimmung muss laufen oder beendet sein, und Frist
     samt Nachfrist für späte Stimmen müssen nach der eigenen Uhr abgelaufen
     sein.
+- **Zahl der Stimmberechtigten im Protokoll, TD-34 (09.11.2026, Gerätetest
+  offen):** `DecisionRecord.eligibleVotersCount` (Spalte
+  `eligible_voters_count`, Migration v27 per `ALTER TABLE`, nullable) wird
+  aus der eingefrorenen Liste (TD-37) gesetzt, im Kind-31013-Inhalt
+  mitgeschickt, bei der Beteiligungsanzeige als Nenner genutzt und beim
+  Vergleich (TD-41) geprüft, wenn beide Seiten sie haben. In den Hash ging
+  die Zahl schon vorher ein.
 - **Retry der Entscheidungsprotokolle, TD-38 (09.11.2026, Gerätetest offen):**
   Der Wiederholungsversand baute den Inhalt bisher von Hand nach; es
   fehlten `cellId`, `votingMode`, `resultReason`, `optionResultsJson`,

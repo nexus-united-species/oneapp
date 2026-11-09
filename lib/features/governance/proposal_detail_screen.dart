@@ -1531,8 +1531,8 @@ class _GracePeriodBanner extends StatelessWidget {
 /// Builds the participation line from a [DecisionRecord].
 ///
 /// Source of Truth: yesVotes + noVotes + abstainVotes aus dem DecisionRecord.
-/// Denominator wird aus [DecisionRecord.participation] rückgerechnet, da
-/// eligibleVotersCount kein Modell-Feld ist und nicht im Wire transportiert wird.
+/// Nenner: [DecisionRecord.eligibleVotersCount] (TD-34); bei älteren Records
+/// ohne dieses Feld aus [DecisionRecord.participation] rückgerechnet.
 @visibleForTesting
 String buildParticipationText(DecisionRecord dr) {
   final num = dr.yesVotes + dr.noVotes + dr.abstainVotes;
@@ -1541,9 +1541,14 @@ String buildParticipationText(DecisionRecord dr) {
   final participation = dr.participation;
   final pct = (participation * 100).round();
 
-  if (participation <= 0) return 'Beteiligung: $pct%';
+  final storedCount = dr.eligibleVotersCount;
+  if (participation <= 0 && (storedCount == null || storedCount <= 0)) {
+    return 'Beteiligung: $pct%';
+  }
 
-  final den = (num / participation).round();
+  final den = storedCount != null && storedCount > 0
+      ? storedCount
+      : (num / participation).round();
   if (den == 0) return 'Beteiligung: $pct%';
 
   final stimmenLabel = num == 1 ? 'Stimme' : 'Stimmen';

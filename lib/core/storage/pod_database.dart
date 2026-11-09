@@ -55,7 +55,7 @@ class PodDatabase {
 
     _db = await openDatabase(
       dbPath,
-      version: 26,
+      version: 27,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -1126,6 +1126,17 @@ class PodDatabase {
       // Votes of members who left after voting started no longer count.
       await _createCellDeparturesTable(db);
       print('[DB-MIGRATION-26] cell_departures table created');
+    }
+
+    if (oldVersion < 27) {
+      // TD-34: eligible voter count of a decision record. Additive and
+      // nullable; older records keep NULL.
+      if (!await _hasColumn(
+          db, 'decision_records', 'eligible_voters_count')) {
+        await db.execute('ALTER TABLE decision_records '
+            'ADD COLUMN eligible_voters_count INTEGER');
+      }
+      print('[DB-MIGRATION-27] decision_records.eligible_voters_count added');
     }
   }
 

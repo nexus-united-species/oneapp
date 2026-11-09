@@ -169,7 +169,8 @@ Future<Database> _openTestDb() async {
           previous_proposal_id TEXT,
           option_results_json TEXT,
           tie_option_ids_json TEXT,
-          result_reason TEXT
+          result_reason TEXT,
+          eligible_voters_count INTEGER
         )
       ''');
       await db.execute('''
@@ -1316,6 +1317,9 @@ void main() {
       expect(firstContent, isNotNull);
       expect(jsonEncode(retry), jsonEncode(firstContent));
       expect(retry['cellId'], _cellId);
+      // TD-34: the frozen snapshot size travels with the record.
+      expect(record.eligibleVotersCount, _allMembers.length);
+      expect(retry['eligibleVotersCount'], _allMembers.length);
       expect(retry['votingMode'], 'SINGLE_CHOICE');
       expect(retry['optionResultsJson'], isNotNull);
       final votes = (retry['allVotes'] as List).cast<Map<String, dynamic>>();

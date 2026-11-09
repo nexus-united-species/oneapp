@@ -12,8 +12,10 @@ DecisionRecord _dr({
   int no = 0,
   int abstain = 0,
   double participation = 0.0,
+  int? eligibleVotersCount,
 }) =>
     DecisionRecord(
+      eligibleVotersCount: eligibleVotersCount,
       recordId: 'r1',
       proposalId: 'p1',
       cellId: 'c1',
@@ -95,6 +97,19 @@ void main() {
       // Pathologischer Edge-Case: Rückrechnung wäre Division durch 0
       final dr = _dr(yes: 2, no: 0, abstain: 0, participation: 0.0);
       expect(buildParticipationText(dr), 'Beteiligung: 0%');
+    });
+
+    test('TD-34: stored eligible count beats the reconstruction', () {
+      // 0.43 would reconstruct 3/0.43 ≈ 7; the stored count is exact.
+      final dr = _dr(
+          yes: 3, participation: 0.43, eligibleVotersCount: 7);
+      expect(buildParticipationText(dr),
+          'Beteiligung: 43% (3 Stimmen von 7 Stimmberechtigten)');
+
+      final rounded = _dr(yes: 1, participation: 0.33, eligibleVotersCount: 4);
+      expect(buildParticipationText(rounded),
+          'Beteiligung: 33% (1 Stimme von 4 Stimmberechtigten)',
+          reason: 'reconstruction alone would say 3');
     });
   });
 }

@@ -55,6 +55,22 @@ void main() {
     );
   });
 
+  test('TD-34: compares the eligible count only when both records have it',
+      () {
+    final local = DecisionRecord.fromMap({
+      ..._local().toMap(),
+      'eligible_voters_count': 4,
+    });
+
+    expect(
+      decisionRecordMismatches(
+          local, {..._received(), 'eligibleVotersCount': 5}),
+      ['eligibleVotersCount'],
+    );
+    expect(decisionRecordMismatches(local, _received()), isEmpty,
+        reason: 'older senders do not send the count');
+  });
+
   test('reports a different participation', () {
     expect(
       decisionRecordMismatches(_local(), _received(participation: 1)),

@@ -27,5 +27,10 @@ List<String> decisionRecordMismatches(
   );
   check('optionResultsJson', local.optionResultsJson,
       received['optionResultsJson']);
+  // TD-34: older senders do not send the count; compare only if both have it.
+  final receivedCount = received['eligibleVotersCount'];
+  if (local.eligibleVotersCount != null && receivedCount != null) {
+    check('eligibleVotersCount', local.eligibleVotersCount, receivedCount);
+  }
   return mismatches;
 }

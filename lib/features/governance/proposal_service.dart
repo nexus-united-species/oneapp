@@ -1556,6 +1556,7 @@ class ProposalService {
       previousProposalId: null,
       optionResultsJson: optionResultsJson,
       tieOptionIdsJson: tieOptionIdsJson,
+      eligibleVotersCount: eligibleVotersCount,
     );
     await _saveDecisionRecordToDb(record);
     print('[PROPOSAL] DecisionRecord saved locally: '
@@ -1600,6 +1601,7 @@ class ProposalService {
       'decidedAt': record.decidedAt.millisecondsSinceEpoch,
       'optionResultsJson': record.optionResultsJson,
       'tieOptionIdsJson': record.tieOptionIdsJson,
+      'eligibleVotersCount': record.eligibleVotersCount,
       'allVotes': sortedVotes
           .map((v) => {
                 'voterPseudonym': v.voterPseudonym,
