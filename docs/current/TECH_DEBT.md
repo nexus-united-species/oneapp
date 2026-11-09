@@ -13,7 +13,7 @@ Release-Reihenfolge steht separat in
 |---|---|---|---|
 | TD-37 / F-002 | `eligibleVoters` wird nicht eingefroren | geräteabhängige Beteiligung, Quoren und Hashes | Snapshot in `startVoting` setzen und synchronisieren |
 | TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
-| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | offen: Beitrittsbestätigung (Kind 31004), Decision Records (31013), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | DID-Nachweis auf 31004/31013 ausweiten; Wählerfilter mit TD-37 vervollständigen |
+| TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) seit 09.11.2026 geprüft (Gerätetest offen); offen: Decision Records (31013), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | DID-Nachweis auf 31013 ausweiten; Wählerfilter mit TD-37 vervollständigen |
 
 ## Hoch – vor breiter Nutzung
 
@@ -197,6 +197,17 @@ Liste:
     Kategorie und Frist werden verworfen.
   - Stimme: nur die im Inhalt genannte `voterDid`.
   - Delegation: nur die delegierende Person.
+  - Beitrittsbestätigung (Kind 31004, seit 09.11.2026): nur für eine bekannte
+    Zelle mit offener eigener Beitrittsanfrage, nur für mich als einfaches
+    Mitglied, nur solange ich noch nicht Mitglied bin, unterschrieben vom
+    Gründer oder einem lokal bekannten Moderator (`confirmedBy`). Der
+    Gründer der bekannten Zelle darf sich nicht ändern, übernommen werden
+    die lokal bekannten Zelldaten. Bestätigungen, die vor der
+    Zell-Ankündigung eintreffen, werden bis zu deren Eintreffen gehalten.
+    **Einschränkung:** Ein Bewerber kennt die Moderatoren einer Zelle noch
+    nicht. Bestätigt ein Moderator statt des Gründers, verwirft das Gerät des
+    Bewerbers die Bestätigung. Lösbar erst mit übertragbaren Mitgliederlisten
+    (TD-33/TD-37) oder einem vom Gründer signierten Moderatoren-Nachweis.
 
   Events älterer App-Versionen ohne Nachweis werden abgelehnt; ein Gerät,
   das alte Anträge/Stimmen von Relays neu einliest, übernimmt sie nicht.

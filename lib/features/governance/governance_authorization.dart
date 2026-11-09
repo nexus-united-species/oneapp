@@ -98,6 +98,45 @@ Future<GovernanceAuthDecision> authorizeMemberUpdate({
   return GovernanceAuthDecision.allowed;
 }
 
+/// Kind-31004 membership confirmations, received by the applicant.
+///
+/// - Only for a cell I know, am not yet a member of, and have a pending
+///   join request for (replays cannot overwrite an existing membership).
+/// - The confirmation must name me as a plain member of that cell.
+/// - The founder may never change: the cell in the payload must keep the
+///   founder of the locally known cell.
+/// - The signer must prove the DID given as `confirmedBy`, and that DID must
+///   be the founder or a moderator known locally. An applicant does not
+///   know the moderators of a cell yet, so in practice the founder confirms.
+Future<GovernanceAuthDecision> authorizeMembershipConfirmation({
+  required Cell? knownCell,
+  required List<CellMember> knownMembers,
+  required Cell payloadCell,
+  required CellMember member,
+  required String myDid,
+  required bool isAlreadyMember,
+  required bool hasPendingRequest,
+  required String signerPubkey,
+  required Object? idProof,
+}) async {
+  if (knownCell == null) return GovernanceAuthDecision.unknownCell;
+  final isWellFormed = myDid.isNotEmpty &&
+      member.did == myDid &&
+      member.cellId == knownCell.id &&
+      payloadCell.id == knownCell.id &&
+      payloadCell.createdBy == knownCell.createdBy &&
+      member.role == MemberRole.member;
+  if (!isWellFormed || isAlreadyMember || !hasPendingRequest) {
+    return GovernanceAuthDecision.notAuthorized;
+  }
+  final did = await _provenDid(signerPubkey, idProof);
+  if (did == null) return GovernanceAuthDecision.missingProof;
+  final isApprover = did != myDid && _isManager(did, knownCell, knownMembers);
+  return isApprover && did == member.confirmedBy
+      ? GovernanceAuthDecision.allowed
+      : GovernanceAuthDecision.notAuthorized;
+}
+
 bool _isManager(String did, Cell? cell, List<CellMember> members) =>
     (cell != null && did == cell.createdBy) ||
     members.any((m) => m.did == did && m.canManageRequests);

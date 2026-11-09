@@ -808,7 +808,8 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.cellMembershipConfirmed,
-      content: jsonEncode({'cell': cellJson, 'member': memberJson}),
+      content: jsonEncode(
+          _withIdentityProof({'cell': cellJson, 'member': memberJson})),
       tags: [
         ['t', 'nexus-cell-confirmed'],
         ['p', requesterNostrPubkeyHex],
@@ -2739,7 +2740,9 @@ class NostrTransport implements MessageTransport {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       final cellId = event.tagValue('cell') ?? '?';
       print('[JOIN] Membership confirmation received for cell: $cellId');
-      _cellMembershipConfirmedController.add(data);
+      // Signer pubkey for the TD-40 sender check in ChatProvider.
+      _cellMembershipConfirmedController
+          .add({...data, '_nostr_pubkey': event.pubkey});
     } catch (e) {
       print('[JOIN] Cell membership confirmation parse FAILED: $e');
     }
