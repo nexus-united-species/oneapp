@@ -25,7 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (TD-76) | Durchgang 4 wiederholen: neuer Antrag, Abstimmung starten, abstimmen, auf dem Handy „Force beenden (Debug)“ | Handy zeigt das Ergebnis; Windows bleibt bei „Abstimmung läuft“; Windows-Log zeigt `[GOV-AUTH] kind=31010 … rejected: notAuthorized` für „beendet/entschieden“ und `kind=31013 … rejected` |
+| 3462048 | Durchgang 4 wiederholen: neuer Antrag, Abstimmung starten, abstimmen, auf dem Handy „Force beenden (Debug)“ | Handy zeigt das Ergebnis; Windows bleibt bei „Abstimmung läuft“; Windows-Log zeigt `[GOV-AUTH] kind=31010 … rejected: notAuthorized` für „beendet/entschieden“ und `kind=31013 … rejected` |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
 | 5fd72b5 | Optional, aufwendig: einem Gerät fehlen Stimmen (offline bis nach der eigenen Auszählung) | Oranger Hinweis „… meldet ein anderes Ergebnis“, ⚠️-Eintrag in der Historie |
