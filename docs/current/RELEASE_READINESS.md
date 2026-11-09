@@ -20,7 +20,9 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
 - [x] Für alle drei Funde Unit-/Regressionstests ergänzen.
 - [ ] Android↔Windows-Livetest: Reaktion, Löschen, Abstimmungsstart,
   Finalisierung und Retry nach Relay-Ausfall.
-- [ ] Den realen 30-Pixel-Desktop-Overflow beheben.
+- [x] Den realen 30-Pixel-Desktop-Overflow beheben. (09.11.2026: feste
+  Kartenhöhe im Desktop-Raster, Regressionstest für 800–1920 px; Sichtprüfung
+  unter Windows offen)
 - [ ] Die 11 bekannten Navigation-/Dashboard-Tests aktualisieren oder den
   jeweils zugrunde liegenden Fehler dokumentiert beheben.
 - [x] Versionsmetadaten und veröffentlichte Download-URLs synchronisiert:

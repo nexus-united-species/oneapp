@@ -37,7 +37,7 @@ Release-Reihenfolge steht separat in
 
 | ID | Thema | Hinweis |
 |---|---|---|
-| TD-25 | UI-/Navigation-Test-Failures | 11 bekannte Fehler in der geprüften Auswahl; meist veraltete Labels plus realer Desktop-Overflow. Messung 06.11.2026: zusätzlich 5 Fehler in den TransportManager-Tests |
+| TD-25 | UI-/Navigation-Test-Failures | 10 bekannte Fehler in der geprüften Auswahl, veraltete Labels; der Desktop-Overflow ist seit 09.11.2026 behoben (feste Kartenhöhe im Desktop-Raster). Messung 06.11.2026: zusätzlich 5 Fehler in den TransportManager-Tests |
 | TD-28 | `publish_results.vote_id` polymorph | Feld trägt je nach `event_kind` auch DecisionRecord-/Delegation-IDs; später in `payload_id` umbenennen |
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | seltener partieller Secure-Storage-Zustand; nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Init-Race kann UNIQUE-Kollision erzeugen; Abstimmung ohne Pubkey ablehnen |

@@ -312,11 +312,14 @@ class _DashboardScreenState extends State<DashboardScreen>
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         sliver: SliverGrid(
+          // Fixed card height instead of an aspect ratio: with a ratio the
+          // height shrank with the window width and the card text overflowed
+          // (30 px at 800–900 px wide windows).
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 2.8,
+            mainAxisExtent: _desktopFeatureCardHeight,
           ),
           delegate: SliverChildListDelegate([
             _buildMessagesCard(context),
@@ -907,6 +910,10 @@ class _PrinciplesReminderBanner extends StatelessWidget {
 
 // ── Feature card ──────────────────────────────────────────────────────────────
 
+/// Height of a feature card in the desktop grid. Fits title (1 line),
+/// subtitle (max. 2 lines) and preview (1 line) plus padding and margin.
+const double _desktopFeatureCardHeight = 124;
+
 class _FeatureCard extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -955,6 +962,8 @@ class _FeatureCard extends StatelessWidget {
                   children: [
                     Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: AppColors.onDark,
                         fontWeight: FontWeight.w600,
@@ -964,6 +973,8 @@ class _FeatureCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppColors.onDark.withValues(alpha: 0.65),
                         fontSize: 12,

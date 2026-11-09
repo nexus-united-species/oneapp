@@ -429,6 +429,25 @@ void main() {
       expect(find.byType(SliverGrid), findsOneWidget);
     });
 
+    // Regression: feature cards overflowed by 30 px at narrow desktop
+    // widths (card height came from an aspect ratio). Any overflow fails
+    // the test via a FlutterError.
+    for (final width in [800.0, 900.0, 1200.0, 1920.0]) {
+      testWidgets('feature cards do not overflow at desktop width $width',
+          (tester) async {
+        // Real layout width, not only the reported MediaQuery size.
+        tester.view.physicalSize = Size(width, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(_dashboardApp(width: width, height: 1000));
+        await tester.pump();
+
+        expect(find.byType(SliverGrid), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
     testWidgets('mobile width does NOT render SliverGrid', (tester) async {
       await tester.pumpWidget(_dashboardApp(width: 400));
       await tester.pump();
