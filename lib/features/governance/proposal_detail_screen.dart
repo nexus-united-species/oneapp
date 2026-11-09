@@ -34,6 +34,7 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabCtrl;
   StreamSubscription<void>? _sub;
+  StreamSubscription<void>? _cellSub;
   late Proposal _proposal;
 
   // Voting state
@@ -51,6 +52,10 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
     _tabCtrl = TabController(length: 3, vsync: this);
     _proposal = widget.proposal;
     _sub = ProposalService.instance.stream.listen((_) {
+      if (mounted) setState(() => _refreshProposal());
+    });
+    // Member changes (e.g. a departure) change which votes count.
+    _cellSub = CellService.instance.stream.listen((_) {
       if (mounted) setState(() => _refreshProposal());
     });
     _refreshProposal();
@@ -96,6 +101,7 @@ class _ProposalDetailScreenState extends State<ProposalDetailScreen>
     _tabCtrl?.dispose();
     _reasoningCtrl.dispose();
     _sub?.cancel();
+    _cellSub?.cancel();
     super.dispose();
   }
 
@@ -554,7 +560,8 @@ class _DetailsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = proposal;
-    final votes = ProposalService.instance.getVotes(p.id);
+    // Votes of members who left after voting started no longer count.
+    final votes = ProposalService.instance.getCountedVotes(p.id);
     final members = CellService.instance.membersOf(p.cellId);
     final confirmedMembers = members.where((m) => m.isConfirmed).length;
 
@@ -1079,7 +1086,10 @@ class _VotingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasVoted = myExistingVote != null;
-    final total = confirmedMemberCount > 0 ? confirmedMemberCount : 1;
+    // The local member list can be incomplete on joined devices (TD-33);
+    // never show more votes than voters.
+    final total = [confirmedMemberCount, votes.length, 1]
+        .reduce((a, b) => a > b ? a : b);
     final participation = votes.length / total;
     final quorumPct = (proposal.quorumRequired * 100).round();
 
@@ -2409,8 +2419,12 @@ class _DelegationBlockState extends State<_DelegationBlock> {
     return Delegation.fromMap(own.first);
   }
 
-  void _reload() =>
-      setState(() => _future = _loadOwnDelegation());
+  void _reload() {
+    // Block body: setState must not receive a closure that returns a Future.
+    setState(() {
+      _future = _loadOwnDelegation();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

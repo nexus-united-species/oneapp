@@ -1,6 +1,6 @@
 # ADR-0001 – Kanonischer Identitäts-Identifier im Domänenmodell
 
-Status: `VORGESCHLAGEN`
+Status: `ANGENOMMEN` (8. November 2026)
 Datum: 18. August 2026
 Betrifft: Datenmodell, Identität, Transportentkopplung
 
@@ -159,3 +159,16 @@ Absender identifiziert wird.
 - Sollen Governance-Events perspektivisch auf DID umgestellt werden, oder ist
   `voterPubkey` dort dauerhaft akzeptabel, weil Governance ohnehin über Nostr
   läuft?
+
+## Nachtrag zur Annahme (8. November 2026)
+
+Angenommen mit der Antwort auf die erste offene Frage: Die Zuordnung
+DID ↔ nostrPubkey wird **signiert**, und zwar mit dem Ed25519-Schlüssel der
+DID über `nexus-identity-binding:v1:<did>:<nostrPubkeyHex>`
+([identity_proof.dart](../../lib/core/identity/identity_proof.dart)). Events,
+die fachlich autorisiert werden müssen, tragen diesen Nachweis im Feld
+`_idProof`. Der Empfänger prüft zuerst die Nostr-Signatur (TD-39), dann den
+Nachweis, und vergleicht die so belegte DID mit Rolle oder Mitgliedschaft.
+Angewendet auf Zellauflösung, Zell-Ankündigung, Mitglieder-Updates, Anträge,
+Stimmen und Delegationen (TD-40). Die Dekodierung der DID liegt in
+`did_key_decoder.dart`, `did.dart` bleibt unverändert (Sperrstufe 1).

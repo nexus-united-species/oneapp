@@ -61,7 +61,7 @@ NostrTransport._onRelayEvent              nostr_transport.dart:2069
    │  switch (event.kind)
    ▼
 _handle…Event                             Fachhandler laut Tabelle oben
-   │  ⚠ vertraut event.pubkey ungeprüft  ← TD-40 / V-003, V-005
+   │  DID-Nachweis + Rollenprüfung (ChatProvider)  ← TD-40; offen: 31004, 31013
    ▼
 Service (CellService, ProposalService, ChatProvider …)
    │

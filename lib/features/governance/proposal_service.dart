@@ -839,6 +839,7 @@ class ProposalService {
     print('[PROPOSAL] finalizeProposal: ${votes.length} votes loaded from DB');
     // Sync the cache with direct votes (synthetic delegated votes are RAM-only).
     _votes[proposalId] = votes;
+    votes = _countableVotes(p, votes, log: true);
 
     // ── Phase 4.2b: eligibleVoters-Snapshot ───────────────────
     final Set<String> eligibleVoterSet;
@@ -995,6 +996,7 @@ class ProposalService {
 
     // Cache sync — analog YES_NO_ABSTAIN-Pfad (direct votes only)
     _votes[p.id] = votes;
+    votes = _countableVotes(p, votes, log: true);
 
     // 2a) eligibleVoters-Snapshot — needed before delegation aggregation
     final Set<String> eligibleVoterSet;
@@ -1204,14 +1206,15 @@ class ProposalService {
 
     // 1) Votes + Options laden
     final voteRows = await PodDatabase.instance.listVotes(p.id);
-    final votes = voteRows.map(Vote.fromMap).toList();
+    final allVotes = voteRows.map(Vote.fromMap).toList();
     final optionRows =
         await PodDatabase.instance.listProposalOptions(p.id);
     final options = optionRows.map(ProposalOption.fromMap).toList();
-    print('[TALLY-INPUT] ${p.id} votes=${votes.length} '
+    print('[TALLY-INPUT] ${p.id} votes=${allVotes.length} '
         'options=${options.length}');
 
-    _votes[p.id] = votes;
+    _votes[p.id] = allVotes;
+    final votes = _countableVotes(p, allVotes, log: true);
 
     // 2) Sortieren
     final sortedVotes = sortVotesDeterministic(votes);
@@ -2166,6 +2169,31 @@ class ProposalService {
   Proposal? getProposal(String proposalId) => _proposals[proposalId];
 
   List<Vote> getVotes(String proposalId) => _votes[proposalId] ?? [];
+
+  /// Direct votes that count: votes of members who left or were removed
+  /// after voting started are dropped ("Start-Liste minus Austritte").
+  List<Vote> getCountedVotes(String proposalId) {
+    final p = _proposals[proposalId];
+    final votes = getVotes(proposalId);
+    return p == null ? votes : _countableVotes(p, votes);
+  }
+
+  List<Vote> _countableVotes(Proposal p, List<Vote> votes,
+      {bool log = false}) {
+    final cutoffMs =
+        (p.votingStartedAt ?? p.createdAt).toUtc().millisecondsSinceEpoch;
+    final counted = votes.where((v) {
+      final departedAt =
+          CellService.instance.departedAtMs(p.cellId, v.voterDid);
+      return departedAt == null || departedAt < cutoffMs;
+    }).toList();
+    final dropped = votes.length - counted.length;
+    if (log && dropped > 0) {
+      print('[TALLY-ELIGIBLE] ${p.id}: $dropped vote(s) of departed '
+          'members not counted');
+    }
+    return counted;
+  }
 
   Future<List<ProposalEdit>> getEditHistory(String proposalId) async {
     final rows = await PodDatabase.instance.listProposalEdits(proposalId);
@@ -4080,6 +4108,10 @@ class ProposalService {
 
   @visibleForTesting
   void injectProposalForTest(Proposal p) => _proposals[p.id] = p;
+
+  @visibleForTesting
+  void injectVotesForTest(String proposalId, List<Vote> votes) =>
+      _votes[proposalId] = List.of(votes);
 
   @visibleForTesting
   void resetForTest() {
