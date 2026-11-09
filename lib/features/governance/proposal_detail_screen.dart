@@ -2419,8 +2419,12 @@ class _DelegationBlockState extends State<_DelegationBlock> {
     return Delegation.fromMap(own.first);
   }
 
-  void _reload() =>
-      setState(() => _future = _loadOwnDelegation());
+  void _reload() {
+    // Block body: setState must not receive a closure that returns a Future.
+    setState(() {
+      _future = _loadOwnDelegation();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
