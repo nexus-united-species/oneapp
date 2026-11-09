@@ -21,6 +21,8 @@ import 'package:nexus_oneapp/core/identity/identity.dart';
 import 'package:nexus_oneapp/core/identity/identity_service.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
 import 'package:nexus_oneapp/core/transport/nostr/nostr_event.dart';
+import 'package:nexus_oneapp/core/transport/nostr/publish_result.dart';
+import 'package:nexus_oneapp/core/transport/nostr/publish_result_status.dart';
 import 'package:nexus_oneapp/features/governance/audit_log_entry.dart';
 import 'package:nexus_oneapp/features/governance/cell.dart';
 import 'package:nexus_oneapp/features/governance/cell_member.dart';
@@ -1267,6 +1269,57 @@ void main() {
           reason: 'G2.1.4a: delegatedFrom must be the delegate DID');
       expect(synth.voterDid, equals(_aDid),
           reason: 'G2.1.4a: voterDid must be the delegator DID');
+    });
+  });
+
+  // ── TD-38: retry sends the same payload as the first publish ─────────────
+
+  group('TD-38 decision record retry payload', () {
+    tearDown(() => ProposalService.instance.onPublishDecisionToNostr = null);
+
+    test('retry content equals the first publish for a SINGLE_CHOICE vote',
+        () async {
+      Map<String, dynamic>? firstContent;
+      ProposalService.instance.onPublishDecisionToNostr = (params) async {
+        firstContent = params['recordContent'] as Map<String, dynamic>;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        // First publish fails, as after a relay outage.
+        return PublishResult(
+          publishResultId: 'publish_test_$now',
+          localEventId: '',
+          eventKind: 31013,
+          status: PublishResultStatus.failed,
+          finalStatus: PublishResultStatus.failed,
+          attemptedAt: now,
+          retryCount: 0,
+          requiredAckCount: 2,
+          acceptedRelayCount: 0,
+          failedRelayCount: 2,
+          createdAt: now,
+          updatedAt: now,
+        );
+      };
+      final proposal = _injectScProposal();
+      await _insertOption(_propSc, 'opt1', 'Ja bitte', position: 0);
+      await _insertOption(_propSc, 'opt2', 'Nein danke', position: 1);
+      await _insertScVote(_propSc, _bDid, 'opt1');
+      await _insertDelegation(_propSc, _aDid, _bDid);
+
+      await ProposalService.instance.finalizeProposal(_propSc);
+      final record =
+          await ProposalService.instance.getDecisionRecord(_propSc);
+      final retry = ProposalService.instance.decisionRecordRetryContent(
+        proposal: proposal,
+        record: record!,
+      );
+
+      expect(firstContent, isNotNull);
+      expect(jsonEncode(retry), jsonEncode(firstContent));
+      expect(retry['cellId'], _cellId);
+      expect(retry['votingMode'], 'SINGLE_CHOICE');
+      expect(retry['optionResultsJson'], isNotNull);
+      final votes = (retry['allVotes'] as List).cast<Map<String, dynamic>>();
+      expect(votes.map((v) => v['selectedOptionId']), everyElement('opt1'));
     });
   });
 

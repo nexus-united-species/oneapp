@@ -9,13 +9,15 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
 
 ## P0 – vor dem nächsten Alpha-Paket
 
-- [ ] F-001: echte Nostr-Event-ID für Chat-/Kanal-Reaktionen, Löschungen und
-  Kanal-Metadaten verwenden; niemals UUID als `e`-Tag senden.
+- [x] F-001: echte Nostr-Event-ID für Chat-/Kanal-Reaktionen, Löschungen und
+  Kanal-Metadaten verwenden; niemals UUID als `e`-Tag senden. (PR #4)
 - [ ] F-002: `eligibleVoters` beim Übergang zu `VOTING` einfrieren,
-  persistieren und geräteübergreifend prüfen.
+  persistieren und geräteübergreifend prüfen. Code und Tests seit
+  09.11.2026 (TD-37), Gerätetest offen.
 - [ ] F-003: Decision-Record-Retry aus demselben vollständigen Payload-Builder
-  wie den Erstversand erzeugen.
-- [ ] Für alle drei Funde Unit-/Regressionstests ergänzen.
+  wie den Erstversand erzeugen. Code und Regressionstest seit 09.11.2026
+  (TD-38), Livetest offen.
+- [x] Für alle drei Funde Unit-/Regressionstests ergänzen.
 - [ ] Android↔Windows-Livetest: Reaktion, Löschen, Abstimmungsstart,
   Finalisierung und Retry nach Relay-Ausfall.
 - [ ] Den realen 30-Pixel-Desktop-Overflow beheben.

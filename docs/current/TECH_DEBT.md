@@ -12,7 +12,7 @@ Release-Reihenfolge steht separat in
 | ID | Thema | Auswirkung | Zielrichtung |
 |---|---|---|---|
 | TD-37 / F-002 | Seit 09.11.2026 eingefroren und übertragen (Gerätetest offen) | Anträge ohne Liste (vor diesem Stand gestartet) zählen weiter geräteabhängig | nach dem Gerätetest schließen |
-| TD-38 / F-003 | Decision-Record-Retry unvollständig | degradierter Inhalt und Hash-Mismatch nach Erstversand-Ausfall | gemeinsamen Payload-Builder verwenden |
+| TD-38 / F-003 | Seit 09.11.2026 nutzt der Retry denselben Payload-Builder wie der Erstversand (Gerätetest offen) | – | nach dem Livetest mit Relay-Ausfall schließen |
 | TD-40 / V-003/V-005 | Senderautorisierung umgesetzt, im Zwei-Geräte-Test bestätigt (08.11.2026) | Beitrittsbestätigung (31004) und Absender der Decision Records (31013) seit 09.11.2026 geprüft (Gerätetest offen); offen: Inhalt der Decision Records (TD-41), Stimmen von Nicht-Mitgliedern in der Auszählung (braucht vollständige Mitgliederlisten, TD-33/TD-37) | Wählerfilter mit TD-37 vervollständigen |
 
 ## Hoch – vor breiter Nutzung
@@ -214,6 +214,15 @@ Liste:
     Zelle gehören, die Abstimmung muss laufen oder beendet sein, und Frist
     samt Nachfrist für späte Stimmen müssen nach der eigenen Uhr abgelaufen
     sein.
+- **Retry der Entscheidungsprotokolle, TD-38 (09.11.2026, Gerätetest offen):**
+  Der Wiederholungsversand baute den Inhalt bisher von Hand nach; es
+  fehlten `cellId`, `votingMode`, `resultReason`, `optionResultsJson`,
+  `tieOptionIdsJson` und die gewählten Optionen der Stimmen. Seit TD-41
+  hätten Empfänger bei Abstimmungen mit Optionen deshalb eine falsche
+  Abweichung gemeldet. Jetzt erzeugt `decisionRecordRetryContent` den
+  Inhalt mit demselben Builder wie der Erstversand; ein Regressionstest
+  vergleicht beide. Ist der Antrag lokal nicht mehr bekannt, entfällt der
+  Retry (`[RETRY] Decision record retry skipped`).
 - **Eigene Auszählung hat Vorrang, TD-41 (09.11.2026, Gerätetest offen):**
   Ein empfangenes Entscheidungsprotokoll löst zuerst die eigene Auszählung
   aus (`[TALLY-LOCAL]`); übernommen wird es nie, auch nicht, wenn keine

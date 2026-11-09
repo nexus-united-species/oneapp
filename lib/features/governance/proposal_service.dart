@@ -1612,6 +1612,20 @@ class ProposalService {
     });
   }
 
+  /// TD-38: Kind-31013 payload for a retry, rebuilt from the persisted
+  /// record with the same builder as the first publish. The persisted
+  /// `allVotes` are the sorted votes of that first publish.
+  @visibleForTesting
+  Map<String, dynamic> decisionRecordRetryContent({
+    required Proposal proposal,
+    required DecisionRecord record,
+  }) =>
+      _buildRecordContent(
+        proposal: proposal,
+        record: record,
+        sortedVotes: record.allVotes,
+      );
+
   /// Publishes a DecisionRecord via the Nostr transport and logs the outcome.
   /// The PublishResult is already tracked by the transport layer for automatic
   /// retry via PublishResultDao / _processRetryQueue.
@@ -3219,30 +3233,22 @@ class ProposalService {
           // Decision Record retry — reload from DB
           final record =
               await _getDecisionRecordByProposal(pendingResult.proposalId!);
-          if (record != null) {
-            final retryContent = SplayTreeMap<String, dynamic>.from({
-              'proposalId': record.proposalId,
-              'finalTitle': record.finalTitle,
-              'finalDescription': record.finalDescription,
-              'result': record.result,
-              'yesVotes': record.yesVotes,
-              'noVotes': record.noVotes,
-              'abstainVotes': record.abstainVotes,
-              'participation': record.participation,
-              'decidedAt': record.decidedAt.millisecondsSinceEpoch,
-              'allVotes': record.allVotes
-                  .map((v) => {
-                        'voterPseudonym': v.voterPseudonym,
-                        'choice': v.choice.name,
-                        'reasoning': v.reasoning,
-                        'createdAt': v.createdAt.millisecondsSinceEpoch,
-                      })
-                  .toList(),
-            });
+          final proposal = _proposals[pendingResult.proposalId!];
+          if (record != null && proposal == null) {
+            print('[RETRY] Decision record retry skipped: proposal '
+                '${pendingResult.proposalId} no longer known locally');
+          }
+          if (record != null && proposal != null) {
+            // TD-38: same payload builder as the first publish, so a retry
+            // carries cellId, votingMode, resultReason and option results.
+            final retryContent = decisionRecordRetryContent(
+              proposal: proposal,
+              record: record,
+            );
             newResult = await _publishDecisionRecord(
               proposalId: record.proposalId,
               cellId: record.cellId,
-              recordContent: Map<String, dynamic>.from(retryContent),
+              recordContent: retryContent,
               result: record.result,
               contentHash: record.contentHash,
               previousDecisionHash: record.previousDecisionHash,
