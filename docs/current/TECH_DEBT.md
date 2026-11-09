@@ -262,6 +262,18 @@ Liste:
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
   bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
   („2 von 1“ behoben).
+- **TD-76 Vorzeitiges Abstimmungsende von außen (09.11.2026 im Gerätetest
+  gefunden und behoben):** Die TD-40-Regeln erlaubten jedem Mitglied die
+  „automatischen“ Statuswechsel und dem Antragsteller jeden Status, ohne die
+  eigene Frist zu prüfen. Ein „Force beenden“ auf dem Handy setzte den
+  Antrag auf Windows deshalb über die Statusmeldungen auf „entschieden“,
+  obwohl die Frist dort noch lief; Windows zählte nie selbst aus und zeigte
+  „Ungültig“. Jetzt gilt für alle Absender, auch den Antragsteller:
+  „Abstimmung beendet“ nur nach Ablauf der Frist auf der eigenen Uhr,
+  „entschieden“ nie von außen (nur die eigene Auszählung setzt es),
+  „archiviert“ erst nach eigener Entscheidung. Zurückziehen bleibt dem
+  Antragsteller erlaubt. Bereits so beschädigte Anträge (entschieden ohne
+  Ergebnis) werden nicht automatisch geheilt.
 - **TD-75 Schema bei Neuinstallation unvollständig (09.11.2026 behoben,
   Gerätetest offen):** `_onCreate` legte nur den Stand von Schema v12 an;
   alle späteren Spalten und Tabellen gab es nur in den Migrationsschritten,

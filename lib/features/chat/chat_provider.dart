@@ -724,6 +724,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       statusTag: event.tagValue('status'),
       cell: _knownCell(cellId),
       members: CellService.instance.membersOf(cellId),
+      now: DateTime.now().toUtc(),
       signerPubkey: event.pubkey,
       idProof: content[IdentityProof.contentKey],
     );

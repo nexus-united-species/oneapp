@@ -64,6 +64,15 @@ void main() {
     )..status = ProposalStatus.DISCUSSION;
   });
 
+  // Local clock for the deadline checks; votes below end at 10:00.
+  final _now = DateTime.utc(2026, 11, 9, 12);
+  final _deadline = DateTime.utc(2026, 11, 9, 10);
+
+  Proposal withStatus(ProposalStatus status, {DateTime? endsAt}) =>
+      Proposal.fromMap(proposal.toMap())
+        ..status = status
+        ..votingEndsAt = endsAt ?? _deadline;
+
   Map<String, dynamic> contentOf(Proposal p, {String? title}) => {
         'title': title ?? p.title,
         'description': p.description,
@@ -76,6 +85,7 @@ void main() {
     String status = 'discussion',
     String? title,
     Map<String, String>? proof,
+    DateTime? now,
   }) =>
       authorizeProposalEvent(
         existing: existing,
@@ -83,6 +93,7 @@ void main() {
         statusTag: status,
         cell: cell,
         members: members,
+        now: now ?? _now,
         signerPubkey: signer.nostr,
         idProof: proof ?? signer.proof,
       );
@@ -129,8 +140,7 @@ void main() {
 
     test('accepts deadline status changes from members, not outsiders',
         () async {
-      final voting = Proposal.fromMap(proposal.toMap())
-        ..status = ProposalStatus.VOTING;
+      final voting = withStatus(ProposalStatus.VOTING);
 
       expect(
         await proposalEvent(member, existing: voting, status: 'voting_ended'),
@@ -160,10 +170,64 @@ void main() {
         statusTag: 'discussion',
         cell: cell,
         members: members,
+        now: _now,
         signerPubkey: outsider.nostr,
         idProof: outsider.proof,
       );
       expect(await outsiderProposal, GovernanceAuthDecision.notAuthorized);
+    });
+
+    test('nobody ends a vote before the local deadline, not even the creator',
+        () async {
+      final running = withStatus(ProposalStatus.VOTING,
+          endsAt: DateTime.utc(2026, 11, 16, 10));
+
+      for (final signer in [creator, founder, member]) {
+        expect(
+          await proposalEvent(signer,
+              existing: running, status: 'voting_ended'),
+          GovernanceAuthDecision.notAuthorized,
+          reason: signer == creator
+              ? 'creator'
+              : signer == founder
+                  ? 'founder'
+                  : 'member',
+        );
+      }
+    });
+
+    test('a received DECIDED is never applied, only the own tally sets it',
+        () async {
+      final ended = withStatus(ProposalStatus.VOTING_ENDED);
+
+      expect(await proposalEvent(creator, existing: ended, status: 'decided'),
+          GovernanceAuthDecision.notAuthorized);
+      expect(await proposalEvent(member, existing: ended, status: 'decided'),
+          GovernanceAuthDecision.notAuthorized);
+    });
+
+    test('archiving needs an own decision first', () async {
+      expect(
+        await proposalEvent(member,
+            existing: withStatus(ProposalStatus.VOTING_ENDED),
+            status: 'archived'),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await proposalEvent(member,
+            existing: withStatus(ProposalStatus.DECIDED), status: 'archived'),
+        GovernanceAuthDecision.allowedStatusOnly,
+      );
+    });
+
+    test('the creator may still withdraw during a running vote', () async {
+      final running = withStatus(ProposalStatus.VOTING,
+          endsAt: DateTime.utc(2026, 11, 16, 10));
+
+      expect(
+        await proposalEvent(creator, existing: running, status: 'withdrawn'),
+        GovernanceAuthDecision.allowed,
+      );
     });
 
     test('rejects a withdrawal for a proposal not seen yet', () async {

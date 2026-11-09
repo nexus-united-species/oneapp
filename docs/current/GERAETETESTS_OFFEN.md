@@ -25,23 +25,19 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| 2c13a29 | Auf dem Handy in einer laufenden Abstimmung die Stimme an Windows delegieren | Im Handy-Log kein `setState()`-Fehler |
-| a728672 | Gemeinschaften-Bildschirm auf beiden Geräten nach unten scrollen | Handy zeigt „Weitere lokale Gemeinschaften (Admin, …)“, Windows zeigt diesen Bereich nicht |
-| ef7f637 | Auf dem Handy einer Zelle beitreten, die Windows gegründet hat; auf Windows bestätigen | Zelle erscheint auf dem Handy unter „Meine Zellen“; im Log kein `[CELL-AUTH] Membership confirmation rejected` |
-| ef7f637 | Handy-App beenden, während eine Beitrittsanfrage offen ist; auf Windows bestätigen; Handy neu starten | Zelle erscheint nach dem Start trotzdem unter „Meine Zellen“ |
-| 2a20285 | Neuen Antrag in einer Zelle mit beiden Geräten anlegen und Abstimmung starten; danach ein drittes Konto oder neues Mitglied beitreten lassen (falls möglich) | Beide Logs zeigen `[TALLY-SNAPSHOT]` mit derselben Anzahl; Anzeige „x von N“ gleich auf beiden Geräten; Stimme eines später Beigetretenen zählt nicht |
-| 0698c8f | Mit dem Knopf „Force beenden“ in einem Antrag auf einem Gerät auszählen; das andere Gerät normal laufen lassen | Auf dem zweiten Gerät erscheint `[TALLY-LOCAL]` erst nach Ablauf von Frist und Nachfrist bzw. bei eigener Auszählung; beide zeigen dasselbe Ergebnis; kein `[TALLY-MISMATCH]` |
-| 5fd72b5 | Nur möglich, wenn einem Gerät Stimmen fehlen: Handy offline schalten, auf Windows abstimmen, Frist ablaufen lassen, Handy erst nach seiner eigenen Auszählung wieder online | Beim Ergebnis auf dem Handy erscheint der orange Hinweis „… meldet ein anderes Ergebnis“, in der Historie ein ⚠️-Eintrag. Optional, aufwendig |
-| 2d346db | Antrag mit Optionen (Einzelauswahl) abstimmen; auf einem Gerät kurz vor der Auszählung das Netz trennen, nach der Auszählung wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
-| 5f23cc2 | Beim ersten Start nach dem Update | Log zeigt `[DB-MIGRATION-27]`; App startet normal; nach einer Auszählung zeigt das Ergebnis „x Stimmen von N Stimmberechtigten“ mit N = Anzahl aus `[TALLY-SNAPSHOT]` |
-| 4f1a73c | Beim ersten Start nach dem Update auf beiden Geräten | Log zeigt `[DB-MIGRATION-27]` und `[DB-MIGRATION-28]`; App startet normal, Zellen, Anträge und Chats sind vollständig da |
-| 4f1a73c | Optional, falls ein drittes Gerät oder Testkonto verfügbar: App frisch installieren, Zelle beitreten, abstimmen, auszählen | Kein `DatabaseException` im Log; Ergebnis wird angezeigt |
-| 63556cb | Windows: Startseite öffnen, Fenster schmal ziehen (knapp über der Handy-Ansicht) und breit ziehen | Keine gelb-schwarzen Streifen an den Karten; Untertitel enden notfalls mit „…“ |
-| f38d5a2 | Handy: Startseite (Zeile „Lokal: … Peers“ unter dem Radar) und Gemeinschaften als Admin (Überschrift „Weitere lokale Gemeinschaften (Admin, …)“) ansehen | Keine gelb-schwarzen Streifen; lange Überschriften brechen um |
-| 61f0545 | Antrag mit kurzer Abstimmungsfrist anlegen, beide stimmen ab; ein Gerät während des Fristendes geschlossen lassen und danach starten | Beide Geräte zeigen dasselbe Ergebnis; im Log kein `[GOV-AUTH] kind=31013 … rejected` |
+| (TD-76) | Durchgang 4 wiederholen: neuer Antrag, Abstimmung starten, abstimmen, auf dem Handy „Force beenden (Debug)“ | Handy zeigt das Ergebnis; Windows bleibt bei „Abstimmung läuft“; Windows-Log zeigt `[GOV-AUTH] kind=31010 … rejected: notAuthorized` für „beendet/entschieden“ und `kind=31013 … rejected` |
+| 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
+| 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
+| 5fd72b5 | Optional, aufwendig: einem Gerät fehlen Stimmen (offline bis nach der eigenen Auszählung) | Oranger Hinweis „… meldet ein anderes Ergebnis“, ⚠️-Eintrag in der Historie |
+| 4f1a73c | Optional, mit drittem Gerät: App frisch installieren, Zelle beitreten, abstimmen, auszählen | Kein `DatabaseException` im Log; Ergebnis wird angezeigt |
 
 ## Erledigt
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
 | 2158ca3, 5bccb33 | 09.11.2026 | Identitätsnachweis, Austritt, Neustart, Wiederbeitritt, Entfernen, Antrag, Abstimmung, Delegation, Auflösung in Ordnung |
+| 5f23cc2, 4f1a73c | 09.11.2026 | Handy migriert bis v28 (`[DB-MIGRATION-28]`), Windows-DB steht auf v28 mit neuer Spalte; Daten vollständig |
+| 63556cb, f38d5a2, a728672 | 09.11.2026 | Keine Überläufe (Windows schmal/breit, Handy-Startseite); Admin-Bereich nur auf dem Handy |
+| ef7f637 | 09.11.2026 | Beitritt zu „test911“ mit Windows-Neustart: Bestätigung nach dem Start angenommen, Zelle unter „Meine Zellen“ |
+| 2a20285, 2c13a29 | 09.11.2026 | `[TALLY-SNAPSHOT]` 2 auf beiden Geräten, keine Abweichung; Delegation angekommen, kein `setState()`-Fehler |
+| 2a20285, 5f23cc2 | 09.11.2026 | Handy: angenommen, „2 Stimmen von 2 Stimmberechtigten“ (Delegation gezählt). Windows: Fremdprotokoll korrekt abgelehnt, aber Statuswechsel übernommen → TD-76 gefunden |

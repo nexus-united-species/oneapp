@@ -152,10 +152,36 @@ const _automaticTransitions = {
   ProposalStatus.DECIDED: ProposalStatus.ARCHIVED,
 };
 
+/// Whether a received change of [existing] to [status] may happen now,
+/// measured on this device's own clock. Every device ends a vote and
+/// tallies on its own (ProposalScheduler), so nobody may do it for others:
+/// - VOTING_ENDED only once the local voting deadline has passed,
+/// - DECIDED never from outside: only this device's own tally sets it (a
+///   received DECIDED would skip the tally and leave the proposal without
+///   result, TD-41),
+/// - ARCHIVED only after this device has decided.
+bool _isStatusChangeDue(
+    Proposal existing, ProposalStatus status, DateTime now) {
+  switch (status) {
+    case ProposalStatus.VOTING_ENDED:
+      final endsAt = existing.votingEndsAt;
+      return endsAt != null && !now.isBefore(endsAt);
+    case ProposalStatus.DECIDED:
+      return false;
+    case ProposalStatus.ARCHIVED:
+      return existing.status == ProposalStatus.DECIDED;
+    default:
+      return true;
+  }
+}
+
 /// Kind-31010 proposal events.
 ///
 /// - New proposal: only its creator, who must be a known cell member.
-/// - Creator: everything (edit, withdraw, status).
+/// - Status changes that end or decide a vote: only when due on this
+///   device's clock, for every sender including the creator
+///   ([_isStatusChangeDue]).
+/// - Creator: everything else (edit, withdraw, status).
 /// - Founder/moderator: may start voting (as in the UI).
 /// - Any other known member: only the automatic deadline transitions, and
 ///   only as a status change ([GovernanceAuthDecision.allowedStatusOnly]).
@@ -165,6 +191,7 @@ Future<GovernanceAuthDecision> authorizeProposalEvent({
   required String? statusTag,
   required Cell? cell,
   required List<CellMember> members,
+  required DateTime now,
   required String signerPubkey,
   required Object? idProof,
 }) async {
@@ -181,6 +208,12 @@ Future<GovernanceAuthDecision> authorizeProposalEvent({
     return isValidNew
         ? GovernanceAuthDecision.allowed
         : GovernanceAuthDecision.notAuthorized;
+  }
+
+  if (status != null &&
+      status != existing.status &&
+      !_isStatusChangeDue(existing, status, now)) {
+    return GovernanceAuthDecision.notAuthorized;
   }
 
   if (did == existing.creatorDid) return GovernanceAuthDecision.allowed;
