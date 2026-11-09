@@ -19,6 +19,7 @@ import 'delegation.dart';
 import 'cell_service.dart';
 import 'retry_backoff.dart';
 import 'decision_record.dart';
+import 'decision_record_comparison.dart';
 import 'proposal.dart';
 import 'proposal_edit.dart';
 import 'proposal_option.dart';
@@ -786,8 +787,29 @@ class ProposalService {
     _notify();
   }
 
+  /// Proposals whose tally is running. Scheduler, app resume and an
+  /// incoming decision record (TD-41) may all trigger it at once.
+  /// A second caller waits for the running tally instead of starting one.
+  final Map<String, Future<void>> _finalizeInFlight = {};
+
   /// VOTING_ENDED → DECIDED. Counts votes, checks quorum, creates DecisionRecord.
-  Future<void> finalizeProposal(String proposalId) async {
+  Future<void> finalizeProposal(String proposalId) {
+    // Synchronous lock before the first await.
+    final running = _finalizeInFlight[proposalId];
+    if (running != null) {
+      print('[TALLY-SKIP] $proposalId reason=tally already running, waiting');
+      return running;
+    }
+    // Block body: returning the removed Future would make whenComplete
+    // wait for this very tally (deadlock).
+    final tally = _finalizeProposalUnlocked(proposalId).whenComplete(() {
+      _finalizeInFlight.remove(proposalId);
+    });
+    _finalizeInFlight[proposalId] = tally;
+    return tally;
+  }
+
+  Future<void> _finalizeProposalUnlocked(String proposalId) async {
     print('[PROPOSAL] Finalizing: $proposalId');
     final p = _proposals[proposalId];
     if (p == null) return;
@@ -2861,6 +2883,37 @@ class ProposalService {
   }
 
   /// Processes a received Kind-31013 decision record from Nostr.
+  /// TD-41: runs this device's own tally (as the scheduler would) before a
+  /// received decision record is looked at. Waits for a tally that is
+  /// already running.
+  Future<void> _tallyLocallyBeforeAdopting(String proposalId) async {
+    final p = _proposals[proposalId];
+    if (p == null) return;
+    if (p.status == ProposalStatus.VOTING) {
+      await processGracePeriodStart(proposalId);
+    }
+    if (p.status == ProposalStatus.VOTING_ENDED ||
+        _finalizeInFlight.containsKey(proposalId)) {
+      print('[TALLY-LOCAL] $proposalId: own tally before comparing a '
+          'received decision record');
+      await finalizeProposal(proposalId);
+    }
+  }
+
+  /// TD-41: logs when another device reports a different outcome. The own
+  /// result stays; a mismatch points to missing votes or a forged record.
+  void _logTallyMismatch(
+      DecisionRecord local, Map<String, dynamic> received, String eventId) {
+    final fields = decisionRecordMismatches(local, received);
+    if (fields.isEmpty) return;
+    print('[TALLY-MISMATCH] ${local.proposalId}: received record '
+        '${eventId.length >= 8 ? eventId.substring(0, 8) : eventId}… differs '
+        'in $fields — local: result=${local.result} Y=${local.yesVotes} '
+        'N=${local.noVotes} A=${local.abstainVotes}; received: '
+        'result=${received['result']} Y=${received['yesVotes']} '
+        'N=${received['noVotes']} A=${received['abstainVotes']}');
+  }
+
   Future<void> handleIncomingDecisionRecord(NostrEvent event) async {
     print('[PROPOSAL] handleIncomingDecisionRecord: ${event.id}');
 
@@ -2894,112 +2947,24 @@ class ProposalService {
         return;
       }
 
+      // TD-41: the own tally takes precedence. A received record only
+      // triggers it (the deadline and grace period have passed, see
+      // authorizeDecisionRecord) and is then compared with the result.
+      await _tallyLocallyBeforeAdopting(proposalId);
+
       // Skip if we already have this record (e.g. we created it).
       final existing = await _getDecisionRecordByProposal(proposalId);
       if (existing != null) {
+        _logTallyMismatch(existing, content, event.id);
         print('[PROPOSAL] Decision record already exists for $proposalId, skipping');
         return;
       }
 
-      // Phase 4.5c: read v1.3 fields with defensive null defaults.
-      // Legacy records (pre-4.5b senders) won't have these keys;
-      // null is the correct fallback.
-      // allVotes is intentionally NOT reconstructed in 4.5c —
-      // votes are tracked separately via Kind-31011.
-      final record = DecisionRecord(
-        recordId: DecisionRecord.generateId(),
-        proposalId: proposalId,
-        cellId: cellId,
-        finalTitle: content['finalTitle'] as String? ?? '',
-        finalDescription: content['finalDescription'] as String? ?? '',
-        result: content['result'] as String? ?? 'invalid',
-        yesVotes: content['yesVotes'] as int? ?? 0,
-        noVotes: content['noVotes'] as int? ?? 0,
-        abstainVotes: content['abstainVotes'] as int? ?? 0,
-        participation: (content['participation'] as num?)?.toDouble() ?? 0.0,
-        decidedAt: DateTime.fromMillisecondsSinceEpoch(
-            content['decidedAt'] as int? ?? 0,
-            isUtc: true),
-        allVotes: const [],
-        contentHash: event.tagValue('content_hash') ?? '',
-        previousDecisionHash: event.tagValue('prev_hash'),
-        nostrEventId: event.id,
-        // ── Phase 4.5c: v1.3 fields ─────────────────────────────
-        resultReason: content['resultReason'] as String?,
-        resultRelation: content['resultRelation'] as String?,
-        previousProposalId: content['previousProposalId'] as String?,
-        optionResultsJson: content['optionResultsJson'] as String?,
-        tieOptionIdsJson: content['tieOptionIdsJson'] as String?,
-      );
-
-      await _saveDecisionRecordToDb(record);
-      print('[PROPOSAL] Decision record saved from Nostr for $proposalId');
-
-      // votingMode-Fallback: read from content; fallback used inside
-      // localProposal block only (localProposal.votingMode is safe there).
-      final receivedModeStr = content['votingMode'] as String?;
-
-      // Bug B fix: update the local proposal with the authoritative result
-      // values from the received decision record so that all devices show the
-      // same outcome regardless of which device ran finalizeProposal().
-      final localProposal = _proposals[proposalId];
-      if (localProposal != null) {
-        // With localProposal: use its votingMode as fallback when content
-        // doesn't include votingMode (legacy pre-4.5b senders).
-        final mode = receivedModeStr != null
-            ? parseVotingMode(receivedModeStr)
-            : localProposal.votingMode;
-
-        print('[PROPOSAL] Updating local proposal from decision record '
-            '(mode=${mode.name})');
-        print('[PROPOSAL]   Y=${record.yesVotes} N=${record.noVotes} '
-            'A=${record.abstainVotes} Participation=${record.participation} '
-            'Result=${record.result}');
-
-        localProposal.status = ProposalStatus.DECIDED;
-        localProposal.decidedAt = record.decidedAt;
-        localProposal.resultSummary = record.result;
-        localProposal.resultParticipation = record.participation;
-        localProposal.resultAbstain = record.abstainVotes;
-
-        // Only YES_NO_ABSTAIN has meaningful yes/no semantics on the
-        // legacy result_yes/result_no columns. For SC/CC the truth
-        // lives in optionResultsJson on the persisted DecisionRecord;
-        // resultYes/resultNo stay at whatever value they had locally
-        // (typically 0).
-        if (mode == VotingMode.YES_NO_ABSTAIN) {
-          localProposal.resultYes = record.yesVotes;
-          localProposal.resultNo = record.noVotes;
-        }
-
-        await _saveProposalToDb(localProposal);
-
-        final myIdentity = IdentityService.instance.currentIdentity;
-        await addAuditEntry(AuditLogEntry(
-          entryId: AuditLogEntry.generateId(),
-          proposalId: proposalId,
-          cellId: record.cellId,
-          eventType: AuditEventType.RESULT_CALCULATED,
-          actorDid: myIdentity?.did ?? '',
-          actorPseudonym: myIdentity?.pseudonym ?? '',
-          timestamp: DateTime.now().toUtc(),
-          payload: {
-            'result': record.result,
-            'resultReason': record.resultReason,
-            'votingMode': receivedModeStr,
-            'yes': record.yesVotes,
-            'no': record.noVotes,
-            'abstain': record.abstainVotes,
-            'participation': record.participation,
-            'optionResultsJson': record.optionResultsJson,
-            'tieOptionIdsJson': record.tieOptionIdsJson,
-            'source': 'decision_record_received',
-          },
-          nostrEventId: event.id,
-        ));
-
-        _notify();
-      }
+      // TD-41: no own result (proposal unknown, not in a vote, or the
+      // tally wrote no record). A received result is never adopted in its
+      // place; the scheduler tallies once the proposal is due.
+      print('[TALLY-SKIP-ADOPT] $proposalId: no own tally available, '
+          'received record ${event.id.substring(0, 8)}… not adopted');
     } catch (e) {
       print('[PROPOSAL] handleIncomingDecisionRecord error: $e');
     }

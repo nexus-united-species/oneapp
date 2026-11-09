@@ -245,7 +245,8 @@ void main() {
           cellId: cellId ?? cell.id,
         )
           ..status = status
-          ..votingEndsAt = hasDeadline ? deadline : null;
+          ..votingEndsAt = hasDeadline ? deadline : null
+          ..gracePeriodHours = 0;
 
     Future<GovernanceAuthDecision> record(
       _Identity signer, {
@@ -294,11 +295,17 @@ void main() {
             now: deadline.subtract(const Duration(hours: 1))),
         GovernanceAuthDecision.notAuthorized,
       );
-      // Small clock differences between devices are tolerated.
+      // Not even shortly before: late votes could still arrive.
       expect(
         await record(member,
             localProposal: votingProposal(status: ProposalStatus.VOTING),
             now: deadline.subtract(const Duration(seconds: 30))),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await record(member,
+            localProposal: votingProposal(status: ProposalStatus.VOTING),
+            now: deadline),
         GovernanceAuthDecision.allowed,
       );
     });
@@ -320,6 +327,23 @@ void main() {
         await record(member,
             localProposal: votingProposal(hasDeadline: false)),
         GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
+    test('rejects a record during the grace period for late votes', () async {
+      final withGrace = votingProposal()..gracePeriodHours = 12;
+
+      expect(
+        await record(member,
+            localProposal: withGrace,
+            now: deadline.add(const Duration(hours: 1))),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await record(member,
+            localProposal: withGrace,
+            now: deadline.add(const Duration(hours: 12, minutes: 1))),
+        GovernanceAuthDecision.allowed,
       );
     });
 

@@ -12,6 +12,7 @@
 // during tally — expired/invalid delegations remain ACTIVE in the DB.
 //
 // Coverage: D.1–D.10 (26 tests G2.1.3) + G2.1.4a (5 new tests).
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -19,8 +20,10 @@ import 'package:nexus_oneapp/core/contacts/contact_service.dart';
 import 'package:nexus_oneapp/core/identity/identity.dart';
 import 'package:nexus_oneapp/core/identity/identity_service.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
+import 'package:nexus_oneapp/core/transport/nostr/nostr_event.dart';
 import 'package:nexus_oneapp/features/governance/audit_log_entry.dart';
 import 'package:nexus_oneapp/features/governance/cell.dart';
+import 'package:nexus_oneapp/features/governance/cell_member.dart';
 import 'package:nexus_oneapp/features/governance/cell_service.dart';
 import 'package:nexus_oneapp/features/governance/delegation.dart';
 import 'package:nexus_oneapp/features/governance/proposal.dart';
@@ -1264,6 +1267,74 @@ void main() {
           reason: 'G2.1.4a: delegatedFrom must be the delegate DID');
       expect(synth.voterDid, equals(_aDid),
           reason: 'G2.1.4a: voterDid must be the delegator DID');
+    });
+  });
+
+  // ── TD-41: own tally takes precedence over a received record ─────────────
+
+  group('TD-41 incoming decision record', () {
+    NostrEvent forgedRecord(String proposalId) => NostrEvent(
+          id: 'f' * 64,
+          pubkey: 'b' * 64,
+          createdAt: 1794222000,
+          kind: NostrKind.decisionRecord,
+          tags: [
+            ['d', proposalId],
+            ['t', 'nexus-cell-$_cellId'],
+            ['content_hash', 'forged'],
+          ],
+          content: jsonEncode({
+            'proposalId': proposalId,
+            'result': 'rejected',
+            'yesVotes': 0,
+            'noVotes': 5,
+            'abstainVotes': 0,
+            'participation': 1.0,
+            'decidedAt': DateTime.utc(2026, 1, 3).millisecondsSinceEpoch,
+          }),
+          sig: 'c' * 128,
+        );
+
+    test('tallies locally first and keeps the own result', () async {
+      // The receiver only handles records of cells it belongs to.
+      CellService.instance.addMemberForTest(
+        _cellId,
+        CellMember(
+          cellId: _cellId,
+          did: _aDid,
+          joinedAt: DateTime.utc(2026, 1, 1),
+          role: MemberRole.founder,
+        ),
+      );
+      _injectYnaProposal();
+      await _insertYnaVote(_propYna, _aDid, VoteChoice.YES);
+      await _insertYnaVote(_propYna, _bDid, VoteChoice.YES);
+
+      await ProposalService.instance
+          .handleIncomingDecisionRecord(forgedRecord(_propYna));
+
+      final rec = await _readRecord(_propYna);
+      expect(rec!['result'], 'approved');
+      expect(rec['yes_votes'], 2);
+      expect(rec['no_votes'], 0);
+      final p = ProposalService.instance.getProposal(_propYna)!;
+      expect(p.status, ProposalStatus.DECIDED);
+      expect(p.resultSummary, 'approved');
+      expect(p.resultNo, 0);
+    });
+
+    test('a concurrent second tally waits for the first one', () async {
+      _injectYnaProposal();
+      await _insertYnaVote(_propYna, _aDid, VoteChoice.YES);
+
+      await Future.wait([
+        ProposalService.instance.finalizeProposal(_propYna),
+        ProposalService.instance.finalizeProposal(_propYna),
+      ]);
+
+      final rows = await PodDatabase.instance
+          .listDecisionRecords(cellId: _cellId);
+      expect(rows.where((r) => r['proposal_id'] == _propYna), hasLength(1));
     });
   });
 }

@@ -22,7 +22,7 @@ Release-Reihenfolge steht separat in
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
 | TD-33 | Zellmitglieder-Sync divergiert | Android/Windows zeigten unterschiedliche Mitgliederzahlen; F-002 verschärft das Problem |
 | TD-34 | `eligibleVotersCount` fehlt im Decision Record | Nenner wird fragil aus Beteiligung rekonstruiert |
-| TD-41 | `content_hash`/Hash-Kette werden beim Empfang nicht geprüft | lokale Hash-Kette existiert, ist aber keine durchgesetzte Manipulationsprüfung |
+| TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen werden geloggt (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; Abweichungen erscheinen nur im Log, nicht in der Oberfläche |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
 | TD-57 | Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
@@ -211,10 +211,21 @@ Liste:
   - Entscheidungsprotokoll (Kind 31013, seit 09.11.2026): jedes Gerät zählt
     selbst aus und veröffentlicht dasselbe Protokoll, darum darf jedes
     nachgewiesene Mitglied der Zelle senden. Der Antrag muss zur genannten
-    Zelle gehören, und das Protokoll darf nicht früher als 5 Minuten vor
-    Fristende eintreffen. Ob die Zahlen stimmen, prüft das noch nicht: ein
-    Mitglied kann nach Fristende ein falsches Ergebnis schicken, das
-    Empfänger ohne eigene Auszählung übernehmen. Das ist TD-41.
+    Zelle gehören, die Abstimmung muss laufen oder beendet sein, und Frist
+    samt Nachfrist für späte Stimmen müssen nach der eigenen Uhr abgelaufen
+    sein.
+- **Eigene Auszählung hat Vorrang, TD-41 (09.11.2026, Gerätetest offen):**
+  Ein empfangenes Entscheidungsprotokoll löst zuerst die eigene Auszählung
+  aus (`[TALLY-LOCAL]`); übernommen wird es nie, auch nicht, wenn keine
+  eigene Auszählung möglich ist (`[TALLY-SKIP-ADOPT]`). Weicht es vom eigenen
+  Ergebnis ab, loggt das Gerät `[TALLY-MISMATCH]` mit beiden Zahlenreihen
+  (`decision_record_comparison.dart`). Der `content_hash` wird bewusst nicht
+  verglichen: Ihn berechnet der Absender selbst, und er enthält den Hash des
+  vorigen Protokolls auf dem Absendergerät. Mehrere gleichzeitige
+  Auszählungen (Scheduler, App-Start, Empfang) warten aufeinander.
+  Abweichungen zwischen ehrlichen Geräten bleiben möglich, wenn einem Gerät
+  Stimmen fehlen; die eingefrorene Liste (TD-37) beseitigt nur die
+  Unterschiede in der Mitgliederliste.
 
   Events älterer App-Versionen ohne Nachweis werden abgelehnt; ein Gerät,
   das alte Anträge/Stimmen von Relays neu einliest, übernimmt sie nicht.

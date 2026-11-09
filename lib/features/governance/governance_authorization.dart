@@ -215,17 +215,13 @@ Future<GovernanceAuthDecision> authorizeVote({
       : GovernanceAuthDecision.notAuthorized;
 }
 
-/// Clock skew tolerated between devices when a decision record arrives
-/// shortly before the local voting deadline.
-const decisionRecordClockSkew = Duration(minutes: 1);
-
 /// Kind-31013 decision records. Every member device tallies on its own and
 /// publishes the same record, so any proven member of the cell may send one.
 /// - The proposal must be known locally and belong to the cell named in the
 ///   event. An unknown proposal is tallied locally once it arrives (a stored
 ///   record would make the device skip its own tally).
-/// - Only for a running or ended vote with a deadline that has passed (an
-///   early "result" would end the vote on receivers before everyone voted).
+/// - Only for a running or ended vote whose deadline and grace period have
+///   passed (an early "result" would cut off votes on receivers).
 /// The record's content is not re-checked here; that is the hash check of
 /// TD-41.
 Future<GovernanceAuthDecision> authorizeDecisionRecord({
@@ -240,13 +236,20 @@ Future<GovernanceAuthDecision> authorizeDecisionRecord({
   if (cell == null || cell.id != cellId) {
     return GovernanceAuthDecision.unknownCell;
   }
-  final endsAt = proposal?.votingEndsAt;
+  // TD-41: not before the grace period for late votes has ended either;
+  // devices tally only then (ProposalScheduler).
+  final endsAt = proposal == null
+      ? null
+      : proposal.votingEndsAt
+          ?.add(Duration(hours: proposal.gracePeriodHours));
   final isDue = proposal != null &&
       proposal.cellId == cellId &&
       (proposal.status == ProposalStatus.VOTING ||
           proposal.status == ProposalStatus.VOTING_ENDED) &&
+      // No skew allowance: the deadline is this device's own, and an early
+      // record would trigger the tally before late votes arrived.
       endsAt != null &&
-      !now.add(decisionRecordClockSkew).isBefore(endsAt);
+      !now.isBefore(endsAt);
   if (!isDue) return GovernanceAuthDecision.notAuthorized;
   final did = await _provenDid(signerPubkey, idProof);
   if (did == null) return GovernanceAuthDecision.missingProof;

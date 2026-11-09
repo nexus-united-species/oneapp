@@ -61,7 +61,7 @@ NostrTransport._onRelayEvent              nostr_transport.dart:2069
    │  switch (event.kind)
    ▼
 _handle…Event                             Fachhandler laut Tabelle oben
-   │  DID-Nachweis + Rollenprüfung (ChatProvider)  ← TD-40; Inhalt von 31013: TD-41
+   │  DID-Nachweis + Rollenprüfung (ChatProvider)  ← TD-40; 31013: eigene Auszählung hat Vorrang (TD-41)
    ▼
 Service (CellService, ProposalService, ChatProvider …)
    │
