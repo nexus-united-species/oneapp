@@ -22,6 +22,7 @@ import '../../core/identity/identity_service.dart';
 import '../../core/identity/profile_restore.dart';
 import '../../core/identity/profile_service.dart';
 import '../profile/profile_image_service.dart';
+import '../contacts/contact_sync_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/ble/ble_transport.dart';
 import '../../core/transport/lan/lan_transport.dart';
@@ -313,6 +314,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _nostrTransport!.profileRestorePending =
             await isProfileRestorePending();
         _nostrTransport!.onOwnProfileLookup.listen(_applyOwnProfileLookup);
+        // Contact list between own devices (TD-60). Listens before the
+        // transport starts, so the first list from the relays is not missed.
+        unawaited(ContactSyncService.instance.attach(
+          _nostrTransport!,
+          onContactsAdded: (added) {
+            for (final contact in added) {
+              final pubkey = contact.nostrPubkey;
+              if (pubkey == null) continue;
+              _nostrTransport?.registerDidMapping(contact.did, pubkey);
+              _nostrTransport?.fetchContactMetadata(pubkey);
+            }
+            notifyListeners();
+          },
+        ));
       }
       _manager.registerTransport(_nostrTransport!);
 

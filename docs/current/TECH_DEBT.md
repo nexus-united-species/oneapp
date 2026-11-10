@@ -28,7 +28,7 @@ Release-Reihenfolge steht separat in
 | TD-57 | Seit 10.11.2026 abonniert, entschlüsselt und als ausgehend eingeordnet (Gerätetest offen). Ursprünglich: Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
 | TD-58 | Seit 10.11.2026 Backup-Datei auswählbar, Name aus dem Backup übernommen (Gerätetest offen). Ursprünglich: Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
 | TD-59 | Seit 10.11.2026 holt ein frisch wiederhergestelltes Gerät erst sein Profil von den Relays (Gerätetest offen). Ursprünglich: Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
-| TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
+| TD-60 | Seit 10.11.2026 verschlüsselte Kontaktliste zwischen den eigenen Geräten (Gerätetest offen). Ursprünglich: Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
@@ -424,6 +424,22 @@ Liste:
   weil `#mesh` globaler Verkehr ist. Beitrittsbestätigungen (Kind 31004, nur
   an uns adressiert) werden ohne `since` abonniert. Mitgliederlisten kommen
   seit TD-33 ohnehin über Kind 31007.
+- **TD-60 erledigt (10.11.2026, Gerätetest offen):** Die Kontaktliste geht
+  als ersetzbares Event Kind 30078 mit `d=nexus-contacts` an die eigenen
+  Geräte; Relays behalten nur die neueste Fassung. Inhalt AES-256-GCM mit
+  eigenem Schlüssel aus der Seed Phrase (`deriveContactSyncKey`, getrennt
+  vom Backup-Schlüssel), angenommen nur vom eigenen Nostr-Schlüssel.
+  Übertragen werden DID, Name, Vertrauensstufe, Blockieren, Stummschalten
+  und die Schlüssel; Notizen und lokale Bildpfade bleiben auf dem Gerät,
+  Profilangaben holt jedes Gerät über Kind-0. Zusammenführung pro Kontakt
+  nach dem neuen Feld `Contact.changedAt` (nur Nutzeraktionen: hinzufügen,
+  Vertrauensstufe, blockieren, stummschalten), Schlüssel werden nur ergänzt.
+  Gelöschte Kontakte gehen als Löschvermerk mit Zeitpunkt mit; ein Kontakt
+  fehlt in einer empfangenen Liste löscht nie etwas. Löschvermerke von vor
+  diesem Stand bekommen beim ersten Start einmalig das aktuelle Datum.
+  Veröffentlicht wird 5 Sekunden nach einer Änderung, nach dem Start nach
+  20 Sekunden, wenn bis dahin keine Liste angekommen ist; ein Gerät ohne
+  Kontakte veröffentlicht nichts. Log-Präfix `[CONTACT-SYNC]`.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

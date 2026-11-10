@@ -31,6 +31,7 @@ Quelle: [nostr_event.dart:10](../../lib/core/transport/nostr/nostr_event.dart)
 |---:|---|---|---|
 | 30000 | `cellAnnounce` | `_handleCellAnnounceEvent` | `CellService` |
 | 30078 | `presence` | `_handlePresenceEvent` | Node-Counter, Discovery |
+| 30078 (`d=nexus-contacts`) | Kontaktliste der eigenen Geräte (TD-60, seit 10.11.2026) | `_handleContactSyncEvent` → `onContactSync` | `ContactSyncService` (AES-GCM mit Schlüssel aus der Seed Phrase; nur vom eigenen Schlüssel signiert) |
 | 31001 | `roleAssignment` | – (über Subscription) | `RoleService` |
 | 31002 | `channelRoleAssignment` | – (über Subscription) | `RoleService` |
 | 31003 | `cellJoinRequest` | `_handleCellJoinRequestEvent` | `CellService` |

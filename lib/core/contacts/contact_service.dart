@@ -6,6 +6,7 @@ import 'package:nexus_oneapp/core/identity/profile.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
 import 'package:nexus_oneapp/core/transport/transport_manager.dart';
 import 'contact.dart';
+import 'contact_sync.dart';
 
 /// Manages contacts and trust levels, backed by the encrypted [PodDatabase].
 class ContactService {
@@ -18,6 +19,25 @@ class ContactService {
   // Listeners (e.g. ConversationService) use this to refresh the UI.
   final _contactsChangedController = StreamController<void>.broadcast();
   Stream<void> get contactsChanged => _contactsChangedController.stream;
+
+  // ── Contact list sync between own devices (TD-60) ─────────────────────────
+  /// Deleted contacts: DID → time of deletion. Synced so another device does
+  /// not bring a deleted contact back.
+  final Map<String, DateTime> _tombstones = {};
+
+  /// Fires after the user changed something that other own devices should
+  /// learn (add, delete, trust level, block, mute). Not fired for metadata
+  /// updates or for changes that came in via sync.
+  final _syncChangeController = StreamController<void>.broadcast();
+  Stream<void> get syncRelevantChanges => _syncChangeController.stream;
+
+  /// All contacts including blocked ones, for the sync payload.
+  List<Contact> get allContacts => List.unmodifiable(_contacts);
+
+  /// Deletion marks for the sync payload.
+  Map<String, DateTime> get tombstones => Map.unmodifiable(_tombstones);
+
+  void _syncChanged() => _syncChangeController.add(null);
 
   /// All non-blocked contacts.
   List<Contact> get contacts =>
@@ -38,6 +58,7 @@ class ContactService {
               .where((r) => r['_deleted'] != true)
               .map((r) => Contact.fromJson(r)),
         );
+      await _loadTombstones(rows);
       debugPrint('[CONTACTS] Loaded ${_contacts.length} contacts from DB');
       for (final c in _contacts) {
         debugPrint('[CONTACTS]   ${c.did.length > 16 ? c.did.substring(c.did.length - 16) : c.did}'
@@ -47,6 +68,59 @@ class ContactService {
       // Database not yet open (e.g. during onboarding) – ignore.
       debugPrint('[CONTACTS] load() failed (DB not open?): $e');
     }
+  }
+
+  Future<void> _loadTombstones(List<Map<String, dynamic>> rows) async {
+    _tombstones.clear();
+    for (final row in rows.where((r) => r['_deleted'] == true)) {
+      final did = row['did'] as String? ?? row['peer_did'] as String? ?? '';
+      if (did.isEmpty) continue;
+      final at = row['deletedAt'] is String
+          ? DateTime.tryParse(row['deletedAt'] as String)
+          : null;
+      if (at != null) {
+        _tombstones[did] = at;
+      } else {
+        // Deleted before TD-60: date the deletion now, once, so the other
+        // device does not bring the contact back.
+        final now = DateTime.now();
+        _tombstones[did] = now;
+        await _persistTombstone(did, now);
+      }
+    }
+  }
+
+  Future<void> _persistTombstone(String did, DateTime deletedAt) =>
+      PodDatabase.instance.upsertContact(did, {
+        'did': did,
+        '_deleted': true,
+        'deletedAt': deletedAt.toIso8601String(),
+      });
+
+  /// Applies a contact list received from another own device (TD-60).
+  /// Does not fire [syncRelevantChanges].
+  Future<void> applySyncMerge(ContactSyncMerge merge) async {
+    for (final did in merge.removed) {
+      _contacts.removeWhere((c) => c.did == did);
+    }
+    merge.tombstones.forEach((did, at) => _tombstones[did] = at);
+    for (final did in merge.removed) {
+      final at = _tombstones[did] ?? DateTime.now();
+      _tombstones[did] = at;
+      await _persistTombstone(did, at);
+    }
+    for (final e in merge.tombstones.entries) {
+      if (!merge.removed.contains(e.key)) {
+        await _persistTombstone(e.key, e.value);
+      }
+    }
+    for (final contact in [...merge.added, ...merge.updated]) {
+      _tombstones.remove(contact.did);
+      _contacts.removeWhere((c) => c.did == contact.did);
+      _contacts.add(contact);
+      await _persist(contact);
+    }
+    if (merge.changesLocalState) _contactsChangedController.add(null);
   }
 
   /// Adds a peer as [TrustLevel.discovered]. Returns existing contact if
@@ -65,6 +139,8 @@ class ContactService {
     );
     await _persist(contact);
     _contacts.add(contact);
+    _tombstones.remove(did);
+    _syncChanged();
     return contact;
   }
 
@@ -94,10 +170,14 @@ class ContactService {
       );
       await _persist(contact);
       _contacts.add(contact);
+      _tombstones.remove(did);
+      _syncChanged();
     } else {
       // Upgrade trust level if currently lower than "contact".
       if (contact.trustLevel.sortWeight < TrustLevel.contact.sortWeight) {
         contact.trustLevel = TrustLevel.contact;
+        contact.changedAt = DateTime.now();
+        _syncChanged();
       }
       contact.pseudonym = pseudonym;
       if (encryptionPublicKey != null && encryptionPublicKey.isNotEmpty) {
@@ -134,14 +214,18 @@ class ContactService {
     final contact = _findByDid(did);
     if (contact == null) return;
     contact.trustLevel = level;
+    contact.changedAt = DateTime.now();
     await _persist(contact);
+    _syncChanged();
   }
 
   /// Removes a contact (soft-delete in the POD).
   Future<void> removeContact(String did) async {
     _contacts.removeWhere((c) => c.did == did);
-    await PodDatabase.instance
-        .upsertContact(did, {'did': did, '_deleted': true});
+    final now = DateTime.now();
+    _tombstones[did] = now;
+    await _persistTombstone(did, now);
+    _syncChanged();
   }
 
   /// Blocks a contact – their messages will be silently dropped.
@@ -162,8 +246,10 @@ class ContactService {
       _contacts.add(contact);
     } else {
       contact.blocked = true;
+      contact.changedAt = DateTime.now();
     }
     await _persist(contact);
+    _syncChanged();
   }
 
   /// Unblocks a previously blocked contact.
@@ -171,7 +257,9 @@ class ContactService {
     final contact = _findByDid(did);
     if (contact == null) return;
     contact.blocked = false;
+    contact.changedAt = DateTime.now();
     await _persist(contact);
+    _syncChanged();
   }
 
   /// Returns true if [did] is blocked.
@@ -185,7 +273,9 @@ class ContactService {
     if (contact == null) return;
     contact.mutedUntil =
         duration != null ? DateTime.now().add(duration) : DateTime(9999);
+    contact.changedAt = DateTime.now();
     await _persist(contact);
+    _syncChanged();
     _contactsChangedController.add(null); // refresh conversation list icons
   }
 
@@ -194,7 +284,9 @@ class ContactService {
     final contact = _findByDid(did);
     if (contact == null) return;
     contact.mutedUntil = null;
+    contact.changedAt = DateTime.now();
     await _persist(contact);
+    _syncChanged();
     _contactsChangedController.add(null); // refresh conversation list icons
   }
 
@@ -470,6 +562,7 @@ class ContactService {
         skipped++;
       }
     }
+    if (added > 0 || updated > 0) _syncChanged();
     return ImportResult(added: added, updated: updated, skipped: skipped);
   }
 
@@ -495,6 +588,7 @@ class ContactService {
       await PodDatabase.instance.upsertContact(contact.did, json);
       _contacts.add(contact);
       _contactsChangedController.add(null);
+      _syncChanged();
     } catch (e) {
       debugPrint('[CONTACTS] addContactFromBackup error: $e');
     }

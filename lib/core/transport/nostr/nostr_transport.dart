@@ -11,6 +11,7 @@ import 'package:cryptography/cryptography.dart' show AesCbc, MacAlgorithm,
 
 import '../../../core/config/system_config.dart';
 import '../../../core/contacts/contact_service.dart';
+import '../../../core/contacts/contact_sync.dart';
 import '../../../core/identity/identity_proof.dart';
 import '../../../core/identity/identity_service.dart';
 import '../../../core/identity/profile.dart';
@@ -163,6 +164,16 @@ class NostrTransport implements MessageTransport {
   /// How far back a device without any known message fetches DMs (TD-63).
   /// Previously 24 hours, so a new device saw almost no history.
   static const newDeviceDmHistory = Duration(days: 30);
+
+  // ── Contact list of our own devices (TD-60) ───────────────────────────────
+  String? _contactSyncSubId;
+  final _contactSyncController =
+      StreamController<({String content, int createdAt})>.broadcast();
+
+  /// Encrypted contact lists published by our own devices (including this
+  /// one): the still encrypted content and its `created_at`.
+  Stream<({String content, int createdAt})> get onContactSync =>
+      _contactSyncController.stream;
   String? _meshSubId;
   String? _presenceSubId;
   String? _metadataSubId;
@@ -515,6 +526,9 @@ class NostrTransport implements MessageTransport {
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
+    if (_contactSyncSubId != null) {
+      _relayManager.closeSubscription(_contactSyncSubId!);
+    }
     _stopOwnProfileLookup();
     if (_channelDiscoverySubId != null) {
       _relayManager.closeSubscription(_channelDiscoverySubId!);
@@ -2204,6 +2218,18 @@ class NostrTransport implements MessageTransport {
     });
     print('[NOSTR] Presence sub: $_presenceSubId');
 
+    // Our own encrypted contact list (TD-60). Replaceable, so relays only
+    // keep the newest one and no `since` is needed.
+    if (_contactSyncSubId != null) {
+      _relayManager.closeSubscription(_contactSyncSubId!);
+    }
+    _contactSyncSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.presence],
+      'authors': [myPubkey],
+      '#d': [contactSyncDTag],
+    });
+    print('[CONTACT-SYNC] Subscribed to own contact list: $_contactSyncSubId');
+
     // ── Kind-0 metadata sync ──────────────────────────────────────────────
     //
     // CRITICAL: pre-populate _didToNostrPubkey from persisted contacts BEFORE
@@ -2483,7 +2509,11 @@ class NostrTransport implements MessageTransport {
       case NostrKind.channelMessage:
         _handleChannelMessageEvent(event);
       case NostrKind.presence:
-        _handlePresenceEvent(event);
+        if (event.tagValue('d') == contactSyncDTag) {
+          _handleContactSyncEvent(event);
+        } else {
+          _handlePresenceEvent(event);
+        }
       case NostrKind.cellAnnounce:
         _handleCellAnnounceEvent(event);
       case NostrKind.cellJoinRequest:
@@ -3140,6 +3170,34 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] DM decrypt FAILED (not for us or malformed): $e');
       print('[ContactRequest] decrypt error detail: $e');
     }
+  }
+
+  /// Forwards our own encrypted contact list (TD-60). Only events signed
+  /// with our own key count; decryption happens in the app layer.
+  void _handleContactSyncEvent(NostrEvent event) {
+    if (_keys == null || event.pubkey != _keys!.publicKeyHex) return;
+    print('[CONTACT-SYNC] Contact list received: ${event.id.substring(0, 8)} '
+        'created_at=${event.createdAt}');
+    _contactSyncController.add((content: event.content, createdAt: event.createdAt));
+  }
+
+  /// Publishes our encrypted contact list as a replaceable kind-30078 event
+  /// (`d` = [contactSyncDTag]). Returns whether a relay accepted it.
+  Future<bool> publishContactSync(String encryptedContent) async {
+    if (_keys == null) return false;
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.presence,
+      content: encryptedContent,
+      tags: [
+        ['d', contactSyncDTag],
+      ],
+    );
+    final outcome = await _relayManager.publish(event);
+    print('[CONTACT-SYNC] Published contact list ${event.id.substring(0, 8)} '
+        '(${encryptedContent.length} chars): '
+        '${outcome.acceptedRelays.isNotEmpty ? "[RELAY-OK] ${outcome.acceptedRelays.length} relays" : "not accepted ${outcome.rejections}"}');
+    return outcome.acceptedRelays.isNotEmpty;
   }
 
   /// Decrypts a DM signed with our own key and forwards it as an outgoing
