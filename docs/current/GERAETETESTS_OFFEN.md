@@ -25,9 +25,9 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (TD-60, noch nicht committet) | Zwei Geräte derselben Identität: auf Gerät 1 einen Kontakt hinzufügen bzw. Vertrauensstufe ändern, 1 Minute warten | Auf Gerät 2 erscheint der Kontakt bzw. die neue Stufe, Name und Bild folgen über das Profil; Log `[CONTACT-SYNC] Merged: +1 …` |
-| (TD-60) | Auf Gerät 2 einen Kontakt löschen, danach Gerät 1 neu starten | Der Kontakt ist auch auf Gerät 1 weg und kommt nicht zurück |
-| (TD-60) | Neues Gerät per Seed, **ohne** Backup | Kontakte erscheinen nach etwa einer halben Minute von selbst |
+| 33026b9 | Zwei Geräte derselben Identität: auf Gerät 1 einen Kontakt hinzufügen bzw. Vertrauensstufe ändern, 1 Minute warten | Auf Gerät 2 erscheint der Kontakt bzw. die neue Stufe, Name und Bild folgen über das Profil; Log `[CONTACT-SYNC] Merged: +1 …` |
+| 33026b9 | Auf Gerät 2 einen Kontakt löschen, danach Gerät 1 neu starten | Der Kontakt ist auch auf Gerät 1 weg und kommt nicht zurück |
+| 33026b9 | Neues Gerät per Seed, **ohne** Backup | Kontakte erscheinen nach etwa einer halben Minute von selbst |
 | c26511b | Nur mit zwei Geräten derselben Identität (z. B. neues Gerät aus dem Kontoumzug-Test): auf Gerät 1 einem Kontakt schreiben | Auf Gerät 2 erscheint die Nachricht im Gespräch mit diesem Kontakt als **eigene** (rechts), ohne Benachrichtigung; Log `[SYNC] Own DM …` |
 | c26511b | Auf dem sendenden Gerät selbst nachsehen | Die Nachricht steht **einmal** im Gespräch, nicht doppelt |
 | c26511b | Neues Gerät nach dem Seed-Restore | Gespräche der letzten 30 Tage sind da (nicht nur 24 Stunden); Beitrittsbestätigungen älterer Gemeinschaften werden angenommen |
