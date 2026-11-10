@@ -14,6 +14,7 @@ import 'package:nexus_oneapp/core/transport/nostr/nostr_transport.dart';
 import 'package:nexus_oneapp/features/governance/cell.dart';
 import 'package:nexus_oneapp/features/governance/governance_authorization.dart';
 import 'package:nexus_oneapp/features/governance/cell_member.dart';
+import 'package:nexus_oneapp/features/governance/cell_roster.dart';
 
 class _FakeRelayManager extends NostrRelayManager {
   _FakeRelayManager() : super(relayUrls: []);
@@ -694,6 +695,118 @@ void main() {
       expect(received, hasLength(1));
       expect(received.single['_nostr_pubkey'], founderKeys.publicKeyHex);
       expect(received.single[IdentityProof.contentKey], founder.proof);
+
+      await sub.cancel();
+      await senderTransport.stop();
+      await receiverTransport.stop();
+    });
+  });
+
+  group('authorizeCellRoster (TD-33)', () {
+    CellRoster rosterOf(Cell cell, String founderDid) => CellRoster(
+          cellId: cell.id,
+          updatedAtMs: 1000,
+          members: [
+            CellRosterEntry(
+                did: founderDid, role: MemberRole.founder, joinedAtMs: 1),
+          ],
+        );
+
+    test('accepts the roster of the proven founder', () async {
+      final founder = await _identity(1, founderKeys);
+      final cell = _cellFoundedBy(founder.did);
+
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterOf(cell, founder.did),
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: founder.proof,
+        ),
+        GovernanceAuthDecision.allowed,
+      );
+    });
+
+    test('rejects rosters from anyone else or naming another founder',
+        () async {
+      final founder = await _identity(1, founderKeys);
+      final stranger = await _identity(2, strangerKeys);
+      final cell = _cellFoundedBy(founder.did);
+
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterOf(cell, founder.did),
+          signerPubkey: strangerKeys.publicKeyHex,
+          idProof: stranger.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterOf(cell, stranger.did),
+          signerPubkey: strangerKeys.publicKeyHex,
+          idProof: stranger.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterOf(cell, founder.did),
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: null,
+        ),
+        GovernanceAuthDecision.missingProof,
+      );
+      expect(
+        await authorizeCellRoster(
+          cell: null,
+          roster: rosterOf(cell, founder.did),
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: founder.proof,
+        ),
+        GovernanceAuthDecision.unknownCell,
+      );
+    });
+
+    test('transport publishes the roster with proof and forwards the signer',
+        () async {
+      final founder = await _identity(1, founderKeys);
+      final cell = _cellFoundedBy(founder.did);
+      final sender = _FakeRelayManager();
+      final senderTransport = NostrTransport(
+        localDid: founder.did,
+        localPseudonym: 'Gründerin',
+        relayManager: sender,
+      );
+      await senderTransport.start(keysOverride: founderKeys);
+      senderTransport.setIdentityProof(founder.proof);
+      sender.published.clear();
+
+      senderTransport.publishCellRoster(rosterOf(cell, founder.did).toJson());
+      final event = sender.published.single;
+      expect(event.kind, NostrKind.cellRoster);
+      expect(event.tagValue('d'), cell.id);
+
+      final receiver = _FakeRelayManager();
+      final receiverTransport = NostrTransport(
+        localDid: 'did:key:receiver',
+        localPseudonym: 'Mitglied',
+        relayManager: receiver,
+      );
+      await receiverTransport.start(keysOverride: strangerKeys);
+      final received = <Map<String, dynamic>>[];
+      final sub = receiverTransport.onCellRoster.listen(received.add);
+
+      receiver.injectEvent(event);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(received, hasLength(1));
+      expect(received.single['_nostr_pubkey'], founderKeys.publicKeyHex);
+      expect(received.single[IdentityProof.contentKey], founder.proof);
+      expect(CellRoster.tryParse(received.single)?.founderDid, founder.did);
 
       await sub.cancel();
       await senderTransport.stop();

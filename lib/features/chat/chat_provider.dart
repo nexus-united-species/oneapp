@@ -49,6 +49,7 @@ import '../governance/cell_founding_permit.dart';
 import '../governance/cell_founding_permit_service.dart';
 import '../governance/cell_join_request.dart';
 import '../governance/cell_member.dart';
+import '../governance/cell_roster.dart';
 import '../governance/cell_service.dart';
 import '../governance/delegation.dart';
 import '../governance/proposal_service.dart';
@@ -168,6 +169,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // Subscriptions
   StreamSubscription<NexusMessage>? _msgSub;
+  StreamSubscription<String>? _rosterRelaySub;
+  final Map<String, DateTime> _lastRosterPublishByRelay = {};
+  static const _rosterRepublishInterval = Duration(minutes: 10);
   StreamSubscription<List<NexusPeer>>? _peersSub;
   StreamSubscription<Map<String, dynamic>>? _channelAnnouncedSub;
   StreamSubscription<List<({String id, String? name})>>? _channelDeletedSub;
@@ -289,6 +293,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _nostrTransport!.onCellMembershipConfirmed
           .listen(_onCellMembershipConfirmed);
       _nostrTransport!.onCellMemberUpdate.listen(_onCellMemberUpdate);
+
+      // TD-33: founder rosters. Listener before transport start; the
+      // founder republishes on relay connect so long-offline members catch up.
+      CellService.instance.onPublishRoster =
+          (roster) => _nostrTransport?.publishCellRoster(roster);
+      _nostrTransport!.onCellRoster.listen(_onCellRoster);
+      // Throttled per relay: a relay that connects later or reconnects after
+      // an outage still gets the rosters (publishing reaches only relays
+      // connected at that moment).
+      _rosterRelaySub = _nostrTransport!.onRelayConnected.listen((relayUrl) {
+        final now = DateTime.now();
+        final last = _lastRosterPublishByRelay[relayUrl];
+        if (last != null && now.difference(last) < _rosterRepublishInterval) {
+          return;
+        }
+        _lastRosterPublishByRelay[relayUrl] = now;
+        CellService.instance.publishRostersForFoundedCells();
+      });
 
       // G2 governance – wire ProposalService callbacks to NostrTransport.
       _wireGovernanceTransport();
@@ -1115,6 +1137,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _cellAnnouncementsInFlight = {};
   final Set<String> _memberUpdatesInFlight = {};
   final Set<String> _membershipConfirmationsInFlight = {};
+  final Set<String> _rostersInFlight = {};
+
+  /// Incoming Kind-31007 roster (TD-33): only the proven founder of one of
+  /// my cells; CellService adopts it only if newer than the applied one.
+  Future<void> _onCellRoster(Map<String, dynamic> data) async {
+    final roster = CellRoster.tryParse(data);
+    if (roster == null) {
+      print('[ROSTER] Malformed roster ignored');
+      return;
+    }
+    final signer = data['_nostr_pubkey'] as String? ?? '';
+    final lockKey = '${roster.cellId}|${roster.updatedAtMs}|$signer';
+    if (!_rostersInFlight.add(lockKey)) return;
+    try {
+      final decision = await authorizeCellRoster(
+        cell: CellService.instance.myCells
+            .where((c) => c.id == roster.cellId)
+            .firstOrNull,
+        roster: roster,
+        signerPubkey: signer,
+        idProof: data[IdentityProof.contentKey],
+      );
+      if (decision == GovernanceAuthDecision.unknownCell) return;
+      if (decision != GovernanceAuthDecision.allowed) {
+        print('[CELL-AUTH] Roster rejected for ${roster.cellId}: '
+            '${decision.name}');
+        return;
+      }
+      await CellService.instance.applyRoster(roster);
+    } finally {
+      _rostersInFlight.remove(lockKey);
+    }
+  }
 
   /// Confirmations that arrived before the cell's announcement (discovered
   /// cells are kept in memory only, so after a restart the relays may
@@ -3455,6 +3510,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _msgSub?.cancel();
+    _rosterRelaySub?.cancel();
     _peersSub?.cancel();
     _reactionSub?.cancel();
     _deletionSub?.cancel();

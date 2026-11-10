@@ -92,6 +92,13 @@ class NostrKind {
   /// action tag: request | approve | reject | used | revoke
   static const int cellFoundingPermit = 31006;
 
+  /// Kind-31007: Cell roster (NIP-33 parameterized replaceable, TD-33).
+  /// The founder's signed list of all confirmed members of a cell.
+  /// Tags: ['d', cellId], ['t','nexus-cell-roster'], ['cell', cellId]
+  /// Content: JSON { 'cellId', 'updatedAt' (ms), 'members': [
+  ///   { 'did', 'role', 'joinedAt' (ms) } ], '_idProof' }
+  static const int cellRoster = 31007;
+
   /// G2 governance – proposal lifecycle event (Parameterized Replaceable, NIP-33).
   ///
   /// d-tag: proposalId. Replaces the previous event on relays when the

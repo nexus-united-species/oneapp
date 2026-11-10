@@ -20,7 +20,7 @@ Release-Reihenfolge steht separat in
 | ID | Thema | Aktueller Stand |
 |---|---|---|
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
-| TD-33 | Zellmitglieder-Sync divergiert | Android/Windows zeigten unterschiedliche Mitgliederzahlen; F-002 verschärft das Problem |
+| TD-33 | Seit 10.11.2026 Mitgliederliste vom Gründer (Kind 31007, Gerätetest offen) | offen: Änderungen von Moderatoren erreichen andere über die Liste erst, wenn der Gründer online ist; Gründer-Übergabe wird weiterhin nicht übertragen |
 | TD-34 | Seit 09.11.2026 in Modell, DB (v27, additiv), Wire-Format und Vergleich (Gerätetest offen) | ältere Records ohne Zahl: Nenner weiter aus der Beteiligung rekonstruiert |
 | TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
@@ -262,6 +262,23 @@ Liste:
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
   bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
   („2 von 1“ behoben).
+- **TD-33 Mitgliederliste vom Gründer (10.11.2026, Gerätetest offen):**
+  Ursachen der abweichenden Listen: Neue Mitglieder kannten nur Gründer und
+  sich selbst, Moderatoren-Ernennungen verließen das Gründergerät nie, und
+  31005-Meldungen älter als 7 Tage werden nie geholt. Jetzt veröffentlicht
+  der Gründer eine signierte Liste aller bestätigten Mitglieder mit Rolle
+  (`cell_roster.dart`, Kind 31007, ersetzbar pro Zelle) nach jeder Aufnahme,
+  Entfernung, jedem Austritt und jeder Moderator-Ernennung sowie beim
+  Verbinden eines Relays (pro Relay höchstens alle 10 Minuten). Mitglieder
+  übernehmen nur die Liste des nachgewiesenen Gründers und nur, wenn sie
+  neuer ist; dabei bleiben der eigene Eintrag, später lokal Beigetretene und
+  später Ausgetretene (nicht wieder aufgenommen) gewahrt. Der Gründer wendet
+  seine eigene Liste nie an. Austritte zählen weiterhin nur aus
+  ausdrücklichen 31005-Meldungen. Grenzen: Die angewandte Listenversion
+  liegt nur im Speicher; eine lokale Gründer-Übergabe wird nicht übertragen
+  (das Gerät veröffentlicht danach keine Liste mehr); Bewerber übernehmen
+  die Liste noch nicht (Voraussetzung, um Bestätigungen durch Moderatoren
+  zuzulassen).
 - **TD-77 Status springt beim Start zurück (09.11.2026 im Gerätetest
   gefunden und behoben):** Relays heben ältere Antrags-Events des
   Antragstellers auf (z. B. „Abstimmung gestartet“) und liefern sie bei

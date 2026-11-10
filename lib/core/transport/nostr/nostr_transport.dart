@@ -235,6 +235,18 @@ class NostrTransport implements MessageTransport {
   String? _cellJoinSubId;
   String? _cellMembershipSubId;
   String? _cellMemberUpdateSubId;
+  String? _cellRosterSubId;
+
+  final _cellRosterController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Emits the URL of a relay each time one (re)connects.
+  Stream<String> get onRelayConnected => _relayManager.onRelayConnected;
+
+  /// Emits the content of a Kind-31007 cell roster (TD-33) plus
+  /// `_nostr_pubkey` and `_created_at` for the sender check.
+  Stream<Map<String, dynamic>> get onCellRoster =>
+      _cellRosterController.stream;
 
   final _cellMemberUpdateController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -875,6 +887,27 @@ class NostrTransport implements MessageTransport {
     _relayManager.publishFireAndForget(event);
     print('[CELL] Published Kind-31005 member-$action event for cell: $cellId '
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
+  }
+
+  /// Publishes the founder's Kind-31007 roster of [cellId] (TD-33).
+  /// [roster] is `{cellId, updatedAt, members: [{did, role, joinedAt}]}`.
+  void publishCellRoster(Map<String, dynamic> roster) {
+    if (_keys == null) return;
+    final cellId = roster['cellId'] as String? ?? '';
+    if (cellId.isEmpty) return;
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.cellRoster,
+      content: jsonEncode(_withIdentityProof(roster)),
+      tags: [
+        ['d', cellId],
+        ['t', 'nexus-cell-roster'],
+        ['cell', cellId],
+      ],
+    );
+    _relayManager.publishFireAndForget(event);
+    print('[ROSTER] Published Kind-31007 for cell: $cellId '
+        '(${(roster['members'] as List?)?.length ?? 0} members)');
   }
 
   /// Publishes a NIP-25 Kind-7 reaction for [targetEventId] and returns the
@@ -2132,6 +2165,17 @@ class NostrTransport implements MessageTransport {
     });
     print('[CELL] Subscribed to member-update events, subId=$_cellMemberUpdateSubId');
 
+    // Cell rosters (Kind-31007, TD-33). Parameterized replaceable: relays keep
+    // the latest roster per founder and cell, so no `since` is needed.
+    if (_cellRosterSubId != null) {
+      _relayManager.closeSubscription(_cellRosterSubId!);
+    }
+    _cellRosterSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.cellRoster],
+      '#t': ['nexus-cell-roster'],
+    });
+    print('[ROSTER] Subscribed to cell rosters, subId=$_cellRosterSubId');
+
     // Dorfplatz feed posts + comments (Kind-1/6 with nexus-dorfplatz* tags),
     // Kind-7 reactions, Kind-5 deletions — tag-based subscription for last 7 days.
     if (_feedSubId != null) _relayManager.closeSubscription(_feedSubId!);
@@ -2319,6 +2363,8 @@ class NostrTransport implements MessageTransport {
         _handleCellMembershipConfirmedEvent(event);
       case NostrKind.cellMemberUpdate:
         _handleCellMemberUpdateEvent(event);
+      case NostrKind.cellRoster:
+        _handleCellRosterEvent(event);
       case NostrKind.proposalEvent:
         _handleProposalEvent(event);
       case NostrKind.voteEvent:
@@ -2751,6 +2797,22 @@ class NostrTransport implements MessageTransport {
           .add({...data, '_nostr_pubkey': event.pubkey});
     } catch (e) {
       print('[JOIN] Cell membership confirmation parse FAILED: $e');
+    }
+  }
+
+  void _handleCellRosterEvent(NostrEvent event) {
+    try {
+      final data = jsonDecode(event.content) as Map<String, dynamic>;
+      final cellId = event.tagValue('d') ?? data['cellId'] as String? ?? '?';
+      final count = (data['members'] as List?)?.length ?? 0;
+      print('[ROSTER] Kind-31007 received for cell: $cellId ($count members)');
+      _cellRosterController.add({
+        ...data,
+        '_nostr_pubkey': event.pubkey,
+        '_created_at': event.createdAt,
+      });
+    } catch (e) {
+      print('[ROSTER] Cell roster parse FAILED: $e');
     }
   }
 

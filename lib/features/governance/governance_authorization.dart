@@ -1,6 +1,7 @@
 import '../../core/identity/identity_proof.dart';
 import 'cell.dart';
 import 'cell_member.dart';
+import 'cell_roster.dart';
 import 'proposal.dart';
 
 /// Result of authorizing a received governance event (TD-40).
@@ -133,6 +134,25 @@ Future<GovernanceAuthDecision> authorizeMembershipConfirmation({
   if (did == null) return GovernanceAuthDecision.missingProof;
   final isApprover = did != myDid && _isManager(did, knownCell, knownMembers);
   return isApprover && did == member.confirmedBy
+      ? GovernanceAuthDecision.allowed
+      : GovernanceAuthDecision.notAuthorized;
+}
+
+/// Kind-31007 cell rosters (TD-33): only the proven founder of the locally
+/// known cell, for that cell, listing that founder as founder.
+Future<GovernanceAuthDecision> authorizeCellRoster({
+  required Cell? cell,
+  required CellRoster roster,
+  required String signerPubkey,
+  required Object? idProof,
+}) async {
+  if (cell == null) return GovernanceAuthDecision.unknownCell;
+  if (roster.cellId != cell.id || roster.founderDid != cell.createdBy) {
+    return GovernanceAuthDecision.notAuthorized;
+  }
+  final did = await _provenDid(signerPubkey, idProof);
+  if (did == null) return GovernanceAuthDecision.missingProof;
+  return did == cell.createdBy
       ? GovernanceAuthDecision.allowed
       : GovernanceAuthDecision.notAuthorized;
 }

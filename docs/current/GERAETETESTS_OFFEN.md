@@ -27,6 +27,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 |---|---|---|
 | 1162510 | Windows (normales Mitglied): in einer Zelle den Tab mit den Anträgen öffnen | Knopf für einen neuen Antrag ist sichtbar (wie über Agora) |
 | 2398096 | Antrag offen lassen, während das andere Gerät seine Stimme delegiert | „Dir wurde 1 Stimme delegiert“ erscheint ohne Seitenwechsel |
+| (TD-33) | Beide Apps neu bauen und starten; in test911 auf beiden Geräten die Mitgliederliste ansehen | Handy-Log `[ROSTER] Published Kind-31007` für test911; Windows-Log `[ROSTER] Applied roster … 2 members`; beide zeigen dieselben Mitglieder |
+| (TD-33) | Handy (Gründer) ernennt Windows in test911 zum Moderator | Windows zeigt sich danach als Moderator (z. B. Beitrittsanfragen verwalten möglich) |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
 | 5fd72b5 | Optional, aufwendig: einem Gerät fehlen Stimmen (offline bis nach der eigenen Auszählung) | Oranger Hinweis „… meldet ein anderes Ergebnis“, ⚠️-Eintrag in der Historie |
