@@ -23,16 +23,25 @@ enum GovernanceAuthDecision {
 Future<String?> _provenDid(String signerPubkey, Object? idProof) =>
     IdentityProof.verifiedDid(proof: idProof, nostrPubkeyHex: signerPubkey);
 
-/// Only the founder (`cell.createdBy`) may dissolve a locally known cell.
+/// Whether [did] may dissolve [cell]: its founder, or the superadmin
+/// (decision of 10.11.2026). The superadmin DID comes from the app's system
+/// configuration, which every device shares; system admins are not synced
+/// between devices and therefore cannot be checked here.
+bool mayDissolveCell(String did, Cell cell, String? superadminDid) =>
+    did == cell.createdBy ||
+    (superadminDid != null && superadminDid.isNotEmpty && did == superadminDid);
+
+/// A locally known cell may be dissolved only by [mayDissolveCell].
 Future<GovernanceAuthDecision> authorizeCellDissolution({
   required Cell? cell,
+  required String? superadminDid,
   required String signerPubkey,
   required Object? idProof,
 }) async {
   if (cell == null) return GovernanceAuthDecision.unknownCell;
   final did = await _provenDid(signerPubkey, idProof);
   if (did == null) return GovernanceAuthDecision.missingProof;
-  return did == cell.createdBy
+  return mayDissolveCell(did, cell, superadminDid)
       ? GovernanceAuthDecision.allowed
       : GovernanceAuthDecision.notAuthorized;
 }

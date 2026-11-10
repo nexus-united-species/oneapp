@@ -60,10 +60,12 @@ Future<({String did, Map<String, String> proof})> _identity(
   int seedByte,
   NostrKeys nostrKeys,
 ) async {
-  final keyPair =
-      await Ed25519().newKeyPairFromSeed(List<int>.filled(32, seedByte));
-  final did =
-      DidKey.fromPublicKeyBytes((await keyPair.extractPublicKey()).bytes);
+  final keyPair = await Ed25519().newKeyPairFromSeed(
+    List<int>.filled(32, seedByte),
+  );
+  final did = DidKey.fromPublicKeyBytes(
+    (await keyPair.extractPublicKey()).bytes,
+  );
   final proof = await IdentityProof.create(
     signingKeyPair: keyPair,
     did: did,
@@ -73,11 +75,11 @@ Future<({String did, Map<String, String> proof})> _identity(
 }
 
 Cell _cellFoundedBy(String did) => Cell.create(
-      name: 'Gartenzelle',
-      description: 'Test',
-      createdBy: did,
-      cellType: CellType.thematic,
-    );
+  name: 'Gartenzelle',
+  description: 'Test',
+  createdBy: did,
+  cellType: CellType.thematic,
+);
 
 void main() {
   final founderKeys = _nostrKeys(_founderMnemonic);
@@ -88,6 +90,7 @@ void main() {
       final founder = await _identity(1, founderKeys);
 
       final decision = await authorizeCellDissolution(
+        superadminDid: null,
         cell: _cellFoundedBy(founder.did),
         signerPubkey: founderKeys.publicKeyHex,
         idProof: founder.proof,
@@ -101,6 +104,7 @@ void main() {
       final stranger = await _identity(2, strangerKeys);
 
       final decision = await authorizeCellDissolution(
+        superadminDid: null,
         cell: _cellFoundedBy(founder.did),
         signerPubkey: strangerKeys.publicKeyHex,
         idProof: stranger.proof,
@@ -113,6 +117,7 @@ void main() {
       final founder = await _identity(1, founderKeys);
 
       final decision = await authorizeCellDissolution(
+        superadminDid: null,
         cell: _cellFoundedBy(founder.did),
         signerPubkey: strangerKeys.publicKeyHex,
         idProof: founder.proof,
@@ -121,11 +126,45 @@ void main() {
       expect(decision, GovernanceAuthDecision.missingProof);
     });
 
+    test(
+      'allows the superadmin to dissolve any cell (decision 10.11.2026)',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final superadmin = await _identity(2, strangerKeys);
+
+        expect(
+          await authorizeCellDissolution(
+            cell: _cellFoundedBy(founder.did),
+            superadminDid: superadmin.did,
+            signerPubkey: strangerKeys.publicKeyHex,
+            idProof: superadmin.proof,
+          ),
+          GovernanceAuthDecision.allowed,
+        );
+      },
+    );
+
+    test('a non-founder is rejected when someone else is superadmin', () async {
+      final founder = await _identity(1, founderKeys);
+      final stranger = await _identity(2, strangerKeys);
+
+      expect(
+        await authorizeCellDissolution(
+          cell: _cellFoundedBy(founder.did),
+          superadminDid: 'did:key:z6MkSomeoneElse',
+          signerPubkey: strangerKeys.publicKeyHex,
+          idProof: stranger.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
     test('rejects dissolutions without proof or for unknown cells', () async {
       final founder = await _identity(1, founderKeys);
 
       expect(
         await authorizeCellDissolution(
+          superadminDid: null,
           cell: _cellFoundedBy(founder.did),
           signerPubkey: founderKeys.publicKeyHex,
           idProof: null,
@@ -134,6 +173,7 @@ void main() {
       );
       expect(
         await authorizeCellDissolution(
+          superadminDid: null,
           cell: null,
           signerPubkey: founderKeys.publicKeyHex,
           idProof: founder.proof,
@@ -178,7 +218,10 @@ void main() {
       final founder = await _identity(1, founderKeys);
       final stranger = await _identity(2, strangerKeys);
       final cell = _cellFoundedBy(founder.did);
-      final hijacked = Cell.fromJson({...cell.toJson(), 'createdBy': stranger.did});
+      final hijacked = Cell.fromJson({
+        ...cell.toJson(),
+        'createdBy': stranger.did,
+      });
 
       expect(
         await authorizeCellAnnouncement(
@@ -191,8 +234,7 @@ void main() {
       );
     });
 
-    test('allows first discovery without proof (older app versions)',
-        () async {
+    test('allows first discovery without proof (older app versions)', () async {
       final founder = await _identity(1, founderKeys);
 
       expect(
@@ -239,11 +281,11 @@ void main() {
 
   group('authorizeMemberUpdate', () {
     CellMember member(String cellId, String did, MemberRole role) => CellMember(
-          cellId: cellId,
-          did: did,
-          joinedAt: DateTime.utc(2026, 11, 8),
-          role: role,
-        );
+      cellId: cellId,
+      did: did,
+      joinedAt: DateTime.utc(2026, 11, 8),
+      role: role,
+    );
 
     test('lets a member announce their own departure only', () async {
       final founder = await _identity(1, founderKeys);
@@ -303,35 +345,37 @@ void main() {
       );
     });
 
-    test('rejects removals by plain members and removal of the founder',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final plain = await _identity(2, strangerKeys);
-      final cell = _cellFoundedBy(founder.did);
+    test(
+      'rejects removals by plain members and removal of the founder',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final plain = await _identity(2, strangerKeys);
+        final cell = _cellFoundedBy(founder.did);
 
-      expect(
-        await authorizeMemberUpdate(
-          cell: cell,
-          members: [member(cell.id, plain.did, MemberRole.member)],
-          action: 'removed',
-          targetDid: 'did:key:z6MkMember',
-          signerPubkey: strangerKeys.publicKeyHex,
-          idProof: plain.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-      expect(
-        await authorizeMemberUpdate(
-          cell: cell,
-          members: const [],
-          action: 'removed',
-          targetDid: founder.did,
-          signerPubkey: founderKeys.publicKeyHex,
-          idProof: founder.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-    });
+        expect(
+          await authorizeMemberUpdate(
+            cell: cell,
+            members: [member(cell.id, plain.did, MemberRole.member)],
+            action: 'removed',
+            targetDid: 'did:key:z6MkMember',
+            signerPubkey: strangerKeys.publicKeyHex,
+            idProof: plain.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+        expect(
+          await authorizeMemberUpdate(
+            cell: cell,
+            members: const [],
+            action: 'removed',
+            targetDid: founder.did,
+            signerPubkey: founderKeys.publicKeyHex,
+            idProof: founder.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+      },
+    );
 
     test('moderators cannot remove other moderators', () async {
       final founder = await _identity(1, founderKeys);
@@ -372,7 +416,6 @@ void main() {
   });
 
   group('NostrTransport cell dissolution', () {
-
     test('attaches the proof to announcements and member updates', () async {
       final founder = await _identity(1, founderKeys);
       final relay = _FakeRelayManager();
@@ -401,61 +444,66 @@ void main() {
 
       await transport.stop();
     });
-    test('publishes the identity proof and forwards signer and proof',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final sender = _FakeRelayManager();
-      final senderTransport = NostrTransport(
-        localDid: founder.did,
-        localPseudonym: 'Gründerin',
-        relayManager: sender,
-      );
-      await senderTransport.start(keysOverride: founderKeys);
-      senderTransport.setIdentityProof(founder.proof);
-      sender.published.clear();
+    test(
+      'publishes the identity proof and forwards signer and proof',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final sender = _FakeRelayManager();
+        final senderTransport = NostrTransport(
+          localDid: founder.did,
+          localPseudonym: 'Gründerin',
+          relayManager: sender,
+        );
+        await senderTransport.start(keysOverride: founderKeys);
+        senderTransport.setIdentityProof(founder.proof);
+        sender.published.clear();
 
-      final cell = _cellFoundedBy(founder.did);
-      senderTransport.publishCellDissolution(cell.toJson());
+        final cell = _cellFoundedBy(founder.did);
+        senderTransport.publishCellDissolution(cell.toJson());
 
-      final event = sender.published.single;
-      final content = jsonDecode(event.content) as Map<String, dynamic>;
-      expect(content[IdentityProof.contentKey], founder.proof);
+        final event = sender.published.single;
+        final content = jsonDecode(event.content) as Map<String, dynamic>;
+        expect(content[IdentityProof.contentKey], founder.proof);
 
-      final receiver = _FakeRelayManager();
-      final receiverTransport = NostrTransport(
-        localDid: 'did:key:receiver',
-        localPseudonym: 'Empfänger',
-        relayManager: receiver,
-      );
-      await receiverTransport.start(keysOverride: strangerKeys);
-      final deletions = <Map<String, dynamic>>[];
-      final sub = receiverTransport.onCellDeleted.listen(deletions.add);
+        final receiver = _FakeRelayManager();
+        final receiverTransport = NostrTransport(
+          localDid: 'did:key:receiver',
+          localPseudonym: 'Empfänger',
+          relayManager: receiver,
+        );
+        await receiverTransport.start(keysOverride: strangerKeys);
+        final deletions = <Map<String, dynamic>>[];
+        final sub = receiverTransport.onCellDeleted.listen(deletions.add);
 
-      receiver.injectEvent(event);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        receiver.injectEvent(event);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(deletions, hasLength(1));
-      expect(deletions.single['_nostr_pubkey'], founderKeys.publicKeyHex);
-      expect(deletions.single[IdentityProof.contentKey], founder.proof);
+        expect(deletions, hasLength(1));
+        expect(deletions.single['_nostr_pubkey'], founderKeys.publicKeyHex);
+        expect(deletions.single[IdentityProof.contentKey], founder.proof);
 
-      await sub.cancel();
-      await senderTransport.stop();
-      await receiverTransport.stop();
-    });
+        await sub.cancel();
+        await senderTransport.stop();
+        await receiverTransport.stop();
+      },
+    );
   });
 
   group('authorizeMembershipConfirmation', () {
     const myDid = 'did:key:z6MkApplicant';
 
-    CellMember confirmation(String cellId, String? confirmedBy,
-            {String did = myDid, MemberRole role = MemberRole.member}) =>
-        CellMember(
-          cellId: cellId,
-          did: did,
-          joinedAt: DateTime.now().toUtc(),
-          role: role,
-          confirmedBy: confirmedBy,
-        );
+    CellMember confirmation(
+      String cellId,
+      String? confirmedBy, {
+      String did = myDid,
+      MemberRole role = MemberRole.member,
+    }) => CellMember(
+      cellId: cellId,
+      did: did,
+      joinedAt: DateTime.now().toUtc(),
+      role: role,
+      confirmedBy: confirmedBy,
+    );
 
     Future<GovernanceAuthDecision> decide({
       required Cell? known,
@@ -466,18 +514,17 @@ void main() {
       bool pending = true,
       required NostrKeys signer,
       required Object? proof,
-    }) =>
-        authorizeMembershipConfirmation(
-          knownCell: known,
-          knownMembers: knownMembers,
-          payloadCell: payload,
-          member: member,
-          myDid: myDid,
-          isAlreadyMember: alreadyMember,
-          hasPendingRequest: pending,
-          signerPubkey: signer.publicKeyHex,
-          idProof: proof,
-        );
+    }) => authorizeMembershipConfirmation(
+      knownCell: known,
+      knownMembers: knownMembers,
+      payloadCell: payload,
+      member: member,
+      myDid: myDid,
+      isAlreadyMember: alreadyMember,
+      hasPendingRequest: pending,
+      signerPubkey: signer.publicKeyHex,
+      idProof: proof,
+    );
 
     test('allows the founder to confirm my pending request', () async {
       final founder = await _identity(1, founderKeys);
@@ -547,8 +594,7 @@ void main() {
       );
     });
 
-    test('rejects a confirmation without a pending request of mine',
-        () async {
+    test('rejects a confirmation without a pending request of mine', () async {
       final founder = await _identity(1, founderKeys);
       final cell = _cellFoundedBy(founder.did);
 
@@ -565,55 +611,66 @@ void main() {
       );
     });
 
-    test('rejects a payload that swaps the founder of the known cell',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final stranger = await _identity(2, strangerKeys);
-      final known = _cellFoundedBy(founder.did);
-      final forged = Cell.fromJson({
-        ...known.toJson(),
-        'createdBy': stranger.did,
-      });
+    test(
+      'rejects a payload that swaps the founder of the known cell',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final stranger = await _identity(2, strangerKeys);
+        final known = _cellFoundedBy(founder.did);
+        final forged = Cell.fromJson({
+          ...known.toJson(),
+          'createdBy': stranger.did,
+        });
 
-      expect(
-        await decide(
-          known: known,
-          payload: forged,
-          member: confirmation(known.id, stranger.did),
-          signer: strangerKeys,
-          proof: stranger.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-    });
+        expect(
+          await decide(
+            known: known,
+            payload: forged,
+            member: confirmation(known.id, stranger.did),
+            signer: strangerKeys,
+            proof: stranger.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+      },
+    );
 
-    test('rejects confirmations for someone else or with a higher role',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final cell = _cellFoundedBy(founder.did);
+    test(
+      'rejects confirmations for someone else or with a higher role',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final cell = _cellFoundedBy(founder.did);
 
-      expect(
-        await decide(
-          known: cell,
-          payload: cell,
-          member: confirmation(cell.id, founder.did, did: 'did:key:z6MkOther'),
-          signer: founderKeys,
-          proof: founder.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-      expect(
-        await decide(
-          known: cell,
-          payload: cell,
-          member: confirmation(cell.id, founder.did,
-              role: MemberRole.moderator),
-          signer: founderKeys,
-          proof: founder.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-    });
+        expect(
+          await decide(
+            known: cell,
+            payload: cell,
+            member: confirmation(
+              cell.id,
+              founder.did,
+              did: 'did:key:z6MkOther',
+            ),
+            signer: founderKeys,
+            proof: founder.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+        expect(
+          await decide(
+            known: cell,
+            payload: cell,
+            member: confirmation(
+              cell.id,
+              founder.did,
+              role: MemberRole.moderator,
+            ),
+            signer: founderKeys,
+            proof: founder.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+      },
+    );
 
     test('rejects a signer who does not prove the confirmedBy DID', () async {
       final founder = await _identity(1, founderKeys);
@@ -686,8 +743,9 @@ void main() {
       );
       await receiverTransport.start(keysOverride: strangerKeys);
       final received = <Map<String, dynamic>>[];
-      final sub =
-          receiverTransport.onCellMembershipConfirmed.listen(received.add);
+      final sub = receiverTransport.onCellMembershipConfirmed.listen(
+        received.add,
+      );
 
       receiver.injectEvent(event);
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -704,13 +762,16 @@ void main() {
 
   group('authorizeCellRoster (TD-33)', () {
     CellRoster rosterOf(Cell cell, String founderDid) => CellRoster(
-          cellId: cell.id,
-          updatedAtMs: 1000,
-          members: [
-            CellRosterEntry(
-                did: founderDid, role: MemberRole.founder, joinedAtMs: 1),
-          ],
-        );
+      cellId: cell.id,
+      updatedAtMs: 1000,
+      members: [
+        CellRosterEntry(
+          did: founderDid,
+          role: MemberRole.founder,
+          joinedAtMs: 1,
+        ),
+      ],
+    );
 
     test('accepts the roster of the proven founder', () async {
       final founder = await _identity(1, founderKeys);
@@ -727,90 +788,94 @@ void main() {
       );
     });
 
-    test('rejects rosters from anyone else or naming another founder',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final stranger = await _identity(2, strangerKeys);
-      final cell = _cellFoundedBy(founder.did);
+    test(
+      'rejects rosters from anyone else or naming another founder',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final stranger = await _identity(2, strangerKeys);
+        final cell = _cellFoundedBy(founder.did);
 
-      expect(
-        await authorizeCellRoster(
-          cell: cell,
-          roster: rosterOf(cell, founder.did),
-          signerPubkey: strangerKeys.publicKeyHex,
-          idProof: stranger.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-      expect(
-        await authorizeCellRoster(
-          cell: cell,
-          roster: rosterOf(cell, stranger.did),
-          signerPubkey: strangerKeys.publicKeyHex,
-          idProof: stranger.proof,
-        ),
-        GovernanceAuthDecision.notAuthorized,
-      );
-      expect(
-        await authorizeCellRoster(
-          cell: cell,
-          roster: rosterOf(cell, founder.did),
-          signerPubkey: founderKeys.publicKeyHex,
-          idProof: null,
-        ),
-        GovernanceAuthDecision.missingProof,
-      );
-      expect(
-        await authorizeCellRoster(
-          cell: null,
-          roster: rosterOf(cell, founder.did),
-          signerPubkey: founderKeys.publicKeyHex,
-          idProof: founder.proof,
-        ),
-        GovernanceAuthDecision.unknownCell,
-      );
-    });
+        expect(
+          await authorizeCellRoster(
+            cell: cell,
+            roster: rosterOf(cell, founder.did),
+            signerPubkey: strangerKeys.publicKeyHex,
+            idProof: stranger.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+        expect(
+          await authorizeCellRoster(
+            cell: cell,
+            roster: rosterOf(cell, stranger.did),
+            signerPubkey: strangerKeys.publicKeyHex,
+            idProof: stranger.proof,
+          ),
+          GovernanceAuthDecision.notAuthorized,
+        );
+        expect(
+          await authorizeCellRoster(
+            cell: cell,
+            roster: rosterOf(cell, founder.did),
+            signerPubkey: founderKeys.publicKeyHex,
+            idProof: null,
+          ),
+          GovernanceAuthDecision.missingProof,
+        );
+        expect(
+          await authorizeCellRoster(
+            cell: null,
+            roster: rosterOf(cell, founder.did),
+            signerPubkey: founderKeys.publicKeyHex,
+            idProof: founder.proof,
+          ),
+          GovernanceAuthDecision.unknownCell,
+        );
+      },
+    );
 
-    test('transport publishes the roster with proof and forwards the signer',
-        () async {
-      final founder = await _identity(1, founderKeys);
-      final cell = _cellFoundedBy(founder.did);
-      final sender = _FakeRelayManager();
-      final senderTransport = NostrTransport(
-        localDid: founder.did,
-        localPseudonym: 'Gründerin',
-        relayManager: sender,
-      );
-      await senderTransport.start(keysOverride: founderKeys);
-      senderTransport.setIdentityProof(founder.proof);
-      sender.published.clear();
+    test(
+      'transport publishes the roster with proof and forwards the signer',
+      () async {
+        final founder = await _identity(1, founderKeys);
+        final cell = _cellFoundedBy(founder.did);
+        final sender = _FakeRelayManager();
+        final senderTransport = NostrTransport(
+          localDid: founder.did,
+          localPseudonym: 'Gründerin',
+          relayManager: sender,
+        );
+        await senderTransport.start(keysOverride: founderKeys);
+        senderTransport.setIdentityProof(founder.proof);
+        sender.published.clear();
 
-      senderTransport.publishCellRoster(rosterOf(cell, founder.did).toJson());
-      final event = sender.published.single;
-      expect(event.kind, NostrKind.cellRoster);
-      expect(event.tagValue('d'), cell.id);
+        senderTransport.publishCellRoster(rosterOf(cell, founder.did).toJson());
+        final event = sender.published.single;
+        expect(event.kind, NostrKind.cellRoster);
+        expect(event.tagValue('d'), cell.id);
 
-      final receiver = _FakeRelayManager();
-      final receiverTransport = NostrTransport(
-        localDid: 'did:key:receiver',
-        localPseudonym: 'Mitglied',
-        relayManager: receiver,
-      );
-      await receiverTransport.start(keysOverride: strangerKeys);
-      final received = <Map<String, dynamic>>[];
-      final sub = receiverTransport.onCellRoster.listen(received.add);
+        final receiver = _FakeRelayManager();
+        final receiverTransport = NostrTransport(
+          localDid: 'did:key:receiver',
+          localPseudonym: 'Mitglied',
+          relayManager: receiver,
+        );
+        await receiverTransport.start(keysOverride: strangerKeys);
+        final received = <Map<String, dynamic>>[];
+        final sub = receiverTransport.onCellRoster.listen(received.add);
 
-      receiver.injectEvent(event);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        receiver.injectEvent(event);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(received, hasLength(1));
-      expect(received.single['_nostr_pubkey'], founderKeys.publicKeyHex);
-      expect(received.single[IdentityProof.contentKey], founder.proof);
-      expect(CellRoster.tryParse(received.single)?.founderDid, founder.did);
+        expect(received, hasLength(1));
+        expect(received.single['_nostr_pubkey'], founderKeys.publicKeyHex);
+        expect(received.single[IdentityProof.contentKey], founder.proof);
+        expect(CellRoster.tryParse(received.single)?.founderDid, founder.did);
 
-      await sub.cancel();
-      await senderTransport.stop();
-      await receiverTransport.stop();
-    });
+        await sub.cancel();
+        await senderTransport.stop();
+        await receiverTransport.stop();
+      },
+    );
   });
 }

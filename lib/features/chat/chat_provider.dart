@@ -35,6 +35,7 @@ import '../../services/contact_request_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/notification_settings.dart';
 import '../../shared/widgets/notification_banner.dart';
+import '../../core/config/system_config.dart';
 import '../../core/roles/role_enums.dart';
 import 'channel_access_service.dart';
 import 'message_deletion_policy.dart';
@@ -968,8 +969,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         if (CellService.instance.isTombstoned(cell.id)) return;
 
-        // A founder-signed dissolution arrived before we knew the cell.
-        if (_pendingCellDissolutions[cell.id] == cell.createdBy) {
+        // A dissolution by founder or superadmin arrived before we knew the
+        // cell.
+        final pendingBy = _pendingCellDissolutions[cell.id];
+        if (pendingBy != null &&
+            mayDissolveCell(
+                pendingBy, cell, SystemConfig.instance.superadminDid)) {
           print('[CELL-AUTH] Applying pending dissolution for ${cell.id}');
           _pendingCellDissolutions.remove(cell.id);
           await CellService.instance.handleCellDeleted(cell.id, cell.name);
@@ -1115,6 +1120,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final decision = await authorizeCellDissolution(
         cell: _knownCell(cellId),
+        superadminDid: SystemConfig.instance.superadminDid,
         signerPubkey: data['_nostr_pubkey'] as String? ?? '',
         idProof: data[IdentityProof.contentKey],
       );

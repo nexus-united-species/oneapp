@@ -1217,7 +1217,8 @@ class CellService {
     publishRosterIfFounder(cellId);
   }
 
-  /// Dissolves a cell entirely (superadmin / system-admin only).
+  /// Dissolves a cell entirely (superadmin / system-admin, or the founder
+  /// as the last member; see CellInfoScreen).
   ///
   /// Removes all members and the cell itself from the local DB.
   /// The caller is responsible for publishing the Kind-5 Nostr deletion event.

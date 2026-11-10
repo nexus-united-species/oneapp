@@ -262,6 +262,16 @@ Liste:
   in der Anzeige noch in der Auszählung (`[TALLY-ELIGIBLE]`); gespeichert
   bleiben sie. Die Anzeige zeigt nie mehr Stimmen als Stimmberechtigte
   („2 von 1“ behoben).
+- **Zellen löschen (10.11.2026, Gerätetest offen):** Seit TD-40 nahmen andere
+  Geräte eine Auflösung nur vom Gründer an; Admin-Löschungen fremder Zellen
+  wirkten deshalb nur auf dem Admin-Gerät (Testzelle811 blieb auf Windows).
+  Entscheidung: Gründer oder Superadmin dürfen auflösen
+  (`mayDissolveCell`). Die Superadmin-DID kommt aus
+  `assets/config/system.json`; System-Admins werden nicht zwischen Geräten
+  abgeglichen und sind deshalb nicht netzweit berechtigt. Eine lokale
+  Superadmin-Übertragung (SharedPreferences) kennt nur das eigene Gerät.
+  Außerdem sieht ein Gründer, der als letztes Mitglied übrig ist,
+  „Gemeinschaft löschen“; bisher konnte er weder löschen noch austreten.
 - **TD-33 Mitgliederliste vom Gründer (10.11.2026, Gerätetest offen):**
   Ursachen der abweichenden Listen: Neue Mitglieder kannten nur Gründer und
   sich selbst, Moderatoren-Ernennungen verließen das Gründergerät nie, und

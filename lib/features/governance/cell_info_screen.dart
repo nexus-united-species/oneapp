@@ -108,8 +108,18 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
   }
 
   /// True when the local user is a superadmin or system-admin.
-  /// Note: founders cannot delete cells — only admins can.
+  /// Founders may delete only when they are the last member
+  /// ([_isSoleFounder]); a cell with other members is not dissolved by one
+  /// person alone.
   bool get _isAdminUser => RoleService.instance.isSystemAdmin(_myDid);
+
+  /// The founder is the only confirmed member left.
+  bool get _isSoleFounder =>
+      _isFounder &&
+      CellService.instance
+          .membersOf(_cell.id)
+          .where((m) => m.isConfirmed)
+          .every((m) => m.did == _myDid);
 
   Future<void> _deleteCell() async {
     // Step 1: warning dialog.
@@ -655,7 +665,10 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
             textColor: Colors.red,
             onTap: _leaveCell,
           ),
-          if (_isAdminUser) ...[
+          // A founder who is the last member may dissolve the cell; leaving
+          // is blocked for them, so they were stuck before. Other devices
+          // accept a dissolution only from the proven founder (TD-40).
+          if (_isAdminUser || _isSoleFounder) ...[
             const SizedBox(height: 8),
             _ActionTile(
               icon: Icons.delete_forever,
