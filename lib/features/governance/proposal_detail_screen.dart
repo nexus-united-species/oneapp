@@ -2733,6 +2733,14 @@ class _IncomingDelegationsBlockState
     _future = _loadIncoming();
   }
 
+  @override
+  void didUpdateWidget(covariant _IncomingDelegationsBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The screen rebuilds on ProposalService changes, e.g. a delegation
+    // received while it is open; reload instead of keeping the first result.
+    _future = _loadIncoming();
+  }
+
   String get _myDid =>
       IdentityService.instance.currentIdentity?.did ?? '';
 
@@ -2753,8 +2761,10 @@ class _IncomingDelegationsBlockState
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _future,
       builder: (context, snapshot) {
-        // Still loading: render nothing to avoid flicker.
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        // First load: render nothing. On reloads the previous data stays
+        // visible until the new result arrives (no flicker).
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const SizedBox.shrink();
         }
         final incoming = snapshot.data ?? const [];

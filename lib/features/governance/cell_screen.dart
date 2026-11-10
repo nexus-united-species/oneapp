@@ -748,7 +748,10 @@ class _AgoraTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final proposals = ProposalService.instance.proposalsForCell(cell.id);
-    final canCreate = isFounder || isMod;
+    // Same rule as the Agora screen (CellMember.canCreateProposals).
+    final canCreate =
+        CellService.instance.myMembershipIn(cell.id)?.canCreateProposals ??
+            false;
 
     return Scaffold(
       backgroundColor: AppColors.deepBlue,

@@ -42,3 +42,4 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 2a20285, 5f23cc2 | 09.11.2026 | Handy: angenommen, „2 Stimmen von 2 Stimmberechtigten“ (Delegation gezählt). Windows: Fremdprotokoll korrekt abgelehnt, aber Statuswechsel übernommen → TD-76 gefunden |
 | 3462048 | 09.11.2026 | Durchgang 4 wiederholt: Windows lehnt „beendet/entschieden“ (`kind=31010`) und das Protokoll (`kind=31013`) des Handys ab, Abstimmung läuft dort weiter; Handy zählt aus. Dabei TD-77 gefunden |
 | e5e2292 | 09.11.2026 | Neustart beider Apps: kein `DECIDED → VOTING` mehr; alte Antrags-Events werden mit `[GOV-AUTH] kind=31010 … rejected` abgelehnt |
+| 1162510, 2398096, d990268 | 10.11.2026 | Antrags-Knopf in der Zelle für Windows sichtbar; Delegation erscheint ohne Seitenwechsel; Handy veröffentlicht Kind-31007, Windows übernimmt („Applied roster … 2 members“, auch 6 Mitglieder in einer weiteren Zelle); Moderator-Ernennung kommt auf Windows an |

@@ -18,6 +18,12 @@ class CellMember {
   });
 
   bool get isConfirmed => role != MemberRole.pending;
+
+  /// Who may file proposals. Decision of 09.11.2026: every confirmed member.
+  /// The single place to change if this is restricted later (UI only; the
+  /// receive check in governance_authorization.dart accepts any member's
+  /// new proposal and must be adjusted alongside).
+  bool get canCreateProposals => isConfirmed;
   bool get canManageRequests =>
       role == MemberRole.founder || role == MemberRole.moderator;
 

@@ -37,6 +37,7 @@ Quelle: [nostr_event.dart:10](../../lib/core/transport/nostr/nostr_event.dart)
 | 31004 | `cellMembershipConfirmed` | `_handleCellMembershipConfirmedEvent` | `CellService` |
 | 31005 | `cellMemberUpdate` | `_handleCellMemberUpdateEvent` | `CellService` |
 | 31006 | `cellFoundingPermit` | `_handleIncomingPermitEvent` | `CellFoundingPermitService` |
+| 31007 | `cellRoster` (TD-33) | `_handleCellRosterEvent` | `CellService.applyRoster` (nur vom nachgewiesenen Gründer) |
 | 31010 | `proposalEvent` | `_handleProposalEvent` | `ProposalService` |
 | 31011 | `voteEvent` | `_handleVoteEvent` | `ProposalService` |
 | 31012 | `delegationEvent` | `_handleDelegationEvent` | `ProposalService` |

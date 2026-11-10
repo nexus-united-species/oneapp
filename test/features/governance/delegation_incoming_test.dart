@@ -396,7 +396,10 @@ NostrEvent _makeDelegationEvent({
     'cellId': cellId,
     'status': status,
     'createdAt': nowMs,
-    'updatedAt': nowMs,
+    // +1 ms: a delegation inserted by the test in the same millisecond would
+    // otherwise make this event look stale (updatedAt not newer) and the
+    // handler rightly ignores it. On real devices time passes in between.
+    'updatedAt': nowMs + 1,
   });
   return NostrEvent(
     id: id,

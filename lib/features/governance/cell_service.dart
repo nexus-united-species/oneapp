@@ -11,6 +11,7 @@ import '../../services/notification_service.dart';
 import 'cell.dart';
 import 'cell_join_request.dart';
 import 'cell_member.dart';
+import 'cell_roster.dart';
 
 /// Defensive helper: parses a SharedPreferences JSON string into List<String>.
 /// Returns an empty list if the value is null, empty, or cannot be decoded.
@@ -956,6 +957,7 @@ class CellService {
           action: 'joined');
       print('[JOIN] Published Kind-31005 member-joined for cell ${req.cellId}');
     }
+    publishRosterIfFounder(req.cellId);
   }
 
   /// Rejects a join request silently (no feedback sent to requester).
@@ -1104,6 +1106,7 @@ class CellService {
           reason: reason);
       print('[CELL] Published removal event for $memberDid in cell $cellId');
     }
+    publishRosterIfFounder(cellId);
   }
 
   /// Called on ANY device when a Kind-31005 member-update event is received.
@@ -1190,6 +1193,7 @@ class CellService {
       }
 
       print('[CELL] Member $targetDid joined cell $cellId — stub inserted');
+      publishRosterIfFounder(cellId);
       return;
     }
 
@@ -1210,6 +1214,7 @@ class CellService {
 
     _notify();
     print('[CELL] Member $targetDid $action cell $cellId — member list updated');
+    publishRosterIfFounder(cellId);
   }
 
   /// Dissolves a cell entirely (superadmin / system-admin only).
@@ -1284,6 +1289,8 @@ class CellService {
     await PodDatabase.instance.upsertCellMember(
         cellId, targetDid, updated.toJson());
     _notify();
+    // TD-33: the promotion used to stay on this device only.
+    publishRosterIfFounder(cellId);
   }
 
   /// Handles a confirmed membership notification from Nostr.
@@ -1491,6 +1498,113 @@ class CellService {
     required String action,
     String? reason,
   })? onPublishMemberUpdate;
+
+  // ── Roster (TD-33) ─────────────────────────────────────────────────────────
+
+  /// Publishes a Kind-31007 roster (`CellRoster.toJson()`). Set by
+  /// [ChatProvider] after the transport is ready.
+  void Function(Map<String, dynamic> roster)? onPublishRoster;
+
+  /// Newest applied roster per cell (`updatedAt`, ms). Older or replayed
+  /// rosters are ignored.
+  final Map<String, int> _rosterVersions = {};
+
+  /// The founder's roster of [cellId] as this device knows it, or null if
+  /// the cell is not one of mine.
+  CellRoster? buildRoster(String cellId) {
+    final cell = _myCells.where((c) => c.id == cellId).firstOrNull;
+    if (cell == null) return null;
+    return CellRoster.fromMembers(
+      cellId: cellId,
+      founderDid: cell.createdBy,
+      members: _members[cellId] ?? const [],
+      createdAt: cell.createdAt,
+      updatedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+  }
+
+  /// Publishes the roster of [cellId] if I am its founder. Called after
+  /// every membership change on the founder's device.
+  void publishRosterIfFounder(String cellId) {
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    final cell = _myCells.where((c) => c.id == cellId).firstOrNull;
+    if (myDid == null || cell == null || cell.createdBy != myDid) return;
+    // After a (device-local, unsynced) founder transfer I am no longer the
+    // founder here; publishing would revert the transfer on other devices.
+    if (myMembershipIn(cellId)?.role != MemberRole.founder) return;
+    final roster = buildRoster(cellId);
+    if (roster == null || onPublishRoster == null) return;
+    _rosterVersions[cellId] = roster.updatedAtMs;
+    onPublishRoster!(roster.toJson());
+  }
+
+  /// Publishes the rosters of all cells I founded (at startup, so members
+  /// who were offline for long still get the current state).
+  void publishRostersForFoundedCells() {
+    for (final cell in List<Cell>.from(_myCells)) {
+      publishRosterIfFounder(cell.id);
+    }
+  }
+
+  /// Adopts a roster that was already checked to come from the founder
+  /// (governance_authorization.dart). Replaces the local member list of the
+  /// cell, except where local knowledge is newer than the roster:
+  /// - my own entry is kept (only an explicit removal ends my membership),
+  /// - members who joined locally after the roster was built are kept,
+  /// - members who left locally after the roster was built are not re-added
+  ///   (relays replay the stored roster after every restart, also when the
+  ///   founder was offline for later changes).
+  /// The founder never applies its own roster: its local list is the source.
+  /// Departures are still recorded only from explicit leave/remove events.
+  /// Returns true if the roster was applied.
+  Future<bool> applyRoster(CellRoster roster) async {
+    final cellId = roster.cellId;
+    final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
+    if (cellIdx < 0) return false;
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    if (myDid != null && _myCells[cellIdx].createdBy == myDid) return false;
+    final known = _rosterVersions[cellId];
+    if (known != null && roster.updatedAtMs <= known) return false;
+
+    // AETHER state-locking: version and member list are set synchronously
+    // before the first await, so parallel relay copies apply only once.
+    _rosterVersions[cellId] = roster.updatedAtMs;
+    final founderDid = roster.founderDid;
+    final previous = List<CellMember>.from(_members[cellId] ?? const []);
+    final next = [
+      for (final e in roster.members)
+        if ((departedAtMs(cellId, e.did) ?? 0) <= roster.updatedAtMs)
+          e.toMember(cellId, founderDid),
+    ];
+    for (final m in previous) {
+      final joinedLater =
+          m.joinedAt.toUtc().millisecondsSinceEpoch > roster.updatedAtMs;
+      if ((m.did == myDid || joinedLater) &&
+          !next.any((n) => n.did == m.did)) {
+        next.add(m);
+      }
+    }
+    final nextDids = {for (final m in next) m.did};
+    final removed = [
+      for (final m in previous)
+        if (!nextDids.contains(m.did)) m.did,
+    ];
+    _members[cellId] = next;
+    final updatedCell = _myCells[cellIdx].copyWith(memberCount: next.length);
+    _myCells[cellIdx] = updatedCell;
+    _notify();
+
+    for (final m in next) {
+      await PodDatabase.instance.upsertCellMember(cellId, m.did, m.toJson());
+    }
+    for (final did in removed) {
+      await PodDatabase.instance.deleteCellMember(cellId, did);
+    }
+    await PodDatabase.instance.upsertCell(updatedCell.id, updatedCell.toJson());
+    print('[ROSTER] Applied roster for $cellId: ${next.length} members '
+        '(${removed.length} removed locally)');
+    return true;
+  }
 
   /// Adds [cellIds] to the persistent block list so they never re-appear in
   /// discovery after a Nostr re-subscription.  Call this BEFORE wiping the DB
@@ -1797,5 +1911,6 @@ class CellService {
     _myCells.clear();
     _members.clear();
     _departures.clear();
+    _rosterVersions.clear();
   }
 }
