@@ -25,7 +25,7 @@ Release-Reihenfolge steht separat in
 | TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
-| TD-57 | Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
+| TD-57 | Seit 10.11.2026 abonniert, entschlüsselt und als ausgehend eingeordnet (Gerätetest offen). Ursprünglich: Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
 | TD-58 | Seit 10.11.2026 Backup-Datei auswählbar, Name aus dem Backup übernommen (Gerätetest offen). Ursprünglich: Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
 | TD-59 | Seit 10.11.2026 holt ein frisch wiederhergestelltes Gerät erst sein Profil von den Relays (Gerätetest offen). Ursprünglich: Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
 | TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
@@ -44,7 +44,7 @@ Release-Reihenfolge steht separat in
 | TD-46 | Geräteübergreifende Idempotenz teils in SharedPreferences | nach Reset/Zweitgerät sind doppelte Auto-Aktionen möglich |
 | TD-47 | Seit 10.11.2026 eigenes Relay `relay.nexus-terminal.org` als erstes Standard-Relay, eigene Relays werden gespeichert, Hintergrunddienst nutzt alle Relays (Gerätetest offen) | Rest: `nos.lol` begrenzt Events auf 128 KB (große Bilder erreichen nur die anderen beiden, bis TD-64). Ursprünglicher Befund, **live geprüft 06.11.2026:** `relay.nostr.band` nicht erreichbar; `relay.snort.social` läuft nur noch im Arbeitsspeicher (speichert nichts dauerhaft); `nos.lol` nimmt höchstens 128 KB pro Event an. Faktisch trägt nur `relay.damus.io`. Selbst eingetragene Relays werden nicht gespeichert; der Hintergrunddienst nutzt nur das erste Relay |
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen |
-| TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
+| TD-63 | Seit 10.11.2026 DMs 30 Tage, Beitrittsbestätigungen ohne Zeitgrenze (Gerätetest offen). Ursprünglich: Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
 | TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | Der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Wer mit derselben Identität auf zwei Geräten arbeitet, sieht seine Reaktion nur auf dem Gerät, auf dem er sie gesetzt hat. Vor einer Änderung muss der Dorfplatz eigene Reaktionen getrennt behandeln, sonst entstehen Doppelungen |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
@@ -403,6 +403,27 @@ Liste:
   build\unit_test_assets“ ab, weil die Ordner dort das Attribut
   „Schreibgeschützt“ trugen. Attribut entfernt, danach lief alles. Wer es
   setzt, ist unklar (Verdacht: Sandbox-Umgebung).
+- **TD-57 erledigt (10.11.2026, Gerätetest offen):** Zusätzlich zum Abo
+  `#p` = eigener Schlüssel gibt es ein Abo `authors` = eigener Schlüssel für
+  Kind 4. Eine selbst signierte DM wird mit dem Schlüssel des Empfängers
+  (`p`-Tag) entschlüsselt (NIP-04 nutzt ECDH, beide Seiten haben dasselbe
+  Geheimnis) und nur angenommen, wenn die Nachricht unsere eigene DID als
+  Absender trägt. Der ChatProvider ordnet sie dem Gespräch mit dem Empfänger
+  zu, entschlüsselt den inneren Text mit dessen X25519-Schlüssel, zeigt sie
+  als ausgehend und benachrichtigt nicht. Eigene Steuer-DMs
+  (Kontaktanfragen, Kanalzugang u. a.) werden ignoriert; sie wirken nur auf
+  dem sendenden Gerät. Kommt das Relay-Echo einer gerade gesendeten
+  Nachricht vor dem lokalen Eintrag an, ersetzt der lokale Eintrag das Echo
+  (`_putOwnMessage`); in der Datenbank verhindert die Nachrichten-ID
+  Doppelungen. Einschränkung: Kennt das Zweitgerät den X25519-Schlüssel des
+  Empfängers nicht, zeigt es „[Nachricht konnte nicht entschlüsselt
+  werden]“.
+- **TD-63 erledigt (10.11.2026, Gerätetest offen):** Ohne bekannten
+  Zeitstempel holt ein Gerät DMs jetzt 30 Tage zurück statt 24 Stunden
+  (`NostrTransport.newDeviceDmHistory`); Broadcasts bleiben bei 24 Stunden,
+  weil `#mesh` globaler Verkehr ist. Beitrittsbestätigungen (Kind 31004, nur
+  an uns adressiert) werden ohne `since` abonniert. Mitgliederlisten kommen
+  seit TD-33 ohnehin über Kind 31007.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

@@ -106,7 +106,8 @@ void main() {
       await transport.stop();
     });
 
-    test('without saved timestamp, since defaults to ~24 hours ago', () async {
+    test('without saved timestamp, DM since defaults to ~30 days ago (TD-63)',
+        () async {
       final relay = CapturingRelayManager();
       final transport = _makeTransport(relay);
 
@@ -116,10 +117,12 @@ void main() {
       final dmFilter =
           relay.subscribedFilters.firstWhere((f) => f['kinds']?.contains(4) == true);
 
-      // Should be roughly now - 86400 (within 30s tolerance for test execution time)
+      // Should be roughly now - 30 days (within 30s tolerance for test
+      // execution time). Previously 24 h, so new devices saw no history.
+      final window = NostrTransport.newDeviceDmHistory.inSeconds;
       final dmSince = dmFilter['since'] as int;
-      expect(dmSince, greaterThan(nowSec - 86430));
-      expect(dmSince, lessThan(nowSec - 86370));
+      expect(dmSince, greaterThan(nowSec - window - 30));
+      expect(dmSince, lessThan(nowSec - window + 30));
 
       await transport.stop();
     });
@@ -323,10 +326,11 @@ void main() {
           reason: 'Message from 30 min ago is after since and would be included');
     });
 
-    test('app with no prior history fetches last 24 hours by default', () async {
+    test('app with no prior history fetches 30 days of DMs by default (TD-63)',
+        () async {
       final relay = CapturingRelayManager();
       final transport = _makeTransport(relay);
-      // No setLastMessageTimestamp call → null → default 24h
+      // No setLastMessageTimestamp call → null → default 30 days for DMs
 
       await transport.start(keysOverride: _makeKeys());
 
@@ -335,10 +339,11 @@ void main() {
           .firstWhere((f) => f['kinds']?.contains(4) == true);
       final since = dmFilter['since'] as int;
 
-      expect(since, greaterThan(nowSec - 86430),
-          reason: 'Default since must be roughly 24h ago');
-      expect(since, lessThan(nowSec - 86370),
-          reason: 'Default since must be roughly 24h ago');
+      final window = NostrTransport.newDeviceDmHistory.inSeconds;
+      expect(since, greaterThan(nowSec - window - 30),
+          reason: 'Default DM since must be roughly 30 days ago');
+      expect(since, lessThan(nowSec - window + 30),
+          reason: 'Default DM since must be roughly 30 days ago');
 
       await transport.stop();
     });

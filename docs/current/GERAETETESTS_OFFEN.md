@@ -25,6 +25,9 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (TD-57, noch nicht committet) | Nur mit zwei Geräten derselben Identität (z. B. neues Gerät aus dem Kontoumzug-Test): auf Gerät 1 einem Kontakt schreiben | Auf Gerät 2 erscheint die Nachricht im Gespräch mit diesem Kontakt als **eigene** (rechts), ohne Benachrichtigung; Log `[SYNC] Own DM …` |
+| (TD-57) | Auf dem sendenden Gerät selbst nachsehen | Die Nachricht steht **einmal** im Gespräch, nicht doppelt |
+| (TD-63) | Neues Gerät nach dem Seed-Restore | Gespräche der letzten 30 Tage sind da (nicht nur 24 Stunden); Beitrittsbestätigungen älterer Gemeinschaften werden angenommen |
 | 43bb68c | Kontoumzug auf ein frisches Gerät oder Profil (am besten drittes Gerät; sonst nur nach Rückfrage, keine bestehende Identität überschreiben): Seed eingeben | Bildschirm „Kein Backup auf diesem Gerät“ mit „Backup-Datei auswählen“; Log `[PROFILE-RESTORE] Looking up own Kind-0`, danach „own profile found“; Name, Bio und Bild wie auf dem alten Gerät, kein Zufallsname |
 | 43bb68c | Backup-Datei vom alten Gerät (Einstellungen → Backup exportieren) auf das neue kopieren und auswählen | Kontakte, Kanäle, Gemeinschaften übernommen; „Dein Name: …“ auf dem Erfolgsbildschirm |
 | 43bb68c | Eine fremde oder beschädigte `.enc`-Datei auswählen | Meldung „… lässt sich mit deiner Seed Phrase nicht öffnen …“, nichts wird übernommen |

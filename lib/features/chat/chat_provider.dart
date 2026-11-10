@@ -1650,8 +1650,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // ── Incoming messages ──────────────────────────────────────────────────────
 
   Future<void> _onMessageReceived(NexusMessage msg) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    // A DM we sent ourselves, delivered back by the relays, e.g. from our
+    // other device (TD-57). It belongs to the conversation with the
+    // recipient and is shown as outgoing.
+    final isOwn =
+        !msg.isBroadcast && myDid.isNotEmpty && msg.fromDid == myDid;
+
     // Silent block: discard messages from blocked peers without any feedback.
     if (!msg.isBroadcast &&
+        !isOwn &&
         ContactService.instance.isBlocked(msg.fromDid)) {
       debugPrint('[CHAT] Message from blocked peer dropped: ${msg.fromDid}');
       return;
@@ -1662,7 +1670,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(_saveNostrTimestamp(msg.timestamp));
 
     // ── Key exchange: learn sender's encryption key ──────────────────────────
-    final encKeyFromMsg = msg.metadata?['enc_key'] as String?;
+    // In our own messages this is our own key, not the peer's.
+    final encKeyFromMsg = isOwn ? null : msg.metadata?['enc_key'] as String?;
     if (encKeyFromMsg != null && !msg.isBroadcast) {
       ContactService.instance.setEncryptionKey(msg.fromDid, encKeyFromMsg);
     }
@@ -1670,8 +1679,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // ── Decrypt if encrypted ─────────────────────────────────────────────────
     NexusMessage processedMsg = msg;
     if (msg.metadata?['encrypted'] == true && !msg.isBroadcast) {
-      final senderEncKeyHex =
-          encKeyFromMsg ?? ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
+      // X25519 is symmetric: our own message decrypts with the recipient's
+      // public key, a received one with the sender's.
+      final senderEncKeyHex = isOwn
+          ? ContactService.instance.findByDid(msg.toDid)?.encryptionPublicKey
+          : encKeyFromMsg ??
+              ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
       if (senderEncKeyHex != null) {
         final plaintext = await MessageEncryption.decrypt(
           msg.body,
@@ -1761,6 +1774,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Channel access system messages ────────────────────────────────────────
     final sysType = processedMsg.metadata?['sys_type'] as String?;
+    // Our own system and control DMs (contact requests, channel access, …)
+    // were already handled on the device that sent them (TD-57).
+    if (isOwn &&
+        (sysType != null || processedMsg.metadata?['type'] != null)) {
+      debugPrint('[SYNC] Own control DM ignored: ${processedMsg.id}');
+      return;
+    }
     if (sysType != null && sysType.startsWith('channel_')) {
       try {
         final bodyData =
@@ -1864,8 +1884,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
-
     // Determine conversation ID:
     //   - broadcast / #mesh → NexusMessage.broadcastDid ("broadcast")
     //   - named group channel (channel != '#mesh' and starts with '#') → channel name
@@ -1879,7 +1897,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         convId = NexusMessage.broadcastDid;
       }
     } else {
-      convId = _conversationId(processedMsg.fromDid, myDid);
+      convId = _conversationId(
+          isOwn ? processedMsg.toDid : processedMsg.fromDid, myDid);
     }
 
     debugPrint('[CHAT] Message received: convId=$convId  from=${processedMsg.fromDid}');
@@ -1925,8 +1944,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
 
     // ── Notifications ────────────────────────────────────────────────────────
-    // Don't notify if this exact conversation is open in the UI.
-    if (_activeConversationId != convId) {
+    // Don't notify if this exact conversation is open in the UI, nor for
+    // our own messages from another device.
+    if (!isOwn && _activeConversationId != convId) {
       final contact = ContactService.instance.findByDid(processedMsg.fromDid);
       final muted = !processedMsg.isBroadcast &&
           ContactService.instance.isMuted(processedMsg.fromDid);
@@ -2013,6 +2033,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     notifyListeners();
+  }
+
+  /// Adds a message we just sent to [cache]. If the relays already echoed
+  /// it back (TD-57: own DMs are subscribed), the echo is replaced by the
+  /// local version, which carries plaintext and local file paths.
+  static void _putOwnMessage(List<NexusMessage> cache, NexusMessage msg) {
+    final index = cache.indexWhere((m) => m.id == msg.id);
+    if (index == -1) {
+      cache.add(msg);
+    } else {
+      cache[index] = msg;
+    }
   }
 
   Future<void> _persistMessage(String convId, NexusMessage msg) async {
@@ -2271,7 +2303,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final storedMsg = _withSentNostrEventId(localMsg);
     final convId = _conversationId(recipientDid, myDid);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
@@ -2586,7 +2618,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
@@ -2616,7 +2648,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final convId = _conversationId(recipientDid, myDid);
     final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
@@ -2755,7 +2787,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final convId = _conversationId(recipientDid, myDid);
     final storedMsg = _withSentNostrEventId(localMsg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 

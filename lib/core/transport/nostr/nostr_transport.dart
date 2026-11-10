@@ -157,6 +157,12 @@ class NostrTransport implements MessageTransport {
 
   // Active relay subscriptions
   String? _dmSubId;
+  // DMs we sent ourselves, e.g. from our other device (TD-57).
+  String? _ownDmSubId;
+
+  /// How far back a device without any known message fetches DMs (TD-63).
+  /// Previously 24 hours, so a new device saw almost no history.
+  static const newDeviceDmHistory = Duration(days: 30);
   String? _meshSubId;
   String? _presenceSubId;
   String? _metadataSubId;
@@ -505,6 +511,7 @@ class NostrTransport implements MessageTransport {
     _metadataRefreshTimer?.cancel();
     _metadataRefreshTimer = null;
     if (_dmSubId != null) _relayManager.closeSubscription(_dmSubId!);
+    if (_ownDmSubId != null) _relayManager.closeSubscription(_ownDmSubId!);
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
@@ -2134,10 +2141,16 @@ class NostrTransport implements MessageTransport {
     final msgSince = _lastMessageTimestampSeconds != null
         ? _lastMessageTimestampSeconds! - 60
         : nowSeconds - 86400;
+    // DMs reach further back on a device without history (TD-63); broadcasts
+    // keep the 24 h fallback because the #mesh tag is global traffic.
+    final dmSince = _lastMessageTimestampSeconds != null
+        ? msgSince
+        : nowSeconds - newDeviceDmHistory.inSeconds;
 
     // Close stale subscriptions before recreating to avoid accumulating
     // orphaned REQ IDs in the relay manager.
     if (_dmSubId != null) _relayManager.closeSubscription(_dmSubId!);
+    if (_ownDmSubId != null) _relayManager.closeSubscription(_ownDmSubId!);
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
@@ -2145,17 +2158,26 @@ class NostrTransport implements MessageTransport {
     print('[NOSTR] Setting up subscriptions for pubkey: '
         '${myPubkey.substring(0, 8)}…${myPubkey.substring(myPubkey.length - 4)}');
 
-    final humanSince = DateTime.fromMillisecondsSinceEpoch(msgSince * 1000).toUtc();
+    final humanSince = DateTime.fromMillisecondsSinceEpoch(dmSince * 1000).toUtc();
     print('[SYNC] DM filter: {"kinds":[4],"#p":["${myPubkey.substring(0, 8)}…"],'
-        '"since":$msgSince}  ← ${humanSince.toIso8601String()}');
+        '"since":$dmSince}  ← ${humanSince.toIso8601String()}');
 
-    // DMs addressed to us – since last known message (or last 24 h)
+    // DMs addressed to us – since last known message (or last 30 days)
     _dmSubId = _relayManager.subscribe({
       'kinds': [NostrKind.encryptedDm],
       '#p': [myPubkey],
-      'since': msgSince,
+      'since': dmSince,
     });
     print('[NOSTR] DM sub: $_dmSubId  (#p: ${myPubkey.substring(0, 8)}…)');
+
+    // DMs we sent ourselves (from this or our other device), so a
+    // conversation shows both sides on every device (TD-57).
+    _ownDmSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.encryptedDm],
+      'authors': [myPubkey],
+      'since': dmSince,
+    });
+    print('[SYNC] Own DM sub: $_ownDmSubId  (authors: ${myPubkey.substring(0, 8)}…)');
 
     // Mesh broadcasts – same since window.
     // Always subscribe to 'nexus-mesh' tag.  If we have a geohash we also
@@ -2253,10 +2275,11 @@ class NostrTransport implements MessageTransport {
     if (_cellMembershipSubId != null) {
       _relayManager.closeSubscription(_cellMembershipSubId!);
     }
+    // No `since` (TD-63): only confirmations addressed to us, so the volume
+    // is tiny, and a new device must also see confirmations older than a week.
     _cellMembershipSubId = _relayManager.subscribe({
       'kinds': [NostrKind.cellMembershipConfirmed],
       '#p': [myPubkey],
-      'since': nowSeconds - 7 * 86400,
     });
     print('[JOIN] Subscribed to membership confirmations for $myPubkey, subId=$_cellMembershipSubId');
 
@@ -3076,10 +3099,15 @@ class NostrTransport implements MessageTransport {
 
   void _handleDm(NostrEvent event) async {
     if (_keys == null) return;
-    // Ignore our own events
-    if (event.pubkey == _keys!.publicKeyHex) return;
-
     final myPubkey = _keys!.publicKeyHex;
+
+    // DMs we sent ourselves (TD-57), e.g. from our other device: NIP-04 uses
+    // ECDH, so the shared secret with the recipient (`p` tag) decrypts them.
+    if (event.pubkey == myPubkey) {
+      await _handleOwnDm(event);
+      return;
+    }
+
     final isForMe = event.tagValues('p').contains(myPubkey);
     print('[ContactRequest] incoming event received: ${event.kind}');
     print('[ContactRequest] for my pubkey: $isForMe '
@@ -3111,6 +3139,36 @@ class NostrTransport implements MessageTransport {
     } catch (e) {
       print('[NOSTR] DM decrypt FAILED (not for us or malformed): $e');
       print('[ContactRequest] decrypt error detail: $e');
+    }
+  }
+
+  /// Decrypts a DM signed with our own key and forwards it as an outgoing
+  /// message, so the conversation shows it on every device (TD-57).
+  Future<void> _handleOwnDm(NostrEvent event) async {
+    final recipientPubkey = event.tagValue('p');
+    if (recipientPubkey == null ||
+        recipientPubkey.length != 64 ||
+        recipientPubkey == _keys!.publicKeyHex) {
+      return;
+    }
+    try {
+      final plaintext = await _nip04Decrypt(
+        event.content,
+        Uint8List.fromList(_hexToBytes(recipientPubkey)),
+      );
+      final message = _withWrapperId(
+        NexusMessage.fromJson(jsonDecode(plaintext) as Map<String, dynamic>),
+        event,
+      );
+      // Only accept what we really sent: our own DID as sender.
+      if (message.fromDid != localDid || message.isBroadcast) {
+        print('[SYNC] Own DM ignored: sender ${message.fromDid} is not us');
+        return;
+      }
+      print('[SYNC] Own DM ${event.id.substring(0, 8)} → ${message.toDid}');
+      _msgController.add(message);
+    } catch (e) {
+      print('[SYNC] Own DM decrypt FAILED: $e');
     }
   }
 
