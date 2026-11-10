@@ -1,6 +1,6 @@
 # N.E.X.U.S. OneApp — Entscheidungsvorlage NOW / NEXT / LATER
 
-Stand: 18. August 2026, fortgeschrieben 6. November 2026
+Stand: 18. August 2026, fortgeschrieben 6. und 10. November 2026
 Grundlage: [ARCHITECTURE_REALITY.md](../current/ARCHITECTURE_REALITY.md) ·
 [decisions/](../decisions/) · [ANTWORT_ARCHITEKTUR_BRIEFING.md](ANTWORT_ARCHITEKTUR_BRIEFING.md) ·
 [Audit Lauf A](../audits/2026-07/AUDIT_LAUF_A.md) · [Lauf B](../audits/2026-07/AUDIT_LAUF_B.md)
@@ -10,6 +10,67 @@ Architekturrunde nicht in eine dritte, vierte Diskussionsrunde läuft. Diese
 Vorlage ersetzt keine Detaildokumente, sie ordnet sie nur ein.
 
 **Leitsatz bleibt:** Messenger First — Modular Underneath. Kein Rewrite.
+
+---
+
+## Gesamtplanung ab 10. November 2026 (Stufen A–G)
+
+Neu gesichtet nach dem Härtungsblock vom 7. bis 10.11.2026 (F-001, TD-33,
+TD-34, TD-37 bis TD-41, Zellen löschen). Die Stufen ordnen die Phasen 0–5
+unten fort und reichen bis zum Gesamtumfang. Ein neues Release ist derzeit
+**nicht** geplant (Entscheidung Joachim, 10.11.2026).
+
+| Stufe | Inhalt | Entspricht |
+|---|---|---|
+| A – Abschluss Härtung | restliche Gerätetests aus [GERAETETESTS_OFFEN.md](../current/GERAETETESTS_OFFEN.md); Backup/Restore mit Zellmitgliedschaften auf frischem Gerät (TD-43); Release erst auf Joachims Wunsch | Rest Phase 0/NOW |
+| B – Konto und Sync | Relay-Basis und eigenes Relay (TD-47); Kontoumzug (TD-58, TD-59); eigene DMs und längere Historie (TD-57, TD-63, TD-48); Kontakte abgleichen (TD-60, TD-71); Rest TD-33 (Gründer-Übergabe, Moderator-Änderungen, Bewerber übernehmen die Mitgliederliste); TD-32, TD-44, TD-45, TD-46, TD-65 | Phase 1 |
+| C – Mehrsprachigkeit | Lokalisierungsgrundlage, rund 1.500 Texte; DE/EN, dann ES/FR/RU (TD-62) | Phase 2 |
+| D – Messenger-Qualität | vorher Zielbild-Entscheidungen 1–4; Medienserver (TD-64); NIP-17/NIP-44; Desktop-Menü (TD-68); Anzeige wartender Nachrichten; Bugmeldungen und Änderungswünsche; Benachrichtigungen; Messenger-first-Modus; später Sprach-/Videotelefonie → v0.3.0 | Phase 3 |
+| E – Fundament für Module | ADR-0002 bis ADR-0005; Vertraulichkeit der Governance-Daten (TD-42); Gruppenverschlüsselung privater Gemeinschaften; Modulrahmen; schrittweise Modularisierung; Debug-Funktionen aus der Oberfläche (TD-50) | Phase 4 |
+| F – Module | Governance-Ausbau (Quadratic Voting, Superadmin-Abwahl, Expertenprofile/AURA, interzellulär); AETHER nach fertiger Spezifikation; Marktplatz; Portal-Brücke; Sphären | Phase 5 |
+| G – Plattformen | iOS/macOS, Linux/Browser; Inklusion ohne Smartphone | – |
+
+### Mesh-Zweig (parallel, Beginn frühestens ab Stufe C)
+
+**Anlass:** Auf Teneriffa wird der erste Pilot mit LoRa-Repeatern aufgebaut
+(Heltec V4 mit RTNode-Firmware, eigenständige Reticulum-Knoten; siehe
+[Mesh-Referenzmaterial](../specs/drafts/mesh/README.md)). Mesh wird deshalb
+gegenüber der bisherigen Einordnung („nach dem Piloten“, Stufe G)
+**vorgezogen** (Entscheidung Joachim, 10.11.2026).
+
+**Einordnung:** eigener Zweig neben der normalen OneApp-Planung, weil die
+Anforderungen anders sind (Funkhardware, Feldtests vor Ort,
+Protokollkompatibilität). **Nicht in Stufe B.** Ob er in Stufe C oder D
+beginnt, wird **nach Abschluss von Stufe B** entschieden — abhängig von der
+dann verfügbaren Kapazität. Bis dahin keine Umsetzung, auch kein
+Machbarkeitsnachweis.
+
+**Technischer Befund (10.11.2026, ungeprüft am Gerät):**
+
+- Die Repeater sprechen Reticulum. Handys docken laut Firmware-Beschreibung
+  per Bluetooth oder per WLAN über TCP (Port 4242) an. Die OneApp muss also
+  Reticulum sprechen, nicht rohes LoRa.
+- Eine Dart-Umsetzung von Reticulum ist nicht bekannt. Vorgesehen ist ein
+  schlanker, bytegenau kompatibler Nachbau in Dart mit vorhandenen
+  Kryptobibliotheken — keine FFI-Brücke zu Rust oder Python (das war der
+  Einwand von Audit Lauf B) und keine Änderung an Sperrstufe 1.
+- LoRa trägt nur wenige hundert Byte pro Paket bei rund 1 % Sendezeit
+  (EU 868 MHz): Text, Notmeldungen und kompakte Stimmen ja, Bilder und
+  vollständige Nostr-Events nein.
+
+**Schritte, wenn der Zweig startet** (Aufwand erst nach M1 belastbar
+schätzbar):
+
+| Schritt | Inhalt |
+|---|---|
+| M0 Klären | mit Gerald: Frequenzschema, Zahl der Repeater, Internet-Brücke, Anbindung der Handys (Bluetooth oder WLAN); Testaufbau mit zwei Boards und PC |
+| M1 Machbarkeit | App verbindet sich per WLAN mit einem Board, eigene Reticulum-Identität, Announces senden/empfangen, Einzelpaket an zweites Gerät; Gegenprobe mit dem Original-Reticulum am PC |
+| M2 Nachrichten | Text-Direktnachrichten über Funk, möglichst LXMF (kompatibel zu Sideband/Columba); Reticulum-Schlüssel im Kontaktaustausch |
+| M3 Einbau | Transport `lora` im TransportManager (Platzhalter existiert); Ausweichweg ohne Internet, Warteschlange, Hinweis „über Funk gesendet“ |
+| M4 Erweiterungen | Notmeldungen auf dem Dorfplatz, kompakte Stimmen, direkte Bluetooth-Anbindung ans Board |
+| WiFi Direct | nachrangig (unter Windows kaum nutzbar, LAN deckt vieles ab) |
+
+Vor dem Start wird die Entscheidung als ADR festgehalten.
 
 ---
 
@@ -308,7 +369,10 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Stand 6. November 2026: **Phase 0** des Projektablaufs oben abarbeiten. Die
+Stand 10. November 2026: Stufe A abschließen (Gerätetests), dann Stufe B.
+Nach Stufe B entscheiden, ob der Mesh-Zweig in Stufe C oder D startet.
+
+Frühere Fassung, Stand 6. November 2026: **Phase 0** des Projektablaufs oben abarbeiten. Die
 NOW-Punkte F-002, F-003 und TD-39 folgen in Phase 1. Parallel können die
 fünf ADRs besprochen und entschieden werden — ihre Umsetzung beginnt erst
 danach.

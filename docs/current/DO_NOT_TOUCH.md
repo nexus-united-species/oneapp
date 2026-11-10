@@ -156,12 +156,13 @@ Tabelle ist der konkrete Schutz davor.
 ## Übernommen aus Audit Lauf B
 
 [Lauf B](../audits/2026-07/AUDIT_LAUF_B.md) führt unter „Was ich nicht empfehle,
-obwohl es naheliegt" vier Punkte auf. Alle vier gelten unverändert weiter:
+obwohl es naheliegt" vier Punkte auf. Alle vier gelten weiter; der zweite
+ist seit 10.11.2026 präzisiert:
 
 | Nicht tun | Begründung von Lauf B |
 |---|---|
 | Eigene Blockchain / Substrate bauen | Löst kein Problem, das Hash-Kette plus Signaturprüfung nicht billiger löst |
-| Reticulum-/P2P-Sprachbrücke jetzt integrieren | Dauerpflege einer FFI-Grenze übersteigt, was ein Alleingründer ohne Entwickler tragen kann |
+| Reticulum-/P2P-Sprachbrücke jetzt integrieren | Dauerpflege einer FFI-Grenze übersteigt, was ein Alleingründer ohne Entwickler tragen kann. **Fortschreibung 10.11.2026:** Eine FFI-Brücke bleibt ausgeschlossen. Für den Teneriffa-Piloten ist ein Reticulum-Nachbau in Dart als paralleler Zweig ab Stufe C oder D vorgesehen, Entscheidung nach Stufe B ([NOW_NEXT_LATER](../planning/NOW_NEXT_LATER.md)) |
 | Die Gott-Dateien jetzt refaktorieren | Risikoreicher Umbau ohne Entwickler; die Event-Karte bringt fast denselben Nutzen |
 | Testabdeckung/CI zum Release-Kriterium machen | 600+ Tests existieren; offene Punkte sind Design-, keine Regressionslücken |
 
