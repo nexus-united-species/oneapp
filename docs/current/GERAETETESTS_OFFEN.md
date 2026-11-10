@@ -25,10 +25,10 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (TD-58/59, noch nicht committet) | Kontoumzug auf ein frisches Gerät oder Profil (am besten drittes Gerät; sonst nur nach Rückfrage, keine bestehende Identität überschreiben): Seed eingeben | Bildschirm „Kein Backup auf diesem Gerät“ mit „Backup-Datei auswählen“; Log `[PROFILE-RESTORE] Looking up own Kind-0`, danach „own profile found“; Name, Bio und Bild wie auf dem alten Gerät, kein Zufallsname |
-| (TD-58) | Backup-Datei vom alten Gerät (Einstellungen → Backup exportieren) auf das neue kopieren und auswählen | Kontakte, Kanäle, Gemeinschaften übernommen; „Dein Name: …“ auf dem Erfolgsbildschirm |
-| (TD-58) | Eine fremde oder beschädigte `.enc`-Datei auswählen | Meldung „… lässt sich mit deiner Seed Phrase nicht öffnen …“, nichts wird übernommen |
-| (TD-59) | Auf dem anderen Gerät (Kontakt) den Namen beobachten, während das neue Gerät startet | Der Name wechselt **nicht** kurz auf einen Zufallsnamen |
+| 43bb68c | Kontoumzug auf ein frisches Gerät oder Profil (am besten drittes Gerät; sonst nur nach Rückfrage, keine bestehende Identität überschreiben): Seed eingeben | Bildschirm „Kein Backup auf diesem Gerät“ mit „Backup-Datei auswählen“; Log `[PROFILE-RESTORE] Looking up own Kind-0`, danach „own profile found“; Name, Bio und Bild wie auf dem alten Gerät, kein Zufallsname |
+| 43bb68c | Backup-Datei vom alten Gerät (Einstellungen → Backup exportieren) auf das neue kopieren und auswählen | Kontakte, Kanäle, Gemeinschaften übernommen; „Dein Name: …“ auf dem Erfolgsbildschirm |
+| 43bb68c | Eine fremde oder beschädigte `.enc`-Datei auswählen | Meldung „… lässt sich mit deiner Seed Phrase nicht öffnen …“, nichts wird übernommen |
+| 43bb68c | Auf dem anderen Gerät (Kontakt) den Namen beobachten, während das neue Gerät startet | Der Name wechselt **nicht** kurz auf einen Zufallsnamen |
 | a6dbd7e | Beide Geräte: Einstellungen → Nostr-Netzwerk | `relay.nexus-terminal.org`, `relay.damus.io`, `nos.lol` stehen auf „Verbunden“; `relay.snort.social` und `relay.nostr.band` sind weg. Chat, Antrag und Stimme kommen wie bisher an |
 | a6dbd7e | Eigenes Relay eintragen (z. B. `wss://relay.primal.net`), App neu starten, danach wieder entfernen | Nach dem Neustart noch da; Papierkorb nur bei eigenen Relays; nach dem Entfernen weg, auch nach erneutem Neustart |
 | a6dbd7e | Handy: App in den Hintergrund, von Windows eine DM schicken | Genau **eine** Benachrichtigung; Dienst-Benachrichtigung zeigt „Verbunden mit 3 von 3 Relays“ |
