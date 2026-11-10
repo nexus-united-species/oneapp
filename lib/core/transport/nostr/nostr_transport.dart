@@ -378,6 +378,9 @@ class NostrTransport implements MessageTransport {
   /// Adds a custom relay URL.
   void addRelay(String url) => _relayManager.addRelay(url);
 
+  /// Removes a relay and closes its connection.
+  Future<void> removeRelay(String url) => _relayManager.removeRelay(url);
+
   /// Sets the X25519 encryption public key to broadcast in presence events.
   void setEncryptionPublicKey(String hexKey) {
     _encryptionPublicKeyHex = hexKey;

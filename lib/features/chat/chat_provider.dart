@@ -28,6 +28,8 @@ import '../../core/transport/nexus_peer.dart';
 import '../../core/transport/nostr/nostr_event.dart';
 import '../../core/transport/nostr/nostr_keys.dart';
 import '../../core/transport/nostr/nostr_outbox.dart';
+import '../../core/transport/nostr/nostr_relay_manager.dart';
+import '../../core/transport/nostr/relay_config.dart';
 import '../../core/transport/nostr/nostr_transport.dart';
 import '../../core/transport/transport_manager.dart';
 import '../../services/background_service.dart';
@@ -254,9 +256,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _manager.registerTransport(_lanTransport!);
 
       // Nostr transport – internet fallback; started conditionally below.
+      // Default relays plus the user's own, persisted relays (TD-47).
+      final relayUrls = _nostrTransport == null
+          ? effectiveRelays(await loadCustomRelays())
+          : null;
       _nostrTransport ??= NostrTransport(
         localDid: identity.did,
         localPseudonym: identity.pseudonym,
+        relayManager: NostrRelayManager(relayUrls: relayUrls),
         // Unsent chat events survive restarts and go out on reconnect.
         outboxStore: PodNostrOutboxStore(),
       );
@@ -3156,9 +3163,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Adds a custom Nostr relay URL.
-  void addNostrRelay(String url) {
-    _nostrTransport?.addRelay(url);
+  /// Adds and persists a custom Nostr relay URL (TD-47).
+  ///
+  /// Returns `false` if [url] is not a valid `wss://`/`ws://` relay URL.
+  Future<bool> addNostrRelay(String url) async {
+    final normalized = await addCustomRelay(url);
+    if (normalized == null) return false;
+    _nostrTransport?.addRelay(normalized);
+    print('[RELAY-CONFIG] Added relay $normalized');
+    notifyListeners();
+    return true;
+  }
+
+  /// Removes a custom Nostr relay. Default relays stay.
+  Future<void> removeNostrRelay(String url) async {
+    if (isDefaultRelay(url)) return;
+    final removed = await removeCustomRelay(url);
+    await _nostrTransport?.removeRelay(normalizeRelayUrl(url) ?? url);
+    print('[RELAY-CONFIG] Removed relay $url (stored: $removed)');
     notifyListeners();
   }
 

@@ -25,6 +25,9 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (TD-47, noch nicht committet) | Beide Geräte: Einstellungen → Nostr-Netzwerk | `relay.nexus-terminal.org`, `relay.damus.io`, `nos.lol` stehen auf „Verbunden“; `relay.snort.social` und `relay.nostr.band` sind weg. Chat, Antrag und Stimme kommen wie bisher an |
+| (TD-47) | Eigenes Relay eintragen (z. B. `wss://relay.primal.net`), App neu starten, danach wieder entfernen | Nach dem Neustart noch da; Papierkorb nur bei eigenen Relays; nach dem Entfernen weg, auch nach erneutem Neustart |
+| (TD-47) | Handy: App in den Hintergrund, von Windows eine DM schicken | Genau **eine** Benachrichtigung; Dienst-Benachrichtigung zeigt „Verbunden mit 3 von 3 Relays“ |
 | 39b5106 | Optional: Handy (Superadmin) löscht eine Zelle, in der Windows Mitglied, aber nicht Gründer ist | Die Zelle verschwindet auch auf Windows |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |

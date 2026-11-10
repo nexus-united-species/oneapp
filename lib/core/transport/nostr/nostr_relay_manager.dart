@@ -7,15 +7,9 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'nostr_event.dart';
 import 'nostr_event_verifier.dart';
 import 'publish_result.dart';
+import 'relay_config.dart';
 
-/// Default public Nostr relays.
-const defaultRelays = [
-  'wss://relay.damus.io',
-  'wss://relay.snort.social',
-  'wss://nos.lol',
-  'wss://relay.nostr.band',
-  // nostr.wine is a paid relay — writes rejected for unpaid pubkeys.
-];
+export 'relay_config.dart' show defaultRelays;
 
 /// Connection state of a single relay.
 enum RelayState { disconnected, connecting, connected, error }

@@ -42,7 +42,7 @@ Release-Reihenfolge steht separat in
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | seltener partieller Secure-Storage-Zustand; nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Init-Race kann UNIQUE-Kollision erzeugen; Abstimmung ohne Pubkey ablehnen |
 | TD-46 | Geräteübergreifende Idempotenz teils in SharedPreferences | nach Reset/Zweitgerät sind doppelte Auto-Aktionen möglich |
-| TD-47 | Fest verdrahtete Standard-Relays | Verfügbarkeit und Aufbewahrung hängen von Drittservern ab. **Live geprüft 06.11.2026:** `relay.nostr.band` nicht erreichbar; `relay.snort.social` läuft nur noch im Arbeitsspeicher (speichert nichts dauerhaft); `nos.lol` nimmt höchstens 128 KB pro Event an. Faktisch trägt nur `relay.damus.io`. Selbst eingetragene Relays werden nicht gespeichert; der Hintergrunddienst nutzt nur das erste Relay |
+| TD-47 | Seit 10.11.2026 eigenes Relay `relay.nexus-terminal.org` als erstes Standard-Relay, eigene Relays werden gespeichert, Hintergrunddienst nutzt alle Relays (Gerätetest offen) | Rest: `nos.lol` begrenzt Events auf 128 KB (große Bilder erreichen nur die anderen beiden, bis TD-64). Ursprünglicher Befund, **live geprüft 06.11.2026:** `relay.nostr.band` nicht erreichbar; `relay.snort.social` läuft nur noch im Arbeitsspeicher (speichert nichts dauerhaft); `nos.lol` nimmt höchstens 128 KB pro Event an. Faktisch trägt nur `relay.damus.io`. Selbst eingetragene Relays werden nicht gespeichert; der Hintergrunddienst nutzt nur das erste Relay |
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen |
 | TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
@@ -363,6 +363,22 @@ Liste:
   in der Gesamtsuite gelegentlich nicht.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
+- **TD-47 weitgehend erledigt (10.11.2026, Gerätetest offen):** Auf dem
+  Projekt-VPS läuft ein eigenes strfry-Relay `wss://relay.nexus-terminal.org`
+  (dauerhafte Aufbewahrung, Events bis 512 KB, bis 100 Abos pro Verbindung,
+  nur die Event-Kinds der App, tägliche Sicherung). Neue Standardliste: eigenes
+  Relay, `relay.damus.io`, `nos.lol`; `relay.snort.social` und
+  `relay.nostr.band` sind entfernt (`relay_config.dart`). Selbst eingetragene
+  Relays werden in `nostr_custom_relays` gespeichert, normalisiert und lassen
+  sich wieder entfernen; Standard-Relays nicht. Der Android-Hintergrunddienst
+  verbindet sich mit allen Relays statt nur mit dem ersten und meldet eine DM,
+  die über mehrere Relays kommt, nur einmal.
+- **TD-78 neu (10.11.2026): keine Anmeldung nach NIP-42.** strfry gibt DMs
+  (Kind 4, später 1059) normalerweise nur nach einer NIP-42-Anmeldung heraus.
+  Die App kann das nicht, deshalb ist diese Sperre am eigenen Relay vorerst
+  aus: Wer wem schreibt, ist dort ohne Anmeldung abrufbar (wie bei damus).
+  Sobald die App NIP-42 beherrscht, schaltet der Server-Betrieb
+  `restrictedReadKinds = "4, 1059"` ein. Gehört fachlich zu NIP-17 (Stufe D).
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen
