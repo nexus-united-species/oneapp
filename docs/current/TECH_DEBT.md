@@ -26,8 +26,8 @@ Release-Reihenfolge steht separat in
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
 | TD-57 | Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
-| TD-58 | Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
-| TD-59 | Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
+| TD-58 | Seit 10.11.2026 Backup-Datei auswählbar, Name aus dem Backup übernommen (Gerätetest offen). Ursprünglich: Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
+| TD-59 | Seit 10.11.2026 holt ein frisch wiederhergestelltes Gerät erst sein Profil von den Relays (Gerätetest offen). Ursprünglich: Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
 | TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
@@ -379,6 +379,30 @@ Liste:
   aus: Wer wem schreibt, ist dort ohne Anmeldung abrufbar (wie bei damus).
   Sobald die App NIP-42 beherrscht, schaltet der Server-Betrieb
   `restrictedReadKinds = "4, 1059"` ein. Gehört fachlich zu NIP-17 (Stufe D).
+- **TD-59 erledigt (10.11.2026, Gerätetest offen):** Nach einem Seed-Restore
+  setzt die App `nexus_profile_restore_pending`. Solange das gilt, hält der
+  Transport das eigene Kind-0 zurück und fragt stattdessen das neueste eigene
+  Kind-0 bei den Relays ab. Nach dem ersten Treffer oder dem ersten EOSE
+  wartet er 3 Sekunden auf langsamere Relays und übernimmt dann das neueste:
+  Name, Bio, öffentliches Bild und die öffentlichen Felder aus
+  `nexus_profile` (`profile_restore.dart`). Erst danach wird das eigene Kind-0
+  wieder veröffentlicht. Antwortet kein Relay, bleibt die Sperre bestehen,
+  auch über einen Neustart; so wird nie ein Zufallsname veröffentlicht.
+  Bearbeitet der Nutzer vorher selbst sein Profil, gilt seine Eingabe und
+  die Abfrage endet. Log-Präfix `[PROFILE-RESTORE]`.
+- **TD-58 erledigt (10.11.2026, Gerätetest offen):** Nach dem Seed-Restore
+  zeigt die App auch ohne Backup auf dem Gerät einen Bildschirm mit
+  „Backup-Datei auswählen“ (neues Paket `file_picker`), zusätzlich „Andere
+  Backup-Datei wählen“, wenn schon eines gefunden wurde. Eine Datei, die sich
+  mit der Seed Phrase nicht öffnen lässt, wird mit klarer Meldung abgelehnt.
+  Der im Backup gesicherte Name ersetzt den generierten Namen, aber nie einen
+  selbst gewählten oder von den Relays geholten
+  (`pseudonymToAdoptFromBackup`). Offen: Bio und Profilbild stehen nicht im
+  Backup; sie kommen über TD-59 von den Relays, sofern dort veröffentlicht.
+- **Testumgebung (10.11.2026):** `flutter test` brach mit „failed to delete
+  build\unit_test_assets“ ab, weil die Ordner dort das Attribut
+  „Schreibgeschützt“ trugen. Attribut entfernt, danach lief alles. Wer es
+  setzt, ist unklar (Verdacht: Sandbox-Umgebung).
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

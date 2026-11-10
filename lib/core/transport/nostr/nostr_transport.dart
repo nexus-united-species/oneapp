@@ -160,6 +160,27 @@ class NostrTransport implements MessageTransport {
   String? _meshSubId;
   String? _presenceSubId;
   String? _metadataSubId;
+
+  // ── Own profile lookup after a seed restore (TD-59) ──────────────────────
+  /// While `true`, our own Kind-0 is held back and the newest own Kind-0 is
+  /// fetched from the relays instead. Set by the app after a seed restore;
+  /// cleared via [completeProfileRestore].
+  bool profileRestorePending = false;
+  String? _ownProfileSubId;
+  StreamSubscription<String>? _eoseSub;
+  Timer? _ownProfileSettleTimer;
+  NostrEvent? _ownProfileCandidate;
+  final _ownProfileController =
+      StreamController<Map<String, dynamic>?>.broadcast();
+
+  /// Window after the first own Kind-0 or first EOSE in which slower relays
+  /// may still deliver a newer own Kind-0.
+  static const ownProfileSettleDelay = Duration(seconds: 3);
+
+  /// Result of the own-profile lookup: the content of the newest own Kind-0
+  /// found on the relays, or `null` if no relay had one.
+  Stream<Map<String, dynamic>?> get onOwnProfileLookup =>
+      _ownProfileController.stream;
   String? _channelDiscoverySubId;
   String? _channelDeleteSubId;
 
@@ -487,6 +508,7 @@ class NostrTransport implements MessageTransport {
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
+    _stopOwnProfileLookup();
     if (_channelDiscoverySubId != null) {
       _relayManager.closeSubscription(_channelDiscoverySubId!);
     }
@@ -1847,6 +1869,7 @@ class NostrTransport implements MessageTransport {
   /// name without waiting for the next periodic heartbeat.
   Future<void> republishMetadata() async {
     if (_state != TransportState.connected) return;
+    if (profileRestorePending) return;
     await _publishMetadata();
     await _sendPresenceAnnouncement();
   }
@@ -1858,6 +1881,11 @@ class NostrTransport implements MessageTransport {
   /// at any time to learn our pseudonym even without a live presence event.
   Future<void> _publishMetadata() async {
     if (_keys == null) return;
+    if (profileRestorePending) {
+      print('[PROFILE-RESTORE] Own Kind-0 held back until the profile has '
+          'been fetched from the relays');
+      return;
+    }
     final name = _effectivePseudonym;
     final profile = ProfileService.instance.currentProfile;
     debugPrint('[Nostr] _publishMetadata called  name=$name');
@@ -1901,6 +1929,79 @@ class NostrTransport implements MessageTransport {
     );
     _relayManager.publishFireAndForget(event);
     debugPrint('[Nostr] Kind-0 event published: ${event.id}');
+  }
+
+  // ── Own profile lookup (TD-59) ────────────────────────────────────────────
+
+  void _startOwnProfileLookup() {
+    if (_keys == null) return;
+    _stopOwnProfileLookup();
+    _ownProfileSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.metadata],
+      'authors': [_keys!.publicKeyHex],
+      'limit': 1,
+    });
+    _eoseSub = _relayManager.onEose.listen((subId) {
+      if (subId == _ownProfileSubId) _scheduleOwnProfileSettle();
+    });
+    print('[PROFILE-RESTORE] Looking up own Kind-0 on the relays');
+  }
+
+  void _stopOwnProfileLookup() {
+    _ownProfileSettleTimer?.cancel();
+    _ownProfileSettleTimer = null;
+    _eoseSub?.cancel();
+    _eoseSub = null;
+    if (_ownProfileSubId != null) {
+      _relayManager.closeSubscription(_ownProfileSubId!);
+      _ownProfileSubId = null;
+    }
+  }
+
+  void _onOwnProfileCandidate(NostrEvent event) {
+    final current = _ownProfileCandidate;
+    if (current == null || event.createdAt > current.createdAt) {
+      _ownProfileCandidate = event;
+    }
+    _scheduleOwnProfileSettle();
+  }
+
+  void _scheduleOwnProfileSettle() {
+    _ownProfileSettleTimer ??=
+        Timer(ownProfileSettleDelay, _finishOwnProfileLookup);
+  }
+
+  void _finishOwnProfileLookup() {
+    final candidate = _ownProfileCandidate;
+    _ownProfileCandidate = null;
+    _stopOwnProfileLookup();
+    Map<String, dynamic>? content;
+    if (candidate != null) {
+      try {
+        final decoded = jsonDecode(candidate.content);
+        if (decoded is Map<String, dynamic>) content = decoded;
+      } on FormatException catch (e) {
+        print('[PROFILE-RESTORE] Own Kind-0 unreadable: $e');
+      }
+    }
+    print('[PROFILE-RESTORE] Lookup finished: '
+        '${content == null ? "no own profile on the relays" : "own profile found"}');
+    _ownProfileController.add(content);
+  }
+
+  /// Ends the own-profile lookup and publishes our Kind-0 and presence.
+  /// Call after the fetched profile has been applied (or none was found),
+  /// or when the user edits the profile before the lookup finished.
+  Future<void> completeProfileRestore() async {
+    if (!profileRestorePending) return;
+    profileRestorePending = false;
+    _ownProfileCandidate = null;
+    _stopOwnProfileLookup();
+    print('[PROFILE-RESTORE] Completed, publishing own Kind-0');
+    if (_state == TransportState.connected) {
+      await _publishMetadata();
+      await _sendPresenceAnnouncement();
+    }
   }
 
   /// Publishes a Kind 30078 presence announcement so other nodes can find us.
@@ -2107,6 +2208,8 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Metadata sub: $_metadataSubId  '
           '(${contactPubkeys.length} contacts, pubkeys pre-populated)');
     }
+
+    if (profileRestorePending) _startOwnProfileLookup();
 
     // Refresh metadata every 30 minutes to pick up name changes.
     _metadataRefreshTimer?.cancel();
@@ -3108,8 +3211,14 @@ class NostrTransport implements MessageTransport {
   /// persisted contacts on startup) and updates the stored pseudonym.
   void _handleMetadataEvent(NostrEvent event) {
     if (_keys == null) return;
-    // Ignore our own metadata events.
-    if (event.pubkey == _keys!.publicKeyHex) return;
+    // Own metadata only matters while looking up the profile after a seed
+    // restore (TD-59); otherwise ignore it.
+    if (event.pubkey == _keys!.publicKeyHex) {
+      if (profileRestorePending && _ownProfileSubId != null) {
+        _onOwnProfileCandidate(event);
+      }
+      return;
+    }
 
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;

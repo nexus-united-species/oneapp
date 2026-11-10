@@ -82,6 +82,7 @@ class NostrRelayManager {
 
   final _eventController = StreamController<NostrEvent>.broadcast();
   final _relayConnectedController = StreamController<String>.broadcast();
+  final _eoseController = StreamController<String>.broadcast();
 
   bool _running = false;
 
@@ -93,6 +94,10 @@ class NostrRelayManager {
   /// URL of each relay whose connection has just been established
   /// (initially and after every reconnect).
   Stream<String> get onRelayConnected => _relayConnectedController.stream;
+
+  /// Subscription ID each time a relay signals NIP-01 EOSE (end of stored
+  /// events) for it.
+  Stream<String> get onEose => _eoseController.stream;
 
   /// Snapshot of all relay statuses.
   List<RelayStatus> get statuses => List.unmodifiable(_statuses.values);
@@ -484,6 +489,9 @@ class NostrRelayManager {
 
         case 'EOSE':
           print('[NOSTR] EOSE from ${_shortUrl(url)} sub=${msg.length > 1 ? (msg[1] as String).substring(0, 8) : "?"}');
+          if (msg.length > 1 && msg[1] is String) {
+            _eoseController.add(msg[1] as String);
+          }
       }
     } catch (_) {
       // Malformed message – ignore

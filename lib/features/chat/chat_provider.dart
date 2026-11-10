@@ -19,6 +19,9 @@ import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
 import '../../core/identity/identity_proof.dart';
 import '../../core/identity/identity_service.dart';
+import '../../core/identity/profile_restore.dart';
+import '../../core/identity/profile_service.dart';
+import '../profile/profile_image_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/ble/ble_transport.dart';
 import '../../core/transport/lan/lan_transport.dart';
@@ -138,7 +141,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Re-publishes Kind-0 metadata and presence with the current effective
   /// pseudonym. Call this immediately after the user saves a new display name
   /// so peers see the update without waiting for the next heartbeat.
-  Future<void> republishIdentity() => _nostrTransport?.republishMetadata() ?? Future.value();
+  ///
+  /// An explicit profile edit during the own-profile lookup after a seed
+  /// restore ends that lookup: the user's input wins (TD-59).
+  Future<void> republishIdentity() async {
+    final transport = _nostrTransport;
+    if (transport == null) return;
+    if (transport.profileRestorePending) {
+      await setProfileRestorePending(false);
+      await transport.completeProfileRestore();
+      return;
+    }
+    await transport.republishMetadata();
+  }
+
+  /// Applies the result of the own-profile lookup after a seed restore and
+  /// then lets the transport publish our Kind-0 again (TD-59).
+  Future<void> _applyOwnProfileLookup(Map<String, dynamic>? content) async {
+    final transport = _nostrTransport;
+    if (transport == null || !transport.profileRestorePending) return;
+    final profile = ProfileService.instance.currentProfile;
+    if (content != null && profile != null) {
+      String? picturePath;
+      final picture = content['picture'];
+      if (picture is String && picture.startsWith('data:')) {
+        picturePath = await ProfileImageService.instance.saveFromBase64(picture);
+      }
+      final updated =
+          profileFromOwnKind0(profile, content, picturePath: picturePath);
+      await ProfileService.instance.save(updated);
+      final name = nameFromKind0(content);
+      if (name != null) await IdentityService.instance.updatePseudonym(name);
+      print('[PROFILE-RESTORE] Applied own profile from relays: name=$name, '
+          'picture=${picturePath != null}');
+    }
+    await setProfileRestorePending(false);
+    await transport.completeProfileRestore();
+    notifyListeners();
+  }
 
   /// Actively fetches the latest Kind-0 metadata from Nostr relays for [did].
   /// No-op if the contact has no known Nostr pubkey or Nostr is not connected.
@@ -267,6 +307,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         // Unsent chat events survive restarts and go out on reconnect.
         outboxStore: PodNostrOutboxStore(),
       );
+      // After a seed restore: fetch our own profile before publishing it
+      // (TD-59). Must be set before the transport starts.
+      if (relayUrls != null) {
+        _nostrTransport!.profileRestorePending =
+            await isProfileRestorePending();
+        _nostrTransport!.onOwnProfileLookup.listen(_applyOwnProfileLookup);
+      }
       _manager.registerTransport(_nostrTransport!);
 
       // Wire FeedService to the Nostr transport for publishing and receiving.
