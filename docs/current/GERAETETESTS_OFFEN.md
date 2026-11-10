@@ -25,7 +25,6 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| 39b5106 | Windows neu bauen und starten | Testzelle811 verschwindet von selbst (die alte Löschung des Superadmins vom Handy wird jetzt angenommen); falls nicht: in der Zelle erscheint „Gemeinschaft löschen“, damit löschen |
 | 39b5106 | Optional: Handy (Superadmin) löscht eine Zelle, in der Windows Mitglied, aber nicht Gründer ist | Die Zelle verschwindet auch auf Windows |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
@@ -45,3 +44,4 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 3462048 | 09.11.2026 | Durchgang 4 wiederholt: Windows lehnt „beendet/entschieden“ (`kind=31010`) und das Protokoll (`kind=31013`) des Handys ab, Abstimmung läuft dort weiter; Handy zählt aus. Dabei TD-77 gefunden |
 | e5e2292 | 09.11.2026 | Neustart beider Apps: kein `DECIDED → VOTING` mehr; alte Antrags-Events werden mit `[GOV-AUTH] kind=31010 … rejected` abgelehnt |
 | 1162510, 2398096, d990268 | 10.11.2026 | Antrags-Knopf in der Zelle für Windows sichtbar; Delegation erscheint ohne Seitenwechsel; Handy veröffentlicht Kind-31007, Windows übernimmt („Applied roster … 2 members“, auch 6 Mitglieder in einer weiteren Zelle); Moderator-Ernennung kommt auf Windows an |
+| 39b5106 | 10.11.2026 | Windows als Gründer und letztes Mitglied: „Gemeinschaft löschen“ sichtbar, Testzelle811 mit Identitätsnachweis aufgelöst. Die alte Superadmin-Löschung vom Handy kam nicht von selbst an (offen: Superadmin löscht eine fremde Zelle) |
