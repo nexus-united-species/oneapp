@@ -13,7 +13,54 @@ Vorlage ersetzt keine Detaildokumente, sie ordnet sie nur ein.
 
 ---
 
+## Arbeitsplan ab 11. November 2026 (nach dem Audit)
+
+Grundlage: [Audit-Bericht November 2026](../audits/2026-11/AUDIT_BERICHT.md)
+(Auftrag: [AUDIT_AUFTRAG.md](../audits/2026-11/AUDIT_AUFTRAG.md)). Die
+P0-Befunde S-1, S-2, Z-1, R-1 und C-1 sind am Code nachgeprüft. Joachim hat
+die Block-Reihenfolge des Audits am 11.11.2026 „mit Anpassungen“
+übernommen. Die Stufen A–G unten bleiben als Inhaltsliste gültig; die
+**Reihenfolge** gibt ab jetzt dieser Plan vor. Community-Fassung:
+`AI-Output/OneApp_Arbeitsplan_nach_Audit_2026-11.md` (nicht versioniert).
+
+**Leitsatz geschärft (Vorschlag, Entscheidung offen):** „Messenger First“
+heißt Verlässlichkeit der Kernabläufe auf Telegram-Niveau – Nachricht
+kommt an, man sieht es, man weiß mit wem man schreibt, auch ohne Netz –
+nicht Funktionsgleichstand.
+
+| Block | Dauer (grob) | Inhalt | Audit / bisher |
+|---|---|---|---|
+| **1 – Vertrauen** | 3–4 Wochen | Kontakt-Sync korrigieren (C-1 bis C-3); Stimmen nach DID deduplizieren (S-2); Zeitmarke begrenzen, Abholfenster überlappen (Z-1, Z-2); Identitätsnachweis für DMs, Präsenz, Kanalbeiträge, Schlüsselwechsel nur mit Hinweis (S-1); Signaturprüfung LAN/BLE, Entpackgrenze (S-3, C-4); Medien in privaten Kanälen verschlüsseln (S-4); Debug-Keystore sichern (R-1, siehe Anpassung); Gerätetests abarbeiten und pushen; `docs/current/`, CLAUDE.md und Hinweis zu Bauplan 9.0 berichtigen (D-1, D-2) | Stufe A + neu |
+| **2 – Zustellung und Werkzeuge** | 4–6 Wochen | CI (`flutter analyze` + `flutter test`); Zwei-Instanzen-Test im Code; Wächtertests (Importrichtung, Speichergrenze, Dateigröße), ADR-0004/0005 annehmen; ADR-0003 neu fassen, erst speichern dann senden, Status „wartet/gesendet“; Outbox für alle Event-Arten, Backoff, Ping; Bluetooth-Verweigerung stoppt den Chat nicht; `version.json` signieren; Rest Stufe B (TD-32, TD-44, TD-45, TD-46, TD-65, TD-71); Lokalisierungs-Grundlage | Rest B, Teile C und E |
+| **3 – Messenger-Alltag** | 6–8 Wochen | Zielbild-Entscheidungen 1–4; kürzerer Erstnutzer-Weg, Alltagssprache, Platzhalter ausblenden; verständliche Fehlermeldungen; Desktop (Rechtsklick, dann zwei Spalten); Benachrichtigungen Windows/Kanäle; DB-Indizes, seitenweises Laden; Bearbeiten, Weiterleiten, Entwürfe, Kanalsuche, Kanal stummschalten, Sprachkompression Windows; Datenschutzerklärung, Abmelden/Löschen, Meldewege; danach Übersetzung DE/EN | Stufe D, Rest C |
+| **4 – Format und Funk** | ab Monat 4 | Mesh M0/M1 zeitlich begrenzt; **ein** Nachrichtenformat (NIP-17/NIP-44 + kompakte Funkform, Empfangsbestätigung, Absendernachweis) als ADR; Medienserver; GovernanceBridge, `lib/app/`, Modul-Liste; NIP-42 | Stufe D/E + Mesh-Zweig |
+| Danach | – | Gruppenschlüssel mit Wechsel, vertrauliche Governance (TD-42), Übergabe-Kette (C-5), ADR-0002; Bürgschaften gegen Mehrfachidentitäten, Social Recovery, Ablauf des Superadmin-Mandats; dann Stufe F (interzellulär, Quadratic Voting, AETHER) und G (Linux vor iOS) | Stufe E–G |
+
+**Anpassungen gegenüber dem Audit (Joachim/Claude, 11.11.2026):**
+- **R-1 Release-Schlüssel:** Ein Signaturwechsel erzwingt unter Android die
+  Deinstallation, die CLAUDE.md verbietet (Identitätsverlust). Deshalb
+  jetzt nur den vorhandenen `debug.keystore` sicher sichern; der Wechsel auf
+  einen echten Release-Schlüssel erfolgt einmalig vor der Öffnung für einen
+  größeren Kreis, nach Backup-Export und Prüfung der zwölf Wörter bei allen
+  Testern.
+- **S-6 eigene secp256k1-Rechnung:** berührt Sperrstufe 1. Die Punktprüfung
+  in `computeSharedSecret` ist klein und kommt in Block 1 oder 2; der
+  Wechsel auf eine geprüfte Bibliothek ist ein eigener, sorgfältiger
+  Schritt.
+- **C-5 Übergabe-Kette:** bleibt in Stufe E, wie im Audit vorgeschlagen.
+
+**Offene Entscheidungen** (Audit Abschnitt 5): „Telegram-Niveau“,
+Übergangszeit für Nachrichten ohne Identitätsnachweis, Vertraulichkeit der
+Governance (TD-42), Befugnisse und Dauer des Superadmins, Aufbewahrung und
+Löschzusage am eigenen Relay, Bürgschaften eigen oder mit Web of Trust,
+Push für iOS.
+
+---
+
 ## Gesamtplanung ab 10. November 2026 (Stufen A–G)
+
+> Seit 11.11.2026 gilt für die Reihenfolge der Arbeitsplan oben; diese
+> Stufen bleiben als Inhaltsliste.
 
 Neu gesichtet nach dem Härtungsblock vom 7. bis 10.11.2026 (F-001, TD-33,
 TD-34, TD-37 bis TD-41, Zellen löschen). Die Stufen ordnen die Phasen 0–5
@@ -369,8 +416,12 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Stand 10. November 2026: Stufe A abschließen (Gerätetests), dann Stufe B.
-Nach Stufe B entscheiden, ob der Mesh-Zweig in Stufe C oder D startet.
+Stand 11. November 2026: Block 1 des Arbeitsplans nach dem Audit, beginnend
+mit den Korrekturen am Kontakt-Sync (C-1 bis C-3).
+
+Frühere Fassung, Stand 10. November 2026: Stufe A abschließen
+(Gerätetests), dann Stufe B. Nach Stufe B entscheiden, ob der Mesh-Zweig in
+Stufe C oder D startet.
 
 Frühere Fassung, Stand 6. November 2026: **Phase 0** des Projektablaufs oben abarbeiten. Die
 NOW-Punkte F-002, F-003 und TD-39 folgen in Phase 1. Parallel können die
