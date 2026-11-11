@@ -502,6 +502,25 @@ Liste:
   (Rückfall auf `getVotes`) kann zusätzliche Stimmen derselben DID noch
   anzeigen, zählt sie aber nicht. Kein Gerätetest nötig: Für den Angriff
   braucht es einen manipulierten Client.
+- **Audit Z-1 und Z-2 erledigt (11.11.2026, Gerätetest offen):**
+  - Z-1: Die Zeitmarke der letzten Nachricht, ab der nach einem Neustart
+    nachgeholt wird, stammt vom Absender. Sie wird jetzt beim Speichern
+    (`ChatProvider._saveNostrTimestamp`) und beim Übernehmen
+    (`NostrTransport.setLastMessageTimestamp`) auf „jetzt“ begrenzt; auch
+    ein schon gespeicherter Wert aus der Zukunft wirkt nicht mehr. Vorher
+    genügte eine Nachricht mit Zukunftsdatum, damit das Gerät bis zu diesem
+    Datum keine Direktnachrichten mehr holte.
+  - Z-2: Direktnachrichten, eigene Direktnachrichten und Kanalbeiträge
+    werden ab der letzten Zeitmarke **7 Tage überlappend** geholt
+    (`NostrTransport.catchUpOverlap` = Haltezeit der Outbox) statt 60
+    Sekunden. Die Outbox des Absenders sendet mit dem ursprünglichen
+    Zeitstempel; mit 60 Sekunden Puffer fielen solche Nachrichten durch.
+    Doppelte verwirft die Datenbank. `#mesh`-Rundrufe behalten 60 Sekunden
+    (weltweiter Verkehr, nicht in der Outbox).
+- **TD-25 ergänzt (11.11.2026):** Die gelegentlich roten LAN-Discovery-Tests
+  sind kein Code-Fehler: Sie empfangen echte Ankündigungen einer App, die im
+  selben Netz läuft (UDP-Port 51000), statt nur ihrer eigenen Testdaten.
+  Bei laufender Windows-App rot, sonst grün.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

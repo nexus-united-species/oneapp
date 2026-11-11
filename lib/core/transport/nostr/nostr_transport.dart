@@ -165,6 +165,13 @@ class NostrTransport implements MessageTransport {
   /// Previously 24 hours, so a new device saw almost no history.
   static const newDeviceDmHistory = Duration(days: 30);
 
+  /// How far before the last known message DMs and channel posts are
+  /// fetched again after a restart (audit Z-2). A sender's outbox re-sends
+  /// unaccepted events with their original timestamp for up to
+  /// [NostrOutbox.maxAge]; a short buffer would skip them. Duplicates are
+  /// dropped by the message database.
+  static const catchUpOverlap = NostrOutbox.maxAge;
+
   // ── Contact list of our own devices (TD-60) ───────────────────────────────
   String? _contactSyncSubId;
   final _contactSyncController =
@@ -446,11 +453,24 @@ class NostrTransport implements MessageTransport {
   /// Persists the timestamp of the last received message so that the next
   /// [_setupSubscriptions] call fetches only events newer than this point.
   /// Call this whenever a message is received (from any transport).
+  ///
+  /// Capped at the current time (audit Z-1): timestamps are set by senders,
+  /// and a single message dated in the future would otherwise make every
+  /// later catch-up skip all messages until that date.
   void setLastMessageTimestamp(int epochSeconds) {
+    final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final capped = epochSeconds > nowSeconds ? nowSeconds : epochSeconds;
     if (_lastMessageTimestampSeconds == null ||
-        epochSeconds > _lastMessageTimestampSeconds!) {
-      _lastMessageTimestampSeconds = epochSeconds;
+        capped > _lastMessageTimestampSeconds!) {
+      _lastMessageTimestampSeconds = capped;
     }
+  }
+
+  /// `since` for DMs and channel posts after a restart: the last known
+  /// message minus [catchUpOverlap] (audit Z-2), or [fallback] without one.
+  int _catchUpSince(int fallback) {
+    final last = _lastMessageTimestampSeconds;
+    return last == null ? fallback : last - catchUpOverlap.inSeconds;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -587,9 +607,7 @@ class NostrTransport implements MessageTransport {
     if (_channelSubIds.containsKey(nostrTag)) return; // already subscribed
     final nowSeconds =
         DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final since = _lastMessageTimestampSeconds != null
-        ? _lastMessageTimestampSeconds! - 60
-        : nowSeconds - 86400 * 30;
+    final since = _catchUpSince(nowSeconds - 86400 * 30);
     final subId = _relayManager.subscribe({
       'kinds': [NostrKind.channelMessage],
       '#t': [nostrTag],
@@ -2161,11 +2179,11 @@ class NostrTransport implements MessageTransport {
     final msgSince = _lastMessageTimestampSeconds != null
         ? _lastMessageTimestampSeconds! - 60
         : nowSeconds - 86400;
-    // DMs reach further back on a device without history (TD-63); broadcasts
-    // keep the 24 h fallback because the #mesh tag is global traffic.
-    final dmSince = _lastMessageTimestampSeconds != null
-        ? msgSince
-        : nowSeconds - newDeviceDmHistory.inSeconds;
+    // DMs reach further back on a device without history (TD-63) and
+    // overlap by days after a restart, so outbox re-sends with their
+    // original timestamp are not skipped (audit Z-2). Broadcasts keep the
+    // short buffer because the #mesh tag is global traffic.
+    final dmSince = _catchUpSince(nowSeconds - newDeviceDmHistory.inSeconds);
 
     // Close stale subscriptions before recreating to avoid accumulating
     // orphaned REQ IDs in the relay manager.

@@ -91,16 +91,16 @@ void main() {
 
       await transport.start(keysOverride: _makeKeys());
 
-      // DM and mesh subscriptions should use tenMinutesAgo - 60 as since
-      final expectedSince = tenMinutesAgo - 60;
+      // DMs overlap by days (audit Z-2), mesh broadcasts keep 60 s.
+      final overlap = NostrTransport.catchUpOverlap.inSeconds;
       final dmFilter =
           relay.subscribedFilters.firstWhere((f) => f['kinds']?.contains(4) == true);
       final meshFilter =
           relay.subscribedFilters.firstWhere((f) => f['kinds']?.contains(1) == true);
 
-      expect(dmFilter['since'], equals(expectedSince),
-          reason: 'DM subscription must use saved timestamp');
-      expect(meshFilter['since'], equals(expectedSince),
+      expect(dmFilter['since'], equals(tenMinutesAgo - overlap),
+          reason: 'DM subscription must start from the saved timestamp');
+      expect(meshFilter['since'], equals(tenMinutesAgo - 60),
           reason: 'Broadcast subscription must use saved timestamp');
 
       await transport.stop();
@@ -141,13 +141,14 @@ void main() {
 
       final dmFilter =
           relay.subscribedFilters.firstWhere((f) => f['kinds']?.contains(4) == true);
-      // Since should be t1 - 60, not t2 - 60
-      expect(dmFilter['since'], equals(t1 - 60));
+      // Based on t1, not t2 (DMs overlap by catchUpOverlap, audit Z-2)
+      expect(dmFilter['since'],
+          equals(t1 - NostrTransport.catchUpOverlap.inSeconds));
 
       await transport.stop();
     });
 
-    test('DM and broadcast subscriptions both use the same msgSince value',
+    test('DMs overlap by days, broadcasts keep the short buffer (Z-2)',
         () async {
       final relay = CapturingRelayManager();
       final transport = _makeTransport(relay);
@@ -163,8 +164,11 @@ void main() {
       final meshFilter =
           relay.subscribedFilters.firstWhere((f) => f['kinds']?.contains(1) == true);
 
-      expect(dmFilter['since'], equals(meshFilter['since']),
-          reason: 'DM and broadcast must share the same since value');
+      expect(dmFilter['since'],
+          equals(ts - NostrTransport.catchUpOverlap.inSeconds),
+          reason: 'outbox re-sends keep their original timestamp');
+      expect(meshFilter['since'], equals(ts - 60),
+          reason: '#mesh is global traffic and not re-sent by the outbox');
 
       await transport.stop();
     });

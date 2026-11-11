@@ -1596,7 +1596,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final age = nowSec - ts;
         debugPrint('[SYNC] Last seen timestamp: $ts  '
             '(${age}s ago = ${(age / 3600).toStringAsFixed(1)}h)');
-        debugPrint('[SYNC] Subscribing with since: ${ts - 60}  (buffer 60s)');
+        debugPrint('[SYNC] DMs and channels fetched with '
+            '${NostrTransport.catchUpOverlap.inDays} days overlap (Z-2)');
       } else {
         debugPrint('[SYNC] No saved timestamp – defaulting to since=${nowSec - 86400} '
             '(last 24 h)');
@@ -1610,7 +1611,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _saveNostrTimestamp(DateTime timestamp) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final epochSec = timestamp.millisecondsSinceEpoch ~/ 1000;
+      // Capped at now (audit Z-1): the timestamp comes from the sender.
+      final nowSec = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+      final sent = timestamp.millisecondsSinceEpoch ~/ 1000;
+      final epochSec = sent > nowSec ? nowSec : sent;
       final saved = prefs.getInt(_nostrTimestampKey) ?? 0;
       if (epochSec > saved) {
         await prefs.setInt(_nostrTimestampKey, epochSec);

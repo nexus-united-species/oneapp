@@ -118,7 +118,8 @@ void main() {
       await transport.start(keysOverride: alice);
 
       for (final filter in relay.dmFilters()) {
-        expect(filter['since'], last - 60);
+        expect(filter['since'],
+            last - NostrTransport.catchUpOverlap.inSeconds);
       }
       await transport.stop();
     });
