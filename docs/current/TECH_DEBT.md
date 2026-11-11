@@ -491,6 +491,17 @@ Liste:
   - C-3: `ContactSyncService.attach` registriert alle Listener vor dem
     ersten `await`; die Seed Phrase wird danach geladen, eingehende Listen
     warten auf den Schlüssel (Sync-Gesetz 2).
+- **Audit S-2 erledigt (11.11.2026): eine Stimme pro Person.** Stimmen
+  werden nach DID berechtigt, aber nach Nostr-Schlüssel gespeichert und
+  ersetzt. Ein Mitglied, das mehrere Nostr-Schlüssel an seine DID bindet,
+  konnte so mehrfach zählen (per Test nachgestellt). Jetzt zählt jede
+  Auszählung und der Zwischenstand nur die neueste Stimme je DID
+  (`vote_dedup.dart`, aufgerufen in `_countableVotes`; Gleichstand nach
+  Schlüssel, damit jedes Gerät dieselbe wählt). Log `[TALLY-DEDUP]`.
+  Gespeichert bleiben alle Stimmen; die Ergebnisliste auf Empfängergeräten
+  (Rückfall auf `getVotes`) kann zusätzliche Stimmen derselben DID noch
+  anzeigen, zählt sie aber nicht. Kein Gerätetest nötig: Für den Angriff
+  braucht es einen manipulierten Client.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

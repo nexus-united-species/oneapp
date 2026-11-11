@@ -27,6 +27,7 @@ import 'proposal_option.dart';
 import 'tally_helpers.dart';
 import 'vote.dart';
 import 'voting_mode.dart';
+import 'vote_dedup.dart';
 import 'voting_snapshot.dart';
 
 /// A single discussion message attached to a proposal.
@@ -2225,8 +2226,14 @@ class ProposalService {
     return p == null ? votes : _countableVotes(p, votes);
   }
 
-  List<Vote> _countableVotes(Proposal p, List<Vote> votes,
+  List<Vote> _countableVotes(Proposal p, List<Vote> allVotes,
       {bool log = false}) {
+    // Audit S-2: one vote per DID, however many Nostr keys voted for it.
+    final votes = latestVotePerDid(allVotes);
+    if (log && votes.length < allVotes.length) {
+      print('[TALLY-DEDUP] ${p.id}: ${allVotes.length - votes.length} '
+          'extra vote(s) of the same DID not counted');
+    }
     final cutoffMs =
         (p.votingStartedAt ?? p.createdAt).toUtc().millisecondsSinceEpoch;
     // TD-37: with a frozen snapshot only listed voters count.
