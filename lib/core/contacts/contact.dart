@@ -85,7 +85,7 @@ class Contact {
   /// contact lists are merged (TD-60); metadata updates do not touch it.
   DateTime changedAt;
   String? notes; // private local note, never transmitted
-  bool blocked;          // local-only, never transmitted
+  bool blocked;          // synced to own devices only (TD-60), never to others
   DateTime? mutedUntil; // null = not muted; DateTime(9999) = permanent
   String? encryptionPublicKey; // X25519 pubkey hex (32 bytes = 64 hex chars)
   String? previousEncryptionPublicKey; // for key-change warning

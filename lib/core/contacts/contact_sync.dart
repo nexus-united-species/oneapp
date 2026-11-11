@@ -130,12 +130,15 @@ ContactSyncMerge mergeContactSync({
     if (did is! String || did.isEmpty || at == null) continue;
     remoteTombstones[did] = at;
 
+    // A contact changed here after the deletion stays, and so does its row:
+    // storing the mark would overwrite the contact in the database (audit
+    // C-1). The other device learns about the newer state via republish.
+    final contact = localByDid[did];
+    if (contact != null && contact.changedAt.toUtc().isAfter(at)) continue;
+
     final known = localTombstones[did];
     if (known == null || at.isAfter(known)) tombstones[did] = at;
-    final contact = localByDid[did];
-    if (contact != null && !contact.changedAt.toUtc().isAfter(at)) {
-      removed.add(did);
-    }
+    if (contact != null) removed.add(did);
   }
 
   // ── Contacts from the other device ────────────────────────────────────────

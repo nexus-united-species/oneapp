@@ -23,51 +23,89 @@ class ContactSyncService {
   /// Bundles quick successive changes into one publish.
   static const publishDelay = Duration(seconds: 5);
 
-  /// Time to wait for the other devices' list before publishing our own
-  /// after start, so a merged list goes out instead of a partial one.
-  static const initialPublishDelay = Duration(seconds: 20);
+  /// After the first relay reported the end of its stored events (EOSE):
+  /// time for a list that is still being verified or decrypted to arrive
+  /// before this device publishes its own (audit C-2).
+  static const afterEoseDelay = Duration(seconds: 3);
 
   NostrTransport? _transport;
   Uint8List? _key;
+  Future<Uint8List?> _keyReady = Future.value(null);
   StreamSubscription<void>? _changeSub;
+  StreamSubscription<void>? _eoseSub;
   StreamSubscription<({String content, int createdAt})>? _incomingSub;
   Timer? _publishTimer;
   Timer? _initialTimer;
   int _newestAppliedAt = 0;
+  bool _sawList = false;
+  bool _initialDecided = false;
   void Function(List<Contact> added)? _onContactsAdded;
 
   /// Connects to [transport]. [onContactsAdded] is called for contacts that
   /// arrived from another device (e.g. to fetch their Kind-0 profiles).
+  ///
+  /// The listeners are registered synchronously, before the first `await`,
+  /// so a caller that starts the transport right after `attach` (even
+  /// without awaiting it) cannot miss the first list (audit C-3, sync law 2).
   Future<void> attach(
     NostrTransport transport, {
     void Function(List<Contact> added)? onContactsAdded,
+    @visibleForTesting Future<String?> Function()? loadSeedPhrase,
   }) async {
-    await detach();
-    final mnemonic = await IdentityService.instance.loadSeedPhrase();
-    if (mnemonic == null) {
-      debugPrint('[CONTACT-SYNC] No seed phrase – contact sync disabled');
-      return;
-    }
-    _key = deriveContactSyncKey(mnemonic);
+    _stopListening();
     _transport = transport;
     _onContactsAdded = onContactsAdded;
+    _newestAppliedAt = 0;
+    _sawList = false;
+    _initialDecided = false;
+    _key = null;
+    final keyReady = Completer<Uint8List?>();
+    _keyReady = keyReady.future;
     _incomingSub = transport.onContactSync.listen(_onIncoming);
+    _eoseSub = transport.onContactSyncEose.listen((_) => _onEose());
     _changeSub = ContactService.instance.syncRelevantChanges
         .listen((_) => schedulePublish());
-    _initialTimer = Timer(initialPublishDelay, () {
-      if (_newestAppliedAt == 0) unawaited(_publish());
-    });
+
+    final mnemonic = await (loadSeedPhrase ??
+        IdentityService.instance.loadSeedPhrase)();
+    final key = mnemonic == null ? null : deriveContactSyncKey(mnemonic);
+    if (key == null) {
+      debugPrint('[CONTACT-SYNC] No seed phrase – contact sync disabled');
+    }
+    _key = key;
+    keyReady.complete(key);
   }
 
   Future<void> detach() async {
-    _publishTimer?.cancel();
-    _initialTimer?.cancel();
-    await _changeSub?.cancel();
-    await _incomingSub?.cancel();
-    _changeSub = null;
-    _incomingSub = null;
+    _stopListening();
     _transport = null;
     _key = null;
+  }
+
+  void _stopListening() {
+    _publishTimer?.cancel();
+    _initialTimer?.cancel();
+    unawaited(_changeSub?.cancel());
+    unawaited(_eoseSub?.cancel());
+    unawaited(_incomingSub?.cancel());
+    _changeSub = null;
+    _eoseSub = null;
+    _incomingSub = null;
+  }
+
+  /// First EOSE: the relay has no list newer than what it already sent.
+  /// Publish our own only if no list arrived meanwhile; otherwise the merge
+  /// decides whether a republish is needed.
+  void _onEose() {
+    if (_initialDecided) return;
+    _initialDecided = true;
+    _initialTimer = Timer(afterEoseDelay, () {
+      if (!_sawList) {
+        debugPrint('[CONTACT-SYNC] No contact list on the relays – '
+            'publishing ours');
+        unawaited(_publish());
+      }
+    });
   }
 
   void schedulePublish() {
@@ -96,7 +134,9 @@ class ContactSyncService {
   }
 
   Future<void> _onIncoming(({String content, int createdAt}) list) async {
-    final key = _key;
+    // Synchronously, before any await: the EOSE timer must see it.
+    _sawList = true;
+    final key = await _keyReady;
     if (key == null) return;
     if (list.createdAt < _newestAppliedAt) {
       debugPrint('[CONTACT-SYNC] Older contact list ignored');

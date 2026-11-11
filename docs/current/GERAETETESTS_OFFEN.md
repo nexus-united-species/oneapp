@@ -25,6 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (Audit C-1, noch nicht committet) | Zwei Geräte derselben Identität: Kontakt auf Gerät 2 löschen, kurz danach auf Gerät 1 die Vertrauensstufe dieses Kontakts ändern; Gerät 1 neu starten | Der Kontakt bleibt auf Gerät 1 erhalten, auch nach dem Neustart, samt Notiz; auf Gerät 2 kommt er zurück |
 | 0f43b2f | Handy gründet eine Testgemeinschaft, Windows tritt bei. Handy: Mitglied Windows → „Gründerrolle übertragen“ | Windows zeigt sich nach kurzer Zeit als Gründer (Log `[FOUNDER-HANDOVER] … now led by …`); Windows kann die Gemeinschaft umbenennen, Mitglieder entfernen und auflösen; das Handy ist einfaches Mitglied und kann Windows nicht entfernen |
 | 0f43b2f | Wie oben, aber Handy vor dem Übertragen in den Flugmodus, übertragen, dann wieder online | Die Übergabe kommt trotzdem auf Windows an (Log `Re-sent handover roster`), danach `successor confirmed` auf dem Handy |
 | 0f43b2f | Optional, braucht drei Identitäten: Handy gründet eine Gemeinschaft und ernennt Windows zum Moderator; ein drittes Gerät stellt eine Beitrittsanfrage, **Windows** bestätigt | Das dritte Gerät nimmt die Bestätigung an (Log `[ROSTER] Applicant roster …`, danach „Membership confirmed“) und sieht sofort alle Mitglieder |

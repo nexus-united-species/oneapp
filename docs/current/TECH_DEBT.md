@@ -472,6 +472,25 @@ Liste:
   und lernt die Übergabe erst mit der Mitgliederliste; eine Übergabe, die
   der Superadmin lokal auslöst, bleibt lokal. Log-Präfix
   `[FOUNDER-HANDOVER]`.
+- **Audit November 2026, Block 1 begonnen (11.11.2026):** Befunde und
+  Arbeitsplan: [AUDIT_BERICHT.md](../audits/2026-11/AUDIT_BERICHT.md),
+  [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md). Die neuen Befunde
+  (Kürzel S-, Z-, C-, R-, U-, F-, D-, M-, W-, L-, P-) stehen bis zur
+  geplanten Neuordnung dieser Datei nur im Audit-Bericht.
+- **Audit C-1 bis C-3 erledigt (11.11.2026, Gerätetest offen),
+  Nacharbeit zu TD-60:**
+  - C-1: Ein fremder Löschvermerk für einen Kontakt, der hier nach der
+    Löschung geändert wurde, wird nicht mehr gespeichert. Vorher überschrieb
+    er die Datenbankzeile des Kontakts; nach dem Neustart war der Kontakt
+    samt Notizen weg. Zusätzlich schreibt `applySyncMerge` nie einen
+    Löschvermerk über einen vorhandenen Kontakt.
+  - C-2: Die erste eigene Kontaktliste geht erst hinaus, wenn ein Relay das
+    Ende seiner gespeicherten Events meldet (EOSE) und danach 3 Sekunden
+    lang keine Liste angekommen ist; die feste 20-Sekunden-Wartezeit ist
+    entfernt. Ohne Antwort eines Relays wird nichts veröffentlicht.
+  - C-3: `ContactSyncService.attach` registriert alle Listener vor dem
+    ersten `await`; die Seed Phrase wird danach geladen, eingehende Listen
+    warten auf den Schlüssel (Sync-Gesetz 2).
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

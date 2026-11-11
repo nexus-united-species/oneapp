@@ -174,6 +174,12 @@ class NostrTransport implements MessageTransport {
   /// one): the still encrypted content and its `created_at`.
   Stream<({String content, int createdAt})> get onContactSync =>
       _contactSyncController.stream;
+
+  /// Fires when a relay has delivered all stored events of the own contact
+  /// list subscription (NIP-01 EOSE), i.e. it has no newer list (audit C-2).
+  Stream<void> get onContactSyncEose => _relayManager.onEose
+      .where((subId) => subId == _contactSyncSubId)
+      .map((_) {});
   String? _meshSubId;
   String? _presenceSubId;
   String? _metadataSubId;

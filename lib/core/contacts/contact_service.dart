@@ -110,9 +110,13 @@ class ContactService {
       await _persistTombstone(did, at);
     }
     for (final e in merge.tombstones.entries) {
-      if (!merge.removed.contains(e.key)) {
-        await _persistTombstone(e.key, e.value);
+      if (merge.removed.contains(e.key)) continue;
+      // Never replace a live contact's row with a deletion mark (C-1).
+      if (_findByDid(e.key) != null) {
+        _tombstones.remove(e.key);
+        continue;
       }
+      await _persistTombstone(e.key, e.value);
     }
     for (final contact in [...merge.added, ...merge.updated]) {
       _tombstones.remove(contact.did);
@@ -592,6 +596,19 @@ class ContactService {
     } catch (e) {
       debugPrint('[CONTACTS] addContactFromBackup error: $e');
     }
+  }
+}
+
+// ── Test hooks ─────────────────────────────────────────────────────────────
+
+extension ContactServiceTestHooks on ContactService {
+  @visibleForTesting
+  void addForTest(Contact contact) => _contacts.add(contact);
+
+  @visibleForTesting
+  void clearForTest() {
+    _contacts.clear();
+    _tombstones.clear();
   }
 }
 

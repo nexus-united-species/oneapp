@@ -166,6 +166,8 @@ void main() {
       );
 
       expect(merge.removed, isEmpty);
+      expect(merge.tombstones, isEmpty,
+          reason: 'storing the mark would overwrite the live contact (C-1)');
       expect(merge.needsRepublish, isTrue);
     });
 
