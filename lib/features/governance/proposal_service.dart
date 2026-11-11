@@ -721,7 +721,7 @@ class ProposalService {
     // TD-37: freeze who may vote, so every device tallies the same list.
     p.eligibleVoters = buildEligibleVoterSnapshot(
       CellService.instance.membersOf(p.cellId),
-      founderDid: cell?.createdBy,
+      founderDid: cell?.currentFounder,
     );
     print('[TALLY-SNAPSHOT] ${p.id}: ${p.eligibleVoters!.length} eligible '
         'voters frozen at voting start');
@@ -2255,7 +2255,7 @@ class ProposalService {
     final founderDid = CellService.instance.allKnownCells
         .where((c) => c.id == p.cellId)
         .firstOrNull
-        ?.createdBy;
+        ?.currentFounder;
     final diff = snapshotDifferences(
       snapshot,
       CellService.instance.membersOf(p.cellId),

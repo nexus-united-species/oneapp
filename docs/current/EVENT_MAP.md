@@ -38,7 +38,7 @@ Quelle: [nostr_event.dart:10](../../lib/core/transport/nostr/nostr_event.dart)
 | 31004 | `cellMembershipConfirmed` | `_handleCellMembershipConfirmedEvent` | `CellService` |
 | 31005 | `cellMemberUpdate` | `_handleCellMemberUpdateEvent` | `CellService` |
 | 31006 | `cellFoundingPermit` | `_handleIncomingPermitEvent` | `CellFoundingPermitService` |
-| 31007 | `cellRoster` (TD-33) | `_handleCellRosterEvent` | `CellService.applyRoster` (nur vom nachgewiesenen Gründer) |
+| 31007 | `cellRoster` (TD-33) | `_handleCellRosterEvent` | `CellService.applyRoster` (nur vom nachgewiesenen aktuellen Gründer; nennt die Liste einen anderen Gründer, ist das eine Gründer-Übergabe, seit 11.11.2026). Bewerber merken sich die Liste getrennt (`rememberApplicantRoster`) |
 | 31010 | `proposalEvent` | `_handleProposalEvent` | `ProposalService` |
 | 31011 | `voteEvent` | `_handleVoteEvent` | `ProposalService` |
 | 31012 | `delegationEvent` | `_handleDelegationEvent` | `ProposalService` |

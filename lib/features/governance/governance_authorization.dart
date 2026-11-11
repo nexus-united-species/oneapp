@@ -23,12 +23,12 @@ enum GovernanceAuthDecision {
 Future<String?> _provenDid(String signerPubkey, Object? idProof) =>
     IdentityProof.verifiedDid(proof: idProof, nostrPubkeyHex: signerPubkey);
 
-/// Whether [did] may dissolve [cell]: its founder, or the superadmin
+/// Whether [did] may dissolve [cell]: its current founder, or the superadmin
 /// (decision of 10.11.2026). The superadmin DID comes from the app's system
 /// configuration, which every device shares; system admins are not synced
 /// between devices and therefore cannot be checked here.
 bool mayDissolveCell(String did, Cell cell, String? superadminDid) =>
-    did == cell.createdBy ||
+    did == cell.currentFounder ||
     (superadminDid != null && superadminDid.isNotEmpty && did == superadminDid);
 
 /// A locally known cell may be dissolved only by [mayDissolveCell].
@@ -49,8 +49,10 @@ Future<GovernanceAuthDecision> authorizeCellDissolution({
 /// A cell announcement (discovery or rename) must come from the founder.
 /// Exception: first discovery without any proof (older app versions).
 ///
-/// For a cell already known locally ([existing]) the founder is taken from
-/// the local record and may not be changed by the announcement.
+/// For a cell already known locally ([existing]) the creator may not be
+/// changed by the announcement, and only its current founder (after a
+/// handover, TD-33) may announce changes. A device discovering the cell
+/// cannot know about handovers and accepts only the creator.
 Future<GovernanceAuthDecision> authorizeCellAnnouncement({
   required Cell? existing,
   required Cell incoming,
@@ -67,15 +69,16 @@ Future<GovernanceAuthDecision> authorizeCellAnnouncement({
   }
   final did = await _provenDid(signerPubkey, idProof);
   if (did == null) return GovernanceAuthDecision.missingProof;
-  return did == incoming.createdBy
+  final founder = existing?.currentFounder ?? incoming.createdBy;
+  return did == founder
       ? GovernanceAuthDecision.allowed
       : GovernanceAuthDecision.notAuthorized;
 }
 
 /// Kind-31005 member updates:
 /// - `left`: only the member themself.
-/// - `joined` / `removed`: the founder or a locally known moderator.
-///   The founder can never be removed.
+/// - `joined` / `removed`: the current founder or a locally known
+///   moderator. The current founder can never be removed.
 Future<GovernanceAuthDecision> authorizeMemberUpdate({
   required Cell? cell,
   required List<CellMember> members,
@@ -92,10 +95,10 @@ Future<GovernanceAuthDecision> authorizeMemberUpdate({
         ? GovernanceAuthDecision.allowed
         : GovernanceAuthDecision.notAuthorized;
   }
-  if (action == 'removed' && targetDid == cell.createdBy) {
+  if (action == 'removed' && targetDid == cell.currentFounder) {
     return GovernanceAuthDecision.notAuthorized;
   }
-  if (did == cell.createdBy) return GovernanceAuthDecision.allowed;
+  if (did == cell.currentFounder) return GovernanceAuthDecision.allowed;
   final signer = members.where((m) => m.did == did).firstOrNull;
   if (signer == null || !signer.canManageRequests) {
     return GovernanceAuthDecision.notAuthorized;
@@ -147,8 +150,10 @@ Future<GovernanceAuthDecision> authorizeMembershipConfirmation({
       : GovernanceAuthDecision.notAuthorized;
 }
 
-/// Kind-31007 cell rosters (TD-33): only the proven founder of the locally
-/// known cell, for that cell, listing that founder as founder.
+/// Kind-31007 cell rosters (TD-33): only the proven current founder of the
+/// locally known cell, for that cell. The roster lists either that founder
+/// as founder (normal case) or another member as founder: that is a founder
+/// handover, which only the current founder can sign.
 Future<GovernanceAuthDecision> authorizeCellRoster({
   required Cell? cell,
   required CellRoster roster,
@@ -156,18 +161,20 @@ Future<GovernanceAuthDecision> authorizeCellRoster({
   required Object? idProof,
 }) async {
   if (cell == null) return GovernanceAuthDecision.unknownCell;
-  if (roster.cellId != cell.id || roster.founderDid != cell.createdBy) {
-    return GovernanceAuthDecision.notAuthorized;
-  }
+  if (roster.cellId != cell.id) return GovernanceAuthDecision.notAuthorized;
   final did = await _provenDid(signerPubkey, idProof);
   if (did == null) return GovernanceAuthDecision.missingProof;
-  return did == cell.createdBy
+  return did == cell.currentFounder
       ? GovernanceAuthDecision.allowed
       : GovernanceAuthDecision.notAuthorized;
 }
 
+/// Whether an authorized [roster] hands [cell] over to a new founder.
+bool isFounderHandover(Cell cell, CellRoster roster) =>
+    roster.cellId == cell.id && roster.founderDid != cell.currentFounder;
+
 bool _isManager(String did, Cell? cell, List<CellMember> members) =>
-    (cell != null && did == cell.createdBy) ||
+    (cell != null && did == cell.currentFounder) ||
     members.any((m) => m.did == did && m.canManageRequests);
 
 bool _isMember(String did, Cell? cell, List<CellMember> members) =>

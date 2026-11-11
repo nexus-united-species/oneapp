@@ -380,6 +380,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         _lastRosterPublishByRelay[relayUrl] = now;
         CellService.instance.publishRostersForFoundedCells();
+        unawaited(CellService.instance.republishPendingHandovers());
       });
 
       // G2 governance – wire ProposalService callbacks to NostrTransport.
@@ -993,7 +994,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ..remove('_nostr_pubkey')
         ..remove('_created_at')
         ..remove('_own_device')
-        ..remove(IdentityProof.contentKey);
+        ..remove(IdentityProof.contentKey)
+        // A founder handover is accepted only from a roster signed by the
+        // previous founder, never from an announcement (TD-33).
+        ..remove('founderDid');
       final ownDevice = data['_own_device'] as bool? ?? false;
       final cell = Cell.fromJson(cellJson);
       print('[CELL-UPDATE] _onCellAnnounced: cellId=${cell.id}, name="${cell.name}", version=n/a, self=$ownDevice');
@@ -1130,7 +1134,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final knownCell = _knownCell(cell.id);
         final decision = await authorizeMembershipConfirmation(
           knownCell: knownCell,
-          knownMembers: CellService.instance.membersOf(cell.id),
+          // TD-33: while applying, the founder's roster tells which
+          // moderators may confirm.
+          knownMembers: CellService.instance.approversFor(cell.id),
           payloadCell: cell,
           member: member,
           myDid: IdentityService.instance.currentIdentity?.did ?? '',
@@ -1154,9 +1160,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (decision != GovernanceAuthDecision.allowed || knownCell == null) {
           print('[CELL-AUTH] Membership confirmation rejected for '
               '${cell.id}: ${decision.name}');
+          // Possibly confirmed by a moderator this device does not know yet:
+          // check again once the founder's roster arrives (TD-33).
+          if (decision == GovernanceAuthDecision.notAuthorized &&
+              CellService.instance.hasAppliedTo(cell.id)) {
+            _rememberConfirmationAwaitingRoster(cell.id, data);
+          }
           return;
         }
         await CellService.instance.handleMembershipConfirmed(knownCell, member);
+        // The founder's roster seen while applying lists everyone; adopt it
+        // now instead of waiting for the next one (TD-33).
+        final roster = CellService.instance.takeApplicantRoster(cell.id);
+        if (roster != null) await CellService.instance.applyRoster(roster);
       } finally {
         _membershipConfirmationsInFlight.remove(lockKey);
       }
@@ -1226,10 +1242,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final lockKey = '${roster.cellId}|${roster.updatedAtMs}|$signer';
     if (!_rostersInFlight.add(lockKey)) return;
     try {
+      final myCell = CellService.instance.myCells
+          .where((c) => c.id == roster.cellId)
+          .firstOrNull;
+      // TD-33: applicants check the roster against the announced cell.
+      final isApplicant =
+          myCell == null && CellService.instance.hasAppliedTo(roster.cellId);
       final decision = await authorizeCellRoster(
-        cell: CellService.instance.myCells
-            .where((c) => c.id == roster.cellId)
-            .firstOrNull,
+        cell: myCell ?? (isApplicant ? _knownCell(roster.cellId) : null),
         roster: roster,
         signerPubkey: signer,
         idProof: data[IdentityProof.contentKey],
@@ -1238,12 +1258,51 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (decision != GovernanceAuthDecision.allowed) {
         print('[CELL-AUTH] Roster rejected for ${roster.cellId}: '
             '${decision.name}');
+        // Possibly from a new founder whose handover has not arrived yet:
+        // check again after the next handover (TD-33).
+        if (decision == GovernanceAuthDecision.notAuthorized) {
+          _rostersAwaitingHandover[roster.cellId] = data;
+        }
         return;
       }
+      if (myCell == null) {
+        if (CellService.instance.rememberApplicantRoster(roster)) {
+          final waiting = _confirmationsAwaitingRoster.remove(roster.cellId);
+          if (waiting != null) await _onCellMembershipConfirmed(waiting);
+        }
+        return;
+      }
+      final founderBefore = myCell.currentFounder;
       await CellService.instance.applyRoster(roster);
+      final founderAfter = CellService.instance.myCells
+          .where((c) => c.id == roster.cellId)
+          .firstOrNull
+          ?.currentFounder;
+      if (founderAfter != null && founderAfter != founderBefore) {
+        final waiting = _rostersAwaitingHandover.remove(roster.cellId);
+        if (waiting != null) await _onCellRoster(waiting);
+      }
     } finally {
       _rostersInFlight.remove(lockKey);
     }
+  }
+
+  /// Rosters rejected because their signer was not (yet) the founder here;
+  /// re-checked after a founder handover was applied (TD-33). Newest per cell.
+  final Map<String, Map<String, dynamic>> _rostersAwaitingHandover = {};
+
+  /// Confirmations rejected because the confirming moderator was unknown;
+  /// re-checked when the founder's roster arrives (TD-33).
+  final Map<String, Map<String, dynamic>> _confirmationsAwaitingRoster = {};
+
+  void _rememberConfirmationAwaitingRoster(
+      String cellId, Map<String, dynamic> data) {
+    if (!_confirmationsAwaitingRoster.containsKey(cellId) &&
+        _confirmationsAwaitingRoster.length >= _maxPendingConfirmations) {
+      _confirmationsAwaitingRoster
+          .remove(_confirmationsAwaitingRoster.keys.first);
+    }
+    _confirmationsAwaitingRoster[cellId] = data;
   }
 
   /// Confirmations that arrived before the cell's announcement (discovered
@@ -1402,7 +1461,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final myDid = IdentityService.instance.currentIdentity?.did;
     if (myDid == null) return;
     final cells = CellService.instance.myCells;
-    final founderCells = cells.where((c) => c.createdBy == myDid).toList();
+    final founderCells =
+        cells.where((c) => c.currentFounder == myDid).toList();
     if (founderCells.isEmpty) return;
     debugPrint('[CELL] Republishing ${founderCells.length} founder cell(s) to Nostr');
     for (final cell in founderCells) {

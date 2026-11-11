@@ -25,6 +25,9 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (TD-33 Übergabe, noch nicht committet) | Handy gründet eine Testgemeinschaft, Windows tritt bei. Handy: Mitglied Windows → „Gründerrolle übertragen“ | Windows zeigt sich nach kurzer Zeit als Gründer (Log `[FOUNDER-HANDOVER] … now led by …`); Windows kann die Gemeinschaft umbenennen, Mitglieder entfernen und auflösen; das Handy ist einfaches Mitglied und kann Windows nicht entfernen |
+| (TD-33 Übergabe) | Wie oben, aber Handy vor dem Übertragen in den Flugmodus, übertragen, dann wieder online | Die Übergabe kommt trotzdem auf Windows an (Log `Re-sent handover roster`), danach `successor confirmed` auf dem Handy |
+| (TD-33 Bewerber, noch nicht committet) | Optional, braucht drei Identitäten: Handy gründet eine Gemeinschaft und ernennt Windows zum Moderator; ein drittes Gerät stellt eine Beitrittsanfrage, **Windows** bestätigt | Das dritte Gerät nimmt die Bestätigung an (Log `[ROSTER] Applicant roster …`, danach „Membership confirmed“) und sieht sofort alle Mitglieder |
 | 33026b9 | Zwei Geräte derselben Identität: auf Gerät 1 einen Kontakt hinzufügen bzw. Vertrauensstufe ändern, 1 Minute warten | Auf Gerät 2 erscheint der Kontakt bzw. die neue Stufe, Name und Bild folgen über das Profil; Log `[CONTACT-SYNC] Merged: +1 …` |
 | 33026b9 | Auf Gerät 2 einen Kontakt löschen, danach Gerät 1 neu starten | Der Kontakt ist auch auf Gerät 1 weg und kommt nicht zurück |
 | 33026b9 | Neues Gerät per Seed, **ohne** Backup | Kontakte erscheinen nach etwa einer halben Minute von selbst |

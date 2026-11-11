@@ -97,6 +97,10 @@ class CellService {
   int? _wipeAt;
   static const _wipeKey = 'nexus_cell_wipe_at';
 
+  /// Founder handovers this device signed whose successor has not been seen
+  /// publishing yet: cellId → successor DID (TD-33). JSON in prefs.
+  static const _pendingHandoversKey = 'nexus_pending_founder_handovers';
+
   final _streamCtrl = StreamController<void>.broadcast();
 
   /// Fires whenever any cell data changes.
@@ -1251,7 +1255,12 @@ class CellService {
   }
 
   /// Transfers the FOUNDER role to [targetDid] and demotes the current founder
-  /// to MEMBER.  Only the current founder or a superadmin may call this.
+  /// to MEMBER.
+  ///
+  /// TD-33: if this device is the current founder, the handover goes out as
+  /// a roster signed by this device that lists [targetDid] as founder; every
+  /// other device then treats [targetDid] as founder. Otherwise (e.g. a
+  /// superadmin acting locally) the change stays on this device.
   Future<void> transferFounderRole(String cellId, String targetDid) async {
     final members = _members[cellId];
     if (members == null) return;
@@ -1259,6 +1268,11 @@ class CellService {
     final founderIdx = members.indexWhere((m) => m.role == MemberRole.founder);
     final targetIdx = members.indexWhere((m) => m.did == targetDid);
     if (founderIdx < 0 || targetIdx < 0) return;
+    final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    final iAmFounder = cellIdx >= 0 &&
+        myDid != null &&
+        _myCells[cellIdx].currentFounder == myDid;
 
     // Demote old founder to member.
     final oldFounder = members[founderIdx].copyWith(role: MemberRole.member);
@@ -1271,6 +1285,28 @@ class CellService {
     members[targetIdx] = newFounder;
     await PodDatabase.instance.upsertCellMember(
         cellId, newFounder.did, newFounder.toJson());
+
+    if (iAmFounder) {
+      final handedOver = _myCells[cellIdx].withFounder(targetDid);
+      _myCells[cellIdx] = handedOver;
+      await PodDatabase.instance.upsertCell(cellId, handedOver.toJson());
+      // Still signed by me, the previous founder: the only signature other
+      // devices accept for a handover.
+      final roster = buildRoster(cellId);
+      if (roster != null && onPublishRoster != null) {
+        _rosterVersions[cellId] = roster.updatedAtMs;
+        onPublishRoster!(roster.toJson());
+      }
+      print('[FOUNDER-HANDOVER] $cellId handed over to $targetDid, '
+          'roster ${roster == null ? "not built" : "published"}');
+      // Rosters go out fire-and-forget: repeat on every relay connect until
+      // the successor's own roster shows that the handover arrived.
+      final pending = await _loadPendingHandovers();
+      await _savePendingHandovers({...pending, cellId: targetDid});
+    } else {
+      print('[FOUNDER-HANDOVER] $cellId: local transfer only, '
+          'this device is not the current founder');
+    }
 
     _notify();
     debugPrint('[CELLS] Founder role transferred to $targetDid in $cellId');
@@ -1390,9 +1426,9 @@ class CellService {
         cell.id, member.did, member.toJson());
 
     // Bug A fix: on the joining device the founder is not yet in the DB.
-    // Add a synthetic FOUNDER entry derived from cell.createdBy so that
+    // Add a synthetic FOUNDER entry for the current founder so that
     // getMemberCount() returns the correct total on all devices.
-    final founderDid = cell.createdBy;
+    final founderDid = cell.currentFounder;
     if (founderDid != member.did) {
       final alreadyHasFounder =
           (_members[cell.id] ?? []).any((m) => m.did == founderDid);
@@ -1517,7 +1553,7 @@ class CellService {
     if (cell == null) return null;
     return CellRoster.fromMembers(
       cellId: cellId,
-      founderDid: cell.createdBy,
+      founderDid: cell.currentFounder,
       members: _members[cellId] ?? const [],
       createdAt: cell.createdAt,
       updatedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
@@ -1529,14 +1565,59 @@ class CellService {
   void publishRosterIfFounder(String cellId) {
     final myDid = IdentityService.instance.currentIdentity?.did;
     final cell = _myCells.where((c) => c.id == cellId).firstOrNull;
-    if (myDid == null || cell == null || cell.createdBy != myDid) return;
-    // After a (device-local, unsynced) founder transfer I am no longer the
-    // founder here; publishing would revert the transfer on other devices.
+    if (myDid == null || cell == null || cell.currentFounder != myDid) return;
+    // After a device-local transfer by someone else my role may differ;
+    // publishing then would contradict it.
     if (myMembershipIn(cellId)?.role != MemberRole.founder) return;
     final roster = buildRoster(cellId);
     if (roster == null || onPublishRoster == null) return;
     _rosterVersions[cellId] = roster.updatedAtMs;
     onPublishRoster!(roster.toJson());
+  }
+
+  Future<Map<String, String>> _loadPendingHandovers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingHandoversKey);
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return {
+        for (final e in decoded.entries)
+          if (e.key is String && e.value is String)
+            e.key as String: e.value as String,
+      };
+    } on FormatException {
+      return {};
+    }
+  }
+
+  Future<void> _savePendingHandovers(Map<String, String> pending) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (pending.isEmpty) {
+      await prefs.remove(_pendingHandoversKey);
+    } else {
+      await prefs.setString(_pendingHandoversKey, jsonEncode(pending));
+    }
+  }
+
+  /// Re-sends the handover rosters this device signed until each successor
+  /// has published a roster of their own (TD-33). Call on relay connect.
+  Future<void> republishPendingHandovers() async {
+    final pending = await _loadPendingHandovers();
+    if (pending.isEmpty) return;
+    final still = <String, String>{};
+    for (final entry in pending.entries) {
+      final cell = _myCells.where((c) => c.id == entry.key).firstOrNull;
+      // Gone, or handed on again since: my signature no longer counts.
+      if (cell == null || cell.currentFounder != entry.value) continue;
+      still[entry.key] = entry.value;
+      final roster = buildRoster(entry.key);
+      if (roster == null || onPublishRoster == null) continue;
+      onPublishRoster!(roster.toJson());
+      print('[FOUNDER-HANDOVER] Re-sent handover roster for ${entry.key}');
+    }
+    if (still.length != pending.length) await _savePendingHandovers(still);
   }
 
   /// Publishes the rosters of all cells I founded (at startup, so members
@@ -1558,12 +1639,50 @@ class CellService {
   /// The founder never applies its own roster: its local list is the source.
   /// Departures are still recorded only from explicit leave/remove events.
   /// Returns true if the roster was applied.
+  // ── Rosters of cells I applied to (TD-33) ────────────────────────────────
+  // Only used to recognise the moderators who may confirm my join request;
+  // they never make me a member or change local member data.
+  final Map<String, CellRoster> _applicantRosters = {};
+
+  /// Remembers a verified founder roster of a cell with a pending join
+  /// request of mine. Returns whether it is newer than the one known.
+  bool rememberApplicantRoster(CellRoster roster) {
+    if (!hasAppliedTo(roster.cellId)) return false;
+    if (_myCells.any((c) => c.id == roster.cellId)) return false;
+    final known = _applicantRosters[roster.cellId];
+    if (known != null && roster.updatedAtMs <= known.updatedAtMs) return false;
+    _applicantRosters[roster.cellId] = roster;
+    print('[ROSTER] Applicant roster for ${roster.cellId}: '
+        '${roster.members.length} members');
+    return true;
+  }
+
+  /// Hands over (and forgets) the roster remembered while applying, so a
+  /// freshly confirmed member can adopt it right away.
+  CellRoster? takeApplicantRoster(String cellId) =>
+      _applicantRosters.remove(cellId);
+
+  /// Members to check a membership confirmation against: the locally known
+  /// members plus, while my request is pending, the founder's roster.
+  List<CellMember> approversFor(String cellId) {
+    final local = membersOf(cellId);
+    final roster = _applicantRosters[cellId];
+    if (roster == null || !hasAppliedTo(cellId)) return local;
+    return List.unmodifiable([
+      ...local,
+      for (final entry in roster.members)
+        if (!local.any((m) => m.did == entry.did))
+          entry.toMember(cellId, roster.founderDid),
+    ]);
+  }
+
   Future<bool> applyRoster(CellRoster roster) async {
     final cellId = roster.cellId;
     final cellIdx = _myCells.indexWhere((c) => c.id == cellId);
     if (cellIdx < 0) return false;
     final myDid = IdentityService.instance.currentIdentity?.did;
-    if (myDid != null && _myCells[cellIdx].createdBy == myDid) return false;
+    final cellBefore = _myCells[cellIdx];
+    if (myDid != null && cellBefore.currentFounder == myDid) return false;
     final known = _rosterVersions[cellId];
     if (known != null && roster.updatedAtMs <= known) return false;
 
@@ -1591,7 +1710,13 @@ class CellService {
         if (!nextDids.contains(m.did)) m.did,
     ];
     _members[cellId] = next;
-    final updatedCell = _myCells[cellIdx].copyWith(memberCount: next.length);
+    // A roster naming someone else as founder is a handover, signed by the
+    // previous founder (checked by authorizeCellRoster, TD-33).
+    final handover = founderDid != cellBefore.currentFounder;
+    final updatedCell = (handover
+            ? cellBefore.withFounder(founderDid)
+            : cellBefore)
+        .copyWith(memberCount: next.length);
     _myCells[cellIdx] = updatedCell;
     _notify();
 
@@ -1604,6 +1729,20 @@ class CellService {
     await PodDatabase.instance.upsertCell(updatedCell.id, updatedCell.toJson());
     print('[ROSTER] Applied roster for $cellId: ${next.length} members '
         '(${removed.length} removed locally)');
+    if (handover) {
+      print('[FOUNDER-HANDOVER] $cellId now led by $founderDid '
+          '(was ${cellBefore.currentFounder})');
+      // I am the new founder: from now on my roster is the one that counts.
+      if (founderDid == myDid) publishRosterIfFounder(cellId);
+    } else {
+      // The successor publishes on their own: my handover has arrived.
+      final pending = await _loadPendingHandovers();
+      if (pending[cellId] == founderDid) {
+        await _savePendingHandovers({...pending}..remove(cellId));
+        print('[FOUNDER-HANDOVER] $cellId: successor confirmed, '
+            'no more re-sends');
+      }
+    }
     return true;
   }
 
@@ -1908,10 +2047,15 @@ class CellService {
       (_departures[cellId] ??= {})[did] = departedAtMs;
 
   @visibleForTesting
+  void addMyRequestForTest(CellJoinRequest request) => _myRequests.add(request);
+
+  @visibleForTesting
   void clearForTest() {
     _myCells.clear();
     _members.clear();
     _departures.clear();
     _rosterVersions.clear();
+    _applicantRosters.clear();
+    _myRequests.clear();
   }
 }

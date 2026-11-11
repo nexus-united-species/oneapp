@@ -5,6 +5,7 @@ import 'package:nexus_oneapp/core/identity/identity.dart';
 import 'package:nexus_oneapp/core/identity/identity_service.dart';
 import 'package:nexus_oneapp/core/storage/pod_database.dart';
 import 'package:nexus_oneapp/features/governance/cell.dart';
+import 'package:nexus_oneapp/features/governance/cell_join_request.dart';
 import 'package:nexus_oneapp/features/governance/cell_member.dart';
 import 'package:nexus_oneapp/features/governance/cell_roster.dart';
 import 'package:nexus_oneapp/features/governance/cell_service.dart';
@@ -232,26 +233,90 @@ void main() {
       expect(service.membersOf(cell.id).map((m) => m.did), contains(_me));
     });
 
-    test('a local founder transfer neither breaks nor reverts rosters',
+    test('the founder hands over with one roster naming the successor',
         () async {
       final published = <Map<String, dynamic>>[];
       service.onPublishRoster = published.add;
       actAs(_founder);
       await service.transferFounderRole(cell.id, _me);
 
-      service.publishRosterIfFounder(cell.id);
-      expect(published, isEmpty,
-          reason: 'after the transfer this device is no longer founder');
+      expect(published, hasLength(1));
+      final handover = CellRoster.tryParse(published.single)!;
+      expect(handover.founderDid, _me);
+      expect(handover.members.firstWhere((e) => e.did == _founder).role,
+          MemberRole.member);
+      expect(service.myCells.single.currentFounder, _me);
 
-      final roster = CellRoster.fromMembers(
+      service.publishRosterIfFounder(cell.id);
+      expect(published, hasLength(1),
+          reason: 'after the handover this device is no longer founder');
+    });
+
+    test('the handover is re-sent until the successor publishes', () async {
+      final published = <Map<String, dynamic>>[];
+      service.onPublishRoster = published.add;
+      actAs(_founder);
+      await service.transferFounderRole(cell.id, _me);
+      published.clear();
+
+      await service.republishPendingHandovers();
+      expect(published, hasLength(1), reason: 'still unconfirmed');
+      expect(CellRoster.tryParse(published.single)!.founderDid, _me);
+
+      // The successor's own roster arrives: the handover is confirmed.
+      await service.applyRoster(CellRoster(
         cellId: cell.id,
-        founderDid: _founder,
-        members: service.membersOf(cell.id),
-        createdAt: DateTime.utc(2026, 10, 1),
-        updatedAtMs: 1000,
-      );
-      expect(CellRoster.tryParse(roster.toJson()), isNotNull,
-          reason: 'exactly one founder on the wire');
+        updatedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch + 1000,
+        members: const [
+          CellRosterEntry(did: _founder, role: MemberRole.member, joinedAtMs: 1),
+          CellRosterEntry(did: _me, role: MemberRole.founder, joinedAtMs: 2),
+        ],
+      ));
+      published.clear();
+      await service.republishPendingHandovers();
+      expect(published, isEmpty);
+    });
+
+    test('a member device follows a handover roster', () async {
+      actAs(_other);
+      service.addMemberForTest(cell.id, _m(cell.id, _other, MemberRole.member));
+
+      final applied = await service.applyRoster(CellRoster(
+        cellId: cell.id,
+        updatedAtMs: 5000,
+        members: const [
+          CellRosterEntry(did: _founder, role: MemberRole.member, joinedAtMs: 1),
+          CellRosterEntry(did: _me, role: MemberRole.founder, joinedAtMs: 2),
+          CellRosterEntry(did: _other, role: MemberRole.member, joinedAtMs: 3),
+        ],
+      ));
+
+      expect(applied, isTrue);
+      expect(service.myCells.single.currentFounder, _me);
+      expect(service.myCells.single.createdBy, _founder,
+          reason: 'the creator stays recorded');
+      expect(
+          service.membersOf(cell.id).firstWhere((m) => m.did == _me).role,
+          MemberRole.founder);
+    });
+
+    test('the new founder takes over publishing after the handover', () async {
+      final published = <Map<String, dynamic>>[];
+      service.onPublishRoster = published.add;
+      actAs(_me);
+
+      await service.applyRoster(CellRoster(
+        cellId: cell.id,
+        updatedAtMs: 5000,
+        members: const [
+          CellRosterEntry(did: _founder, role: MemberRole.member, joinedAtMs: 1),
+          CellRosterEntry(did: _me, role: MemberRole.founder, joinedAtMs: 2),
+        ],
+      ));
+
+      expect(service.myCells.single.currentFounder, _me);
+      expect(published, hasLength(1));
+      expect(CellRoster.tryParse(published.single)!.founderDid, _me);
     });
 
     test('rosters of cells I am not a member of are ignored', () async {
@@ -284,6 +349,59 @@ void main() {
       expect(roster.founderDid, _founder);
       expect(roster.members.firstWhere((e) => e.did == _me).role,
           MemberRole.moderator);
+    });
+  });
+
+  group('roster while applying (TD-33)', () {
+    final service = CellService.instance;
+    const cellId = 'cell-applied';
+
+    CellRoster roster(int updatedAtMs) =>
+        CellRoster(cellId: cellId, updatedAtMs: updatedAtMs, members: const [
+          CellRosterEntry(did: _founder, role: MemberRole.founder, joinedAtMs: 1),
+          CellRosterEntry(did: _mod, role: MemberRole.moderator, joinedAtMs: 2),
+        ]);
+
+    void applyFor(String id) => service.addMyRequestForTest(CellJoinRequest(
+          id: 'req-$id',
+          cellId: id,
+          requesterDid: _me,
+          requesterPseudonym: 'Ich',
+          requestedAt: DateTime.utc(2026, 11, 10),
+        ));
+
+    tearDown(service.clearForTest);
+
+    test('without a pending request the roster is not kept', () {
+      expect(service.rememberApplicantRoster(roster(1000)), isFalse);
+      expect(service.approversFor(cellId), isEmpty);
+    });
+
+    test('an applicant learns the moderators who may confirm', () {
+      applyFor(cellId);
+
+      expect(service.rememberApplicantRoster(roster(1000)), isTrue);
+      final moderator =
+          service.approversFor(cellId).singleWhere((m) => m.did == _mod);
+      expect(moderator.canManageRequests, isTrue);
+      expect(service.myCells, isEmpty, reason: 'applying is not joining');
+    });
+
+    test('only a newer roster replaces the known one', () {
+      applyFor(cellId);
+      service.rememberApplicantRoster(roster(2000));
+
+      expect(service.rememberApplicantRoster(roster(1000)), isFalse);
+      expect(service.rememberApplicantRoster(roster(2000)), isFalse);
+      expect(service.rememberApplicantRoster(roster(3000)), isTrue);
+    });
+
+    test('after confirmation the roster is handed over once', () {
+      applyFor(cellId);
+      service.rememberApplicantRoster(roster(1000));
+
+      expect(service.takeApplicantRoster(cellId)?.updatedAtMs, 1000);
+      expect(service.takeApplicantRoster(cellId), isNull);
     });
   });
 }

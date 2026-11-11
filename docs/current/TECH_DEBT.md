@@ -20,7 +20,7 @@ Release-Reihenfolge steht separat in
 | ID | Thema | Aktueller Stand |
 |---|---|---|
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
-| TD-33 | Seit 10.11.2026 Mitgliederliste vom Gründer (Kind 31007, Gerätetest offen) | offen: Änderungen von Moderatoren erreichen andere über die Liste erst, wenn der Gründer online ist; Gründer-Übergabe wird weiterhin nicht übertragen |
+| TD-33 | Seit 10./11.2026 Mitgliederliste vom Gründer (Kind 31007), auch für Bewerber; Gründer-Übergabe netzweit (Gerätetest offen) | offen: Änderungen von Moderatoren erreichen andere über die Liste erst, wenn der Gründer online ist (über 31005 direkt schon); ein Gerät, das die Zelle neu entdeckt, kennt eine Übergabe erst nach der ersten Mitgliederliste |
 | TD-34 | Seit 09.11.2026 in Modell, DB (v27, additiv), Wire-Format und Vergleich (Gerätetest offen) | ältere Records ohne Zahl: Nenner weiter aus der Beteiligung rekonstruiert |
 | TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
@@ -204,10 +204,9 @@ Liste:
     Gründer der bekannten Zelle darf sich nicht ändern, übernommen werden
     die lokal bekannten Zelldaten. Bestätigungen, die vor der
     Zell-Ankündigung eintreffen, werden bis zu deren Eintreffen gehalten.
-    **Einschränkung:** Ein Bewerber kennt die Moderatoren einer Zelle noch
-    nicht. Bestätigt ein Moderator statt des Gründers, verwirft das Gerät des
-    Bewerbers die Bestätigung. Lösbar erst mit übertragbaren Mitgliederlisten
-    (TD-33/TD-37) oder einem vom Gründer signierten Moderatoren-Nachweis.
+    Seit 10.11.2026 (TD-33) kennt der Bewerber die Moderatoren aus der vom
+    Gründer signierten Mitgliederliste; Bestätigungen durch Moderatoren
+    werden damit angenommen.
   - Entscheidungsprotokoll (Kind 31013, seit 09.11.2026): jedes Gerät zählt
     selbst aus und veröffentlicht dasselbe Protokoll, darum darf jedes
     nachgewiesene Mitglied der Zelle senden. Der Antrag muss zur genannten
@@ -440,6 +439,39 @@ Liste:
   Veröffentlicht wird 5 Sekunden nach einer Änderung, nach dem Start nach
   20 Sekunden, wenn bis dahin keine Liste angekommen ist; ein Gerät ohne
   Kontakte veröffentlicht nichts. Log-Präfix `[CONTACT-SYNC]`.
+- **TD-33 ergänzt (10.11.2026, Gerätetest offen): Bewerber übernehmen die
+  Mitgliederliste.** Ein Gerät mit offener Beitrittsanfrage prüft die
+  Liste des Gründers gegen die angekündigte Zelle und merkt sie sich
+  getrennt (`rememberApplicantRoster`); sie macht es nicht zum Mitglied und
+  ändert keine Mitgliederdaten. Beim Prüfen einer Beitrittsbestätigung
+  zählen die Moderatoren aus dieser Liste mit (`approversFor`). Kommt die
+  Bestätigung eines Moderators vor der Liste an, wird sie zurückgelegt und
+  beim Eintreffen der Liste erneut geprüft. Nach der Aufnahme übernimmt das
+  neue Mitglied die gemerkte Liste sofort. Noch offen in TD-33: die
+  Gründer-Übergabe über das Netz (braucht eine Entscheidung, wer nach einer
+  Übergabe netzweit als Gründer gilt) und Moderator-Änderungen in der Liste
+  ohne den Gründer.
+- **TD-33 Gründer-Übergabe netzweit (11.11.2026, Gerätetest offen;
+  Entscheidung Joachim: „Netzweit übertragen“):** Die Zelle kennt neben dem
+  Ersteller (`createdBy`, unveränderlich) den aktuellen Gründer
+  (`Cell.founderDid`, Getter `currentFounder`). Alle Rechteprüfungen laufen
+  über den aktuellen Gründer: Auflösen, Ankündigungen bekannter Zellen,
+  Mitglieder-Updates (der aktuelle Gründer ist nicht entfernbar),
+  Beitrittsbestätigungen, Mitgliederlisten, Abstimmung starten, Liste der
+  Stimmberechtigten. Die Übergabe geht als Mitgliederliste hinaus, die der
+  bisherige Gründer signiert und in der der Nachfolger als Gründer steht;
+  nur diese Signatur wird angenommen. Der Nachfolger übernimmt danach das
+  Veröffentlichen der Liste, der bisherige Gründer ist einfaches Mitglied
+  und kann die Rolle nicht zurückholen. Weil Listen ohne Bestätigung
+  verschickt werden, wiederholt das abgebende Gerät die Übergabe bei jeder
+  Relay-Verbindung, bis es eine eigene Liste des Nachfolgers sieht
+  (`nexus_pending_founder_handovers`). Eine Liste des neuen Gründers, die vor
+  der Übergabe ankommt, wird zurückgelegt und danach erneut geprüft. Ein
+  Gründerwert aus Zell-Ankündigungen wird nie übernommen. Grenzen: Ein
+  Gerät, das die Zelle neu entdeckt, vertraut zunächst nur dem Ersteller
+  und lernt die Übergabe erst mit der Mitgliederliste; eine Übergabe, die
+  der Superadmin lokal auslöst, bleibt lokal. Log-Präfix
+  `[FOUNDER-HANDOVER]`.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

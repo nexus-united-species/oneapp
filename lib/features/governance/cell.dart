@@ -38,6 +38,11 @@ class Cell {
   final String name;
   final String description;
   final String createdBy;
+
+  /// Founder after a handover (TD-33); `null` while [createdBy] still leads.
+  /// Set only from a roster signed by the previous founder, never from an
+  /// announcement. Use [currentFounder] for every authority check.
+  final String? founderDid;
   final DateTime createdAt;
   final CellType cellType;
 
@@ -66,6 +71,7 @@ class Cell {
     required this.name,
     required this.description,
     required this.createdBy,
+    this.founderDid,
     required this.createdAt,
     required this.cellType,
     this.locationName,
@@ -115,6 +121,34 @@ class Cell {
     );
   }
 
+  /// Who leads the cell now: the founder after the latest handover, or the
+  /// creator.
+  String get currentFounder {
+    final handedTo = founderDid;
+    return handedTo != null && handedTo.isNotEmpty ? handedTo : createdBy;
+  }
+
+  /// A copy led by [did] (TD-33 founder handover).
+  Cell withFounder(String did) => Cell(
+        id: id,
+        name: name,
+        description: description,
+        createdBy: createdBy,
+        founderDid: did == createdBy ? null : did,
+        createdAt: createdAt,
+        cellType: cellType,
+        locationName: locationName,
+        geohash: geohash,
+        topic: topic,
+        category: category,
+        nostrTag: nostrTag,
+        maxMembers: maxMembers,
+        joinPolicy: joinPolicy,
+        minTrustLevel: minTrustLevel,
+        proposalWaitDays: proposalWaitDays,
+        memberCount: memberCount,
+      );
+
   /// True if the cell was created less than 7 days ago.
   bool get isNew =>
       DateTime.now().toUtc().difference(createdAt).inDays < 7;
@@ -127,6 +161,7 @@ class Cell {
         'name': name,
         'description': description,
         'createdBy': createdBy,
+        if (founderDid != null) 'founderDid': founderDid,
         'createdAt': createdAt.millisecondsSinceEpoch,
         'cellType': cellType.name,
         if (locationName != null) 'locationName': locationName,
@@ -148,6 +183,7 @@ class Cell {
       name: json['name'] as String,
       description: json['description'] as String? ?? '',
       createdBy: json['createdBy'] as String,
+      founderDid: json['founderDid'] as String?,
       createdAt: DateTime.fromMillisecondsSinceEpoch(
           json['createdAt'] as int,
           isUtc: true),
@@ -192,6 +228,7 @@ class Cell {
         name: name ?? this.name,
         description: description ?? this.description,
         createdBy: createdBy,
+        founderDid: founderDid,
         createdAt: createdAt,
         cellType: cellType,
         locationName: locationName ?? this.locationName,
