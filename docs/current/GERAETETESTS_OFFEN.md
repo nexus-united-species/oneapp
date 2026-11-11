@@ -25,7 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Audit Z-2, noch nicht committet) | Optional: Windows offline (WLAN aus), dem Handy eine Nachricht schreiben (bleibt in der Warteschlange); auf dem Handy derweil eine neuere Nachricht von jemand anderem empfangen und die App schließen; Windows wieder online, dann Handy-App starten | Die nachgereichte Nachricht von Windows erscheint auf dem Handy; Log `[SYNC] DMs and channels fetched with 7 days overlap` |
+| 46aceec | Optional: Windows offline (WLAN aus), dem Handy eine Nachricht schreiben (bleibt in der Warteschlange); auf dem Handy derweil eine neuere Nachricht von jemand anderem empfangen und die App schließen; Windows wieder online, dann Handy-App starten | Die nachgereichte Nachricht von Windows erscheint auf dem Handy; Log `[SYNC] DMs and channels fetched with 7 days overlap` |
 | 208fa71 | Zwei Geräte derselben Identität: Kontakt auf Gerät 2 löschen, kurz danach auf Gerät 1 die Vertrauensstufe dieses Kontakts ändern; Gerät 1 neu starten | Der Kontakt bleibt auf Gerät 1 erhalten, auch nach dem Neustart, samt Notiz; auf Gerät 2 kommt er zurück |
 | 0f43b2f | Handy gründet eine Testgemeinschaft, Windows tritt bei. Handy: Mitglied Windows → „Gründerrolle übertragen“ | Windows zeigt sich nach kurzer Zeit als Gründer (Log `[FOUNDER-HANDOVER] … now led by …`); Windows kann die Gemeinschaft umbenennen, Mitglieder entfernen und auflösen; das Handy ist einfaches Mitglied und kann Windows nicht entfernen |
 | 0f43b2f | Wie oben, aber Handy vor dem Übertragen in den Flugmodus, übertragen, dann wieder online | Die Übergabe kommt trotzdem auf Windows an (Log `Re-sent handover roster`), danach `successor confirmed` auf dem Handy |
