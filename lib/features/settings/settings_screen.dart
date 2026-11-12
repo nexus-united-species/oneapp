@@ -1040,11 +1040,10 @@ class _AdminSection extends StatelessWidget {
         final chatProvider = context.read<ChatProvider>();
         for (final cellJson in founderCells) {
           final cellId = cellJson['id'] as String? ?? '';
-          final cellName = cellJson['name'] as String? ?? cellId;
           if (cellId.isEmpty) continue;
-          // Kind-5 NIP-09: tells relays to delete the original announcement.
-          chatProvider.publishNostrCellDeletion(cellId, cellName);
-          // Kind-30000 with deleted:true + tag: propagates to all member devices.
+          // Kind-30000 with deleted:true replaces the announcement and
+          // propagates to all member devices. No Kind-5: relays would then
+          // reject this event (see ChatProvider.publishNostrCellDissolution).
           chatProvider.publishNostrCellDissolution(cellJson);
         }
         print('[CLEANUP] Publishing delete events for ${founderCells.length} owned cells');

@@ -1428,6 +1428,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Publishes a Kind-30000 cell-dissolution event (deleted:true) so that
   /// all member devices receive and clean up this cell automatically.
+  ///
+  /// This is the only event sent on dissolution. A NIP-09 Kind-5 for the
+  /// same address made relays reject this event ("deleted: user requested
+  /// deletion") whenever it arrived first, so other devices kept the cell.
   void publishNostrCellDissolution(Map<String, dynamic> cellJson) {
     _nostrTransport?.publishCellDissolution(cellJson);
     print('[CELL-DEL] Publishing cell deletion event: ${cellJson['id']}');
@@ -2753,11 +2757,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _nostrTransport?.publishDeletion(eventId!);
-  }
-
-  /// Publishes a Kind-5 deletion event for a cell (NIP-09 `a`-tag approach).
-  void publishNostrCellDeletion(String cellId, String cellName) {
-    _nostrTransport?.publishCellDeletion(cellId, cellName);
   }
 
   /// Sends a voice message to [recipientDid].

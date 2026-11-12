@@ -521,6 +521,19 @@ Liste:
   sind kein Code-Fehler: Sie empfangen echte Ankündigungen einer App, die im
   selben Netz läuft (UDP-Port 51000), statt nur ihrer eigenen Testdaten.
   Bei laufender Windows-App rot, sonst grün.
+- **Zellauflösung kam nicht an (12.11.2026, Gerätetest offen):** Beim
+  Löschen einer Gemeinschaft gingen zwei Ereignisse gleichzeitig raus: eine
+  NIP-09-Löschanfrage (Kind-5, `a`-Tag auf die eigene Kind-30000-Adresse)
+  und die Ankündigung mit `deleted: true`. Kam die Löschanfrage zuerst an,
+  lehnten die Relays die Ankündigung ab („deleted: user requested
+  deletion“, eigenes Relay und damus), und die anderen Geräte behielten die
+  Gemeinschaft. Gefunden im Gerätetest: Superadmin löscht eine fremde
+  Gemeinschaft. Die Kind-5-Löschanfrage entfällt jetzt; die Ankündigung mit
+  `deleted: true` ersetzt die alte Ankündigung allein. Die Kind-5 wurde beim
+  Empfang ohnehin nicht als Auflösung ausgewertet.
+- **Rote Tests in `transport_manager_test.dart` (12.11.2026):** 5 Tests der
+  Sende-Kaskade und des LAN-Vorrangs schlagen auch auf dem unveränderten
+  Stand fehl. Ursache noch nicht untersucht.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

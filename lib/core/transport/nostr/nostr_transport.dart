@@ -832,28 +832,6 @@ class NostrTransport implements MessageTransport {
     print('[CELL-RENAME] Kind-30000 published: accepted=${connectedRelays > 0}');
   }
 
-  /// Publishes a Kind-5 deletion event for a cell (NIP-09).
-  ///
-  /// Uses the proper NIP-09 `a` tag for parameterized replaceable events:
-  /// `['a', '30000:{pubkeyHex}:{cellId}']` so compliant relays actually
-  /// remove the original Kind-30000 announcement.
-  void publishCellDeletion(String cellId, String cellName) {
-    if (_keys == null) return;
-    // NIP-09: 'a' tag identifies the parameterized replaceable event to delete.
-    final aTag = '${NostrKind.cellAnnounce}:${_keys!.publicKeyHex}:$cellId';
-    final event = NostrEvent.create(
-      keys: _keys!,
-      kind: NostrKind.deletion,
-      content: 'Gemeinschaft "$cellName" wurde aufgelöst.',
-      tags: [
-        ['a', aTag],
-        ['t', 'nexus-cell'], // keep for backward-compat with older clients
-      ],
-    );
-    _relayManager.publishFireAndForget(event);
-    print('[CELL-DEL] Publishing Kind-5 delete for cell: $cellId');
-  }
-
   /// Publishes a Kind-31003 cell join request.
   ///
   /// [reqJson] is the full `CellJoinRequest.toJson()` map, which must already
@@ -907,6 +885,11 @@ class NostrTransport implements MessageTransport {
   /// Uses the same d-tag as the original announcement so relays replace it
   /// with this "deleted" version.  All devices subscribed to
   /// `#t: ['nexus-cell']` will receive it and clean up their local state.
+  ///
+  /// Deliberately not combined with a NIP-09 Kind-5 for the same address:
+  /// relays honour such a deletion for every later event at that address
+  /// and rejected this one, so the dissolution never reached other devices
+  /// (device test 2026-11-12).
   void publishCellDissolution(Map<String, dynamic> cellJson) {
     if (_keys == null) return;
     final cellId = cellJson['id'] as String? ?? '';
