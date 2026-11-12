@@ -43,7 +43,9 @@ class _AdminCellManagementScreenState
     await CellFoundingPermitService.instance.load();
     if (!mounted) return;
     setState(() {
-      _cells = List.from(CellService.instance.myCells);
+      // All known cells, not only joined ones: the superadmin must be able
+      // to delete a cell without joining it first.
+      _cells = List.from(CellService.instance.allKnownCells);
       _permits =
           List.from(CellFoundingPermitService.instance.allReceivedPermits);
       _loading = false;
