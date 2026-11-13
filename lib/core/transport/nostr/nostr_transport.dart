@@ -28,6 +28,7 @@ import '../nexus_peer.dart';
 import 'nostr_event.dart';
 import 'nostr_keys.dart';
 import 'nostr_outbox.dart';
+import 'sender_check.dart';
 import 'nostr_relay_manager.dart';
 import 'publish_result.dart';
 import 'publish_result_dao.dart';
@@ -1858,8 +1859,10 @@ class NostrTransport implements MessageTransport {
 
     final recipientPubBytes =
         Uint8List.fromList(_hexToBytes(recipientNostrPubkey));
+    // The identity proof travels inside the encrypted content, so the
+    // recipient can bind our DID to the signing key (audit S-1).
     final content = await _nip04Encrypt(
-      jsonEncode(message.toJson()),
+      jsonEncode(_withIdentityProof(message.toJson())),
       recipientPubBytes,
     );
 
@@ -3126,8 +3129,8 @@ class NostrTransport implements MessageTransport {
       final message = _withWrapperId(
         NexusMessage.fromJson(msgJson),
         event,
-      );
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
+      ).withSenderCheck(null);
+      _learnPeer(event.pubkey, message.fromDid, verified: false);
       _msgController.add(message);
     } catch (e) {
       print('[NOSTR] Kind-42 parse FAILED: $e');
@@ -3159,19 +3162,40 @@ class NostrTransport implements MessageTransport {
       final senderPubBytes = Uint8List.fromList(_hexToBytes(event.pubkey));
       final plaintext = await _nip04Decrypt(event.content, senderPubBytes);
       final msgJson = jsonDecode(plaintext) as Map<String, dynamic>;
-      final message = _withWrapperId(
+      final parsed = _withWrapperId(
         NexusMessage.fromJson(msgJson),
         event,
       );
 
+      // Audit S-1: the DID inside the message must be bound to the key that
+      // signed the event. Without proof (older versions) the message is
+      // accepted with a hint, but it may not take over a known contact.
+      final check = await checkSender(
+        proof: msgJson[IdentityProof.contentKey],
+        signerPubkey: event.pubkey,
+        claimedDid: parsed.fromDid,
+        knownPubkey: _didToNostrPubkey[parsed.fromDid],
+      );
+      if (check == SenderCheck.forged) {
+        print('[S1-REJECT] DM ${event.id.substring(0, 8)} dropped: claims '
+            '${parsed.fromDid} but is signed by '
+            '${event.pubkey.substring(0, 8)}… without a valid proof');
+        return;
+      }
+      final verified = check == SenderCheck.verified;
+      final message = parsed.withSenderCheck(verified
+          ? NexusMessage.senderVerified
+          : NexusMessage.senderUnverified);
+
       final msgType = message.metadata?['type'] as String?;
       print('[NOSTR] DM decrypted OK: ${message.fromDid} → ${message.toDid}'
+          ' sender=${check.name}'
           '${msgType != null ? '  type=$msgType' : ''}');
       if (msgType == 'contact_request') {
         print('[ContactRequest] contact_request DM arrived – routing to service');
       }
       print('[SYNC] Stored message: ${message.id}');
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
+      _learnPeer(event.pubkey, message.fromDid, verified: verified);
       _msgController.add(message);
     } catch (e) {
       print('[NOSTR] DM decrypt FAILED (not for us or malformed): $e');
@@ -3259,8 +3283,8 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Broadcast parsed OK: from=${message.fromDid.substring(0, didLen.clamp(0, 12))}… '
           'body="${message.body.length > 40 ? message.body.substring(0, 40) : message.body}"');
       print('[SYNC] Stored message: ${message.id}');
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
-      _msgController.add(message);
+      _learnPeer(event.pubkey, message.fromDid, verified: false);
+      _msgController.add(message.withSenderCheck(null));
     } catch (e) {
       print('[NOSTR] Broadcast parse FAILED: $e');
     }
@@ -3435,19 +3459,23 @@ class NostrTransport implements MessageTransport {
     // the transport layer).  A future enhancement could add a download step.
   }
 
+  /// Remembers which Nostr key belongs to [senderDid] (replies go there).
+  ///
+  /// Audit S-1: only a [verified] sender may replace a known key. Without
+  /// proof a key is learned only for a DID not seen before, and a key named
+  /// inside the message content is never used.
   void _learnPeer(
     String nostrPubkey,
-    String senderDid,
-    Map<String, dynamic>? metadata,
-  ) {
-    // Build DID ↔ Nostr pubkey mapping
-    _didToNostrPubkey[senderDid] = nostrPubkey;
-
-    // Also learn from metadata if another transport sent the message
-    final metaNostrPubkey = metadata?['nostr_pubkey'] as String?;
-    if (metaNostrPubkey != null) {
-      _didToNostrPubkey[senderDid] = metaNostrPubkey;
+    String senderDid, {
+    required bool verified,
+  }) {
+    final known = _didToNostrPubkey[senderDid];
+    if (known != null && known != nostrPubkey && !verified) {
+      print('[S1-KEEP] Known key for $senderDid kept; '
+          '${nostrPubkey.substring(0, 8)}… has no proof');
+      return;
     }
+    _didToNostrPubkey[senderDid] = nostrPubkey;
 
     final existing = _peers[nostrPubkey];
     final pseudonym = existing?.pseudonym ?? _shortDid(senderDid);

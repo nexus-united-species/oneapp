@@ -25,6 +25,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (Audit S-1 Direktnachrichten, noch nicht committet) | Handy und Laptop1 auf neuem Stand: einander schreiben | Kein Hinweis unter den Nachrichten; Log `sender=verified` |
+| (Audit S-1 Direktnachrichten, noch nicht committet) | Laptop2 mit der alten ZIP vom 11.11. schreibt dem Handy | Nachricht kommt auf dem Handy an, darunter in Orange „Absender nicht bestätigt“; Log `sender=unverified` |
 | 46aceec | Optional: Windows offline (WLAN aus), dem Handy eine Nachricht schreiben (bleibt in der Warteschlange); auf dem Handy derweil eine neuere Nachricht von jemand anderem empfangen und die App schließen; Windows wieder online, dann Handy-App starten | Die nachgereichte Nachricht von Windows erscheint auf dem Handy; Log `[SYNC] DMs and channels fetched with 7 days overlap` |
 | 208fa71 | Zwei Geräte derselben Identität: Kontakt auf Gerät 2 löschen, kurz danach auf Gerät 1 die Vertrauensstufe dieses Kontakts ändern; Gerät 1 neu starten | Der Kontakt bleibt auf Gerät 1 erhalten, auch nach dem Neustart, samt Notiz; auf Gerät 2 kommt er zurück |
 | 0f43b2f | Optional, braucht drei Identitäten: Handy gründet eine Gemeinschaft und ernennt Windows zum Moderator; ein drittes Gerät stellt eine Beitrittsanfrage, **Windows** bestätigt | Das dritte Gerät nimmt die Bestätigung an (Log `[ROSTER] Applicant roster …`, danach „Membership confirmed“) und sieht sofort alle Mitglieder |

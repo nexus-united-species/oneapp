@@ -1754,7 +1754,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Key exchange: learn sender's encryption key ──────────────────────────
     // In our own messages this is our own key, not the peer's.
-    final encKeyFromMsg = isOwn ? null : msg.metadata?['enc_key'] as String?;
+    final claimedEncKey = isOwn ? null : msg.metadata?['enc_key'] as String?;
+    // Audit S-1: a sender without proof may not replace a contact's known
+    // encryption key (replies would otherwise be readable by an impostor).
+    final knownEncKey = claimedEncKey == null
+        ? null
+        : ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
+    final keepKnownKey = msg.isSenderUnverified &&
+        knownEncKey != null &&
+        knownEncKey != claimedEncKey;
+    if (keepKnownKey) {
+      debugPrint('[S1-KEEP] Encryption key of ${msg.fromDid} kept: '
+          'message has no sender proof');
+    }
+    final encKeyFromMsg = keepKnownKey ? null : claimedEncKey;
     if (encKeyFromMsg != null && !msg.isBroadcast) {
       ContactService.instance.setEncryptionKey(msg.fromDid, encKeyFromMsg);
     }

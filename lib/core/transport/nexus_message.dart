@@ -25,6 +25,14 @@ class NexusMessage {
   /// later delete the message via Kind-5 (NIP-09).
   static const String nostrAuthorPubkeyMetaKey = 'nostr_author_pubkey';
 
+  /// Result of the receiver's sender check (audit S-1): [senderVerified]
+  /// when the sender proved that its DID owns the signing Nostr key,
+  /// [senderUnverified] for messages without proof (older app versions).
+  /// Set only by the receiving transport; a value sent along is discarded.
+  static const String senderCheckMetaKey = 'sender_check';
+  static const String senderVerified = 'verified';
+  static const String senderUnverified = 'unverified';
+
   final String id;
   final String fromDid;
   final String toDid;
@@ -207,6 +215,18 @@ class NexusMessage {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
         '${hex.substring(20)}';
+  }
+
+  /// Whether the receiver could not confirm the sender (audit S-1).
+  bool get isSenderUnverified =>
+      metadata?[senderCheckMetaKey] == senderUnverified;
+
+  /// Replaces the sender check result; null removes it.
+  NexusMessage withSenderCheck(String? result) {
+    final updated = Map<String, dynamic>.from(metadata ?? const {})
+      ..remove(senderCheckMetaKey);
+    if (result != null) updated[senderCheckMetaKey] = result;
+    return copyWith(metadata: updated);
   }
 
   NexusMessage withNostrEventId(String eventId, {String? authorPubkey}) =>

@@ -2148,6 +2148,18 @@ class _TextContent extends StatelessWidget {
               ],
             ],
           ),
+          // Audit S-1: sent by an older app version without identity proof.
+          if (!isMe && message.isSenderUnverified)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'Absender nicht bestätigt',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.orange.withValues(alpha: 0.85),
+                ),
+              ),
+            ),
         ],
       ),
     );

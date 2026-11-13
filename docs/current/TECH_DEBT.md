@@ -534,6 +534,27 @@ Liste:
 - **Rote Tests in `transport_manager_test.dart` (12.11.2026):** 5 Tests der
   Sende-Kaskade und des LAN-Vorrangs schlagen auch auf dem unveränderten
   Stand fehl. Ursache noch nicht untersucht.
+- **Audit S-1, Schritt 1 von 3: Direktnachrichten (13.11.2026, Gerätetest
+  offen):** Direktnachrichten tragen den Identitätsnachweis (`_idProof`)
+  im verschlüsselten Inhalt. Der Empfänger prüft ihn gegen den Schlüssel,
+  der das Nostr-Event signiert hat (`sender_check.dart`):
+  - Nachweis gültig und passend zur Absender-DID → bestätigt.
+  - Nachweis falsch, für eine andere DID oder unter fremdem Schlüssel
+    wiederverwendet → verworfen (`[S1-REJECT]`).
+  - Kein Nachweis (ältere App-Version) → angenommen und im Chat mit
+    „Absender nicht bestätigt“ gekennzeichnet. **Übergangszeit: eine
+    Version** (Entscheidung Joachim, 13.11.2026); danach werden
+    Direktnachrichten ohne Nachweis verworfen.
+  - Kein Nachweis, aber die DID ist schon mit einem anderen Schlüssel
+    bekannt → verworfen.
+  - Ohne Nachweis ersetzt keine Nachricht mehr einen bekannten Nostr- oder
+    Verschlüsselungsschlüssel (`[S1-KEEP]`), auch nicht über Kanal- oder
+    #mesh-Beiträge; ein im Inhalt behaupteter `nostr_pubkey` wird nicht
+    mehr übernommen. Ein vom Absender mitgeschicktes Prüfergebnis wird
+    verworfen.
+  - Offen: Schritt 2 Präsenz (überschreibt Schlüssel noch ohne Nachweis),
+    Schritt 3 Kanalbeiträge. Das grüne Häkchen an Nachrichten zeigt nur,
+    dass eine Signatur mitgeschickt wurde; geprüft wird sie nicht (S-3).
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen
