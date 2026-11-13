@@ -645,6 +645,7 @@ class NostrTransport implements MessageTransport {
     // Strip channelSecret before publishing to Nostr.
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
+      ..remove('previousSecrets')
       ..remove('members');
     final event = NostrEvent.create(
       keys: _keys!,
@@ -742,6 +743,7 @@ class NostrTransport implements MessageTransport {
     final isDiscoverable = (channelData['isDiscoverable'] as bool?) ?? true;
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
+      ..remove('previousSecrets')
       ..remove('members');
     final nostrEventId = channelData['nostrEventId'] as String?;
     final tags = <List<String>>[

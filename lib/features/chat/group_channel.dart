@@ -41,6 +41,13 @@ class GroupChannel {
   /// Distributed to members via encrypted DM on accept/invite.
   final String? channelSecret;
 
+  /// Earlier secrets of this channel, newest first (audit S-4). Kept only to
+  /// decrypt posts sent before a key change; never published.
+  final List<String> previousSecrets;
+
+  /// How many earlier secrets are kept.
+  static const maxPreviousSecrets = 10;
+
   final String nostrTag; // e.g. "nexus-channel-teneriffa"
   DateTime? joinedAt;
 
@@ -68,6 +75,7 @@ class GroupChannel {
     this.isPublic = true,
     this.isDiscoverable = true,
     this.channelSecret,
+    this.previousSecrets = const [],
     required this.nostrTag,
     this.joinedAt,
     this.channelMode = ChannelMode.discussion,
@@ -75,6 +83,32 @@ class GroupChannel {
     this.cellId,
     this.nostrEventId,
   }) : members = members ?? [];
+
+  /// A copy using [newSecret]; the current secret moves to
+  /// [previousSecrets] so older posts stay readable.
+  GroupChannel withRotatedSecret(String newSecret) {
+    final older = [
+      if (channelSecret != null && channelSecret != newSecret) channelSecret!,
+      ...previousSecrets.where((s) => s != newSecret),
+    ].take(maxPreviousSecrets).toList();
+    return GroupChannel(
+      id: id,
+      name: name,
+      description: description,
+      createdBy: createdBy,
+      createdAt: createdAt,
+      isPublic: isPublic,
+      isDiscoverable: isDiscoverable,
+      channelSecret: newSecret,
+      previousSecrets: older,
+      nostrTag: nostrTag,
+      joinedAt: joinedAt,
+      channelMode: channelMode,
+      members: List.from(members),
+      cellId: cellId,
+      nostrEventId: nostrEventId,
+    );
+  }
 
   /// The conversation_id used to store messages for this channel.
   /// Always starts with '#'.
@@ -132,6 +166,7 @@ class GroupChannel {
       isPublic: isPublic ?? this.isPublic,
       isDiscoverable: isDiscoverable ?? this.isDiscoverable,
       channelSecret: channelSecret ?? this.channelSecret,
+      previousSecrets: previousSecrets,
       nostrTag: name != null ? nameToNostrTag(newName) : nostrTag,
       joinedAt: joinedAt ?? this.joinedAt,
       channelMode: channelMode ?? this.channelMode,
@@ -185,6 +220,7 @@ class GroupChannel {
         'isPublic': isPublic,
         'isDiscoverable': isDiscoverable,
         if (channelSecret != null) 'channelSecret': channelSecret,
+        if (previousSecrets.isNotEmpty) 'previousSecrets': previousSecrets,
         'nostrTag': nostrTag,
         if (joinedAt != null) 'joinedAt': joinedAt!.millisecondsSinceEpoch,
         'channelMode': channelMode.value,
@@ -205,6 +241,7 @@ class GroupChannel {
         isPublic: (json['isPublic'] as bool?) ?? true,
         isDiscoverable: (json['isDiscoverable'] as bool?) ?? true,
         channelSecret: json['channelSecret'] as String?,
+        previousSecrets: _parseStringList(json['previousSecrets']),
         nostrTag: (json['nostrTag'] as String?) ??
             nameToNostrTag(json['name'] as String),
         joinedAt: json['joinedAt'] != null
@@ -227,6 +264,9 @@ class GroupChannel {
     final bytes = List.generate(16, (_) => rng.nextInt(256));
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
+
+  /// A fresh channel secret, e.g. after removing a member (audit S-4).
+  static String generateSecret() => _generateSecret();
 
   /// Generates a 64-char hex channel secret (32 random bytes).
   static String _generateSecret() {

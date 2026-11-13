@@ -60,15 +60,24 @@ Future<ChannelWirePayload> sealChannelPayload({
 
 /// Decrypts a private channel post. Returns null when the body cannot be
 /// decrypted. Metadata from [channelEncryptedMetaKey] is merged in; older
-/// posts without it keep their plain metadata.
+/// posts without it keep their plain metadata. Posts from before a key
+/// change are tried with [previousSecrets].
 Future<({String body, Map<String, dynamic> metadata})?> openChannelPayload({
   required String body,
   Map<String, dynamic>? metadata,
   required String channelId,
   required String channelSecret,
+  List<String> previousSecrets = const [],
 }) async {
-  final plainBody =
-      await ChannelEncryption.decrypt(body, channelSecret, channelId);
+  String? plainBody;
+  var usedSecret = channelSecret;
+  for (final secret in [channelSecret, ...previousSecrets]) {
+    plainBody = await ChannelEncryption.decrypt(body, secret, channelId);
+    if (plainBody != null) {
+      usedSecret = secret;
+      break;
+    }
+  }
   if (plainBody == null) return null;
 
   final merged = Map<String, dynamic>.from(metadata ?? const {})
@@ -76,7 +85,7 @@ Future<({String body, Map<String, dynamic> metadata})?> openChannelPayload({
   final sealedMeta = metadata?[channelEncryptedMetaKey];
   if (sealedMeta is String) {
     final plainMeta =
-        await ChannelEncryption.decrypt(sealedMeta, channelSecret, channelId);
+        await ChannelEncryption.decrypt(sealedMeta, usedSecret, channelId);
     if (plainMeta != null) {
       try {
         final decoded = jsonDecode(plainMeta);

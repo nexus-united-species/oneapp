@@ -1839,6 +1839,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               metadata: processedMsg.metadata,
               channelId: ch.id,
               channelSecret: ch.channelSecret!,
+              previousSecrets: ch.previousSecrets,
             )
           : null;
       if (opened != null) {
@@ -1890,7 +1891,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final bodyData =
             jsonDecode(processedMsg.body) as Map<String, dynamic>;
         await _handleChannelSystemMessage(
-            sysType, bodyData, processedMsg.fromDid);
+            sysType, bodyData, processedMsg.fromDid,
+            senderVerified: !processedMsg.isSenderUnverified);
       } catch (e) {
         debugPrint('[CHAT] Channel system-message parse error: $e');
       }
@@ -2588,8 +2590,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Sends an encrypted system DM for channel access control
   /// (join request, invite, acceptance, rejection).
-  Future<void> sendSystemDm(
-      String recipientDid, Map<String, dynamic> data) async {
+  ///
+  /// With [requireEncryption] nothing is sent when the recipient's
+  /// encryption key is unknown (used for channel secrets); returns whether
+  /// the message went out.
+  Future<bool> sendSystemDm(
+      String recipientDid, Map<String, dynamic> data,
+      {bool requireEncryption = false}) async {
     final myDid =
         IdentityService.instance.currentIdentity?.did ?? 'unknown';
     final sysType = data['sys_type'] as String? ?? '';
@@ -2603,6 +2610,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final recipientEncKey =
         ContactService.instance.findByDid(recipientDid)?.encryptionPublicKey;
+    if (requireEncryption && recipientEncKey == null) {
+      debugPrint('[CHAN-KEY] No encryption key for $recipientDid; '
+          '$sysType not sent');
+      return false;
+    }
 
     NexusMessage msg;
     if (recipientEncKey != null) {
@@ -2631,14 +2643,97 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
 
+    if (requireEncryption && msg.metadata?['encrypted'] != true) {
+      debugPrint('[CHAN-KEY] Encryption failed for $recipientDid; '
+          '$sysType not sent');
+      return false;
+    }
     await _manager.sendMessage(msg, recipientDid: recipientDid);
+    return true;
+  }
+
+  // ── Channel key change after removing a member (audit S-4) ─────────────────
+
+  /// System message type carrying a new channel secret.
+  static const channelKeyRotatedType = 'channel_key_rotated';
+
+  /// Removes [removedDid] from the private [channel] and, as its admin,
+  /// gives the remaining members a new secret, so the removed member cannot
+  /// read new posts. Returns how many members could not be reached because
+  /// their encryption key is unknown.
+  Future<int> removeChannelMember(GroupChannel channel, String removedDid) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final remaining = channel.members.where((d) => d != removedDid).toList();
+    final rotate = !channel.isPublic &&
+        channel.channelSecret != null &&
+        channel.createdBy == myDid;
+    final updated = rotate
+        ? channel
+            .withRotatedSecret(GroupChannel.generateSecret())
+            .copyWith(members: remaining)
+        : channel.copyWith(members: remaining);
+    await GroupChannelService.instance.updateChannel(updated);
+    if (!rotate) return 0;
+
+    var unreachable = 0;
+    for (final member in remaining) {
+      if (member == myDid) continue;
+      final sent = await sendSystemDm(
+        member,
+        {
+          'sys_type': channelKeyRotatedType,
+          'channelId': updated.id,
+          'channelName': updated.name,
+          'channelSecret': updated.channelSecret,
+        },
+        requireEncryption: true,
+      );
+      if (!sent) unreachable++;
+    }
+    debugPrint('[CHAN-KEY] ${updated.name}: new key after removing '
+        '$removedDid, ${remaining.length - 1 - unreachable} members informed, '
+        '$unreachable without encryption key');
+    notifyListeners();
+    return unreachable;
+  }
+
+  /// Takes over a new channel secret, only from the channel's admin with a
+  /// confirmed sender (receive is a trust boundary, audit S-1/S-4).
+  Future<void> _applyRotatedChannelKey(
+      Map<String, dynamic> data, String senderDid,
+      {required bool senderVerified}) async {
+    final channelId = data['channelId'] as String? ?? '';
+    final channelName = data['channelName'] as String? ?? '';
+    final newSecret = data['channelSecret'] as String? ?? '';
+    final channel = GroupChannelService.instance.joinedChannels
+            .where((c) => c.id == channelId)
+            .firstOrNull ??
+        GroupChannelService.instance.findByName(channelName);
+    final decision = channelKeyChangeDecision(
+      channel: channel,
+      senderDid: senderDid,
+      senderVerified: senderVerified,
+      newSecret: newSecret,
+    );
+    if (decision != null) {
+      debugPrint('[CHAN-KEY] Key change for $channelName ignored: $decision');
+      return;
+    }
+    await GroupChannelService.instance
+        .updateChannel(channel!.withRotatedSecret(newSecret));
+    debugPrint('[CHAN-KEY] New key for ${channel.name} from admin');
+    notifyListeners();
   }
 
   // ── Channel access system-message handlers ─────────────────────────────────
 
   Future<void> _handleChannelSystemMessage(
-      String sysType, Map<String, dynamic> data, String senderDid) async {
+      String sysType, Map<String, dynamic> data, String senderDid,
+      {required bool senderVerified}) async {
     switch (sysType) {
+      case channelKeyRotatedType:
+        await _applyRotatedChannelKey(data, senderDid,
+            senderVerified: senderVerified);
       case 'channel_join_request':
       case 'channel_invite':
         ChannelAccessService.instance
@@ -2934,7 +3029,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
+    // The local file path stays on this device (public #mesh broadcast).
+    await _manager.sendMessage(msg.copyWith(
+        metadata: {...?msg.metadata}..remove('audio_local_path')));
 
     final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
@@ -2945,7 +3042,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Sends an image to a named group channel.
   /// The secret of [channel] when it is private, else null.
   String? _privateSecretOf(GroupChannel? channel) =>
       channel != null && !channel.isPublic ? channel.channelSecret : null;
@@ -2976,6 +3072,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return msg.copyWith(metadata: {...?msg.metadata, 'ch_enc': true});
   }
 
+  /// Sends an image to a named group channel.
   Future<void> sendImageToChannel(String channelName, Uint8List imageBytes) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
     final name = channelName.startsWith('#') ? channelName : '#$channelName';
@@ -3801,4 +3898,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     resized.width,
     resized.height,
   );
+}
+
+/// Why a received channel key change must be ignored, or null to accept it
+/// (audit S-4). Only the admin of a known private channel may change its
+/// key, and only with a confirmed sender.
+@visibleForTesting
+String? channelKeyChangeDecision({
+  required GroupChannel? channel,
+  required String senderDid,
+  required bool senderVerified,
+  required String newSecret,
+}) {
+  if (channel == null) return 'unknown channel';
+  if (channel.isPublic) return 'public channel';
+  if (!senderVerified) return 'sender not confirmed';
+  if (channel.createdBy.isEmpty || channel.createdBy != senderDid) {
+    return 'sender is not the channel admin';
+  }
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(newSecret)) return 'malformed key';
+  return null;
 }
