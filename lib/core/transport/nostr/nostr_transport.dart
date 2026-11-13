@@ -1809,7 +1809,8 @@ class NostrTransport implements MessageTransport {
       final event = NostrEvent.create(
         keys: _keys!,
         kind: NostrKind.channelMessage,
-        content: jsonEncode(message.toJson()),
+        // Identity proof for the sender check (audit S-1).
+        content: jsonEncode(_withIdentityProof(message.toJson())),
         tags: [
           ['t', nostrTag],
         ],
@@ -1831,7 +1832,8 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.textNote,
-      content: jsonEncode(message.toJson()),
+      // Identity proof for the sender check (audit S-1).
+      content: jsonEncode(_withIdentityProof(message.toJson())),
       tags: tags,
     );
     _rememberSentNostrEventId(message.id, event.id);
@@ -3121,21 +3123,44 @@ class NostrTransport implements MessageTransport {
     }
   }
 
-  void _handleChannelMessageEvent(NostrEvent event) {
+  Future<void> _handleChannelMessageEvent(NostrEvent event) async {
     if (_keys == null) return;
     if (event.pubkey == _keys!.publicKeyHex) return;
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = _withWrapperId(
-        NexusMessage.fromJson(msgJson),
-        event,
-      ).withSenderCheck(null);
-      _learnPeer(event.pubkey, message.fromDid, verified: false);
-      _msgController.add(message);
+      final message = await _checkedPublicMessage(msgJson, event, 'Kind-42');
+      if (message != null) _msgController.add(message);
     } catch (e) {
       print('[NOSTR] Kind-42 parse FAILED: $e');
     }
+  }
+
+  /// Parses a public chat post (channel or #mesh) and runs the sender check
+  /// (audit S-1). Returns null for a forged post, which must be dropped.
+  /// Learns the sender's key only as far as the check allows.
+  Future<NexusMessage?> _checkedPublicMessage(
+    Map<String, dynamic> msgJson,
+    NostrEvent event,
+    String label,
+  ) async {
+    final parsed = _withWrapperId(NexusMessage.fromJson(msgJson), event);
+    final check = await checkSender(
+      proof: msgJson[IdentityProof.contentKey],
+      signerPubkey: event.pubkey,
+      claimedDid: parsed.fromDid,
+      knownPubkey: _didToNostrPubkey[parsed.fromDid],
+    );
+    if (check == SenderCheck.forged) {
+      print('[S1-REJECT] $label ${event.id.substring(0, 8)} dropped: claims '
+          '${parsed.fromDid} but is signed by '
+          '${event.pubkey.substring(0, 8)}… without a valid proof');
+      return null;
+    }
+    final verified = check == SenderCheck.verified;
+    _learnPeer(event.pubkey, parsed.fromDid, verified: verified);
+    return parsed.withSenderCheck(
+        verified ? NexusMessage.senderVerified : NexusMessage.senderUnverified);
   }
 
   void _handleDm(NostrEvent event) async {
@@ -3262,7 +3287,7 @@ class NostrTransport implements MessageTransport {
     }
   }
 
-  void _handleBroadcast(NostrEvent event) {
+  Future<void> _handleBroadcast(NostrEvent event) async {
     if (_keys == null) return;
     if (event.pubkey == _keys!.publicKeyHex) return;
 
@@ -3276,16 +3301,13 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = _withWrapperId(
-        NexusMessage.fromJson(msgJson),
-        event,
-      );
+      final message = await _checkedPublicMessage(msgJson, event, 'Broadcast');
+      if (message == null) return;
       final didLen = message.fromDid.length;
       print('[NOSTR] Broadcast parsed OK: from=${message.fromDid.substring(0, didLen.clamp(0, 12))}… '
           'body="${message.body.length > 40 ? message.body.substring(0, 40) : message.body}"');
       print('[SYNC] Stored message: ${message.id}');
-      _learnPeer(event.pubkey, message.fromDid, verified: false);
-      _msgController.add(message.withSenderCheck(null));
+      _msgController.add(message);
     } catch (e) {
       print('[NOSTR] Broadcast parse FAILED: $e');
     }

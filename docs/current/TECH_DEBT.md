@@ -552,7 +552,7 @@ Liste:
     #mesh-Beiträge; ein im Inhalt behaupteter `nostr_pubkey` wird nicht
     mehr übernommen. Ein vom Absender mitgeschicktes Prüfergebnis wird
     verworfen.
-  - Offen: Schritt 3 Kanalbeiträge. Das grüne Häkchen an Nachrichten zeigt nur,
+  - Schritt 3 (Kanal- und #mesh-Beiträge) siehe unten. Das grüne Häkchen an Nachrichten zeigt nur,
     dass eine Signatur mitgeschickt wurde; geprüft wird sie nicht (S-3).
 - **Audit S-1, Schritt 2 von 3: Präsenz (13.11.2026, Gerätetest offen):**
   Präsenzmeldungen (Kind-30078 `nexus-presence`) tragen den
@@ -567,6 +567,15 @@ Liste:
   Bekannte Lücke der Übergangszeit: Wer die DID einer noch unbekannten
   Person zuerst ohne Nachweis meldet, blockiert deren eigene Meldungen ohne
   Nachweis, bis sie eine Version mit Nachweis nutzt.
+- **Audit S-1, Schritt 3 von 3: Kanal- und #mesh-Beiträge (13.11.2026,
+  Gerätetest offen):** Kanalbeiträge (Kind-42) und #mesh-Rundrufe (Kind-1)
+  tragen den Identitätsnachweis und werden beim Empfang wie
+  Direktnachrichten geprüft: Fälschungen verworfen, Beiträge ohne Nachweis
+  mit „Absender nicht bestätigt“ in der Kanalansicht. Damit ist S-1 für
+  den Nostr-Weg abgeschlossen. Nicht abgedeckt: Feed-Beiträge, Reaktionen
+  und Löschungen (eigene Absenderprüfung über den Nostr-Schlüssel), LAN
+  und BLE (S-3/C-4). Nach der Übergangszeit von einer Version: Nachrichten
+  ohne Nachweis verwerfen statt kennzeichnen.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

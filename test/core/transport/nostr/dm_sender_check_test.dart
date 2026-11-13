@@ -184,35 +184,89 @@ void main() {
       await alice.stop();
     });
 
-    test('a channel post without proof cannot take over a known key',
+  });
+
+  group('channel and #mesh sender check (audit S-1, step 3)', () {
+    /// A post claiming to come from Bob, signed with [keys].
+    NostrEvent post(NostrKeys keys,
+        {Map<String, String>? proof, bool mesh = false}) {
+      final json = NexusMessage.create(
+        fromDid: bobDid,
+        toDid: NexusMessage.broadcastDid,
+        body: 'Hallo Kanal',
+        channel: mesh ? '#mesh' : '#test',
+        // A check result sent along by the author must never count.
+        metadata: {
+          NexusMessage.senderCheckMetaKey: NexusMessage.senderVerified,
+        },
+      ).toJson();
+      return NostrEvent.create(
+        keys: keys,
+        kind: mesh ? NostrKind.textNote : NostrKind.channelMessage,
+        content: jsonEncode({
+          ...json,
+          if (proof != null) IdentityProof.contentKey: proof,
+        }),
+        tags: [
+          mesh ? ['t', 'nexus-mesh'] : ['t', 'nexus-channel-test'],
+        ],
+      );
+    }
+
+    test('a channel post with a valid proof is verified', () async {
+      final (alice, relay, received) = await aliceDevice();
+
+      relay.deliver(post(bobKeys, proof: bobProof));
+      await pumpEventQueue();
+
+      expect(received.single.metadata?[NexusMessage.senderCheckMetaKey],
+          NexusMessage.senderVerified);
+      await alice.stop();
+    });
+
+    test('a channel post without proof is unverified, whatever it claims',
+        () async {
+      final (alice, relay, received) = await aliceDevice();
+
+      relay.deliver(post(bobKeys));
+      await pumpEventQueue();
+
+      expect(received.single.isSenderUnverified, isTrue);
+      await alice.stop();
+    });
+
+    test('a forged channel post is dropped and the known key kept',
         () async {
       final (alice, relay, received) = await aliceDevice();
       alice.registerDidMapping(bobDid, bobKeys.publicKeyHex);
 
-      final post = NostrEvent.create(
-        keys: malloryKeys,
-        kind: NostrKind.channelMessage,
-        content: jsonEncode(NexusMessage.create(
-          fromDid: bobDid,
-          toDid: NexusMessage.broadcastDid,
-          body: 'Ich bin Bob',
-          channel: '#test',
-          metadata: {
-            NexusMessage.senderCheckMetaKey: NexusMessage.senderVerified,
-          },
-        ).toJson()),
-        tags: [
-          ['t', 'nexus-channel-test'],
-        ],
-      );
-      relay.deliver(post);
+      relay.deliver(post(malloryKeys));
       await pumpEventQueue();
 
+      expect(received, isEmpty);
       expect(await replyTarget(alice, relay), bobKeys.publicKeyHex);
-      for (final m in received) {
-        expect(m.metadata?[NexusMessage.senderCheckMetaKey], isNull,
-            reason: 'a check result sent by the author is discarded');
-      }
+      await alice.stop();
+    });
+
+    test("a #mesh post with Bob's proof under another key is dropped",
+        () async {
+      final (alice, relay, received) = await aliceDevice();
+
+      relay.deliver(post(malloryKeys, proof: bobProof, mesh: true));
+      await pumpEventQueue();
+
+      expect(received, isEmpty);
+      await alice.stop();
+    });
+
+    test('a #mesh post with a valid proof is verified', () async {
+      final (alice, relay, received) = await aliceDevice();
+
+      relay.deliver(post(bobKeys, proof: bobProof, mesh: true));
+      await pumpEventQueue();
+
+      expect(received.single.metadata?[NexusMessage.senderCheckMetaKey],
+          NexusMessage.senderVerified);
       await alice.stop();
     });
   });

@@ -25,6 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (Audit S-1 Kanäle, noch nicht committet) | Handy und Laptop1 auf neuem Stand: im Kanal einer gemeinsamen Gemeinschaft schreiben | Kein Hinweis unter den neuen Beiträgen; Log ohne `[S1-REJECT]` |
 | (Audit S-1 Präsenz, noch nicht committet) | Handy und Laptop1 auf neuem Stand starten, kurz warten | Log auf beiden `[NOSTR] Presence sender=verified`; kein `[S1-REJECT]` für das andere Gerät |
 | (Audit S-1 Präsenz, noch nicht committet) | Handy-App in den Hintergrund, 2 Minuten warten, Laptop1 schickt dem Handy eine DM | DM kommt an; Laptop1-Log zeigt für das Handy weiter `sender=verified` (Herzschlag mit Nachweis) |
 | (Audit S-1 Direktnachrichten, noch nicht committet) | Handy und Laptop1 auf neuem Stand: einander schreiben | Kein Hinweis unter den Nachrichten; Log `sender=verified` |

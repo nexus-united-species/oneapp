@@ -1434,6 +1434,18 @@ class _ChannelMessageBubble extends StatelessWidget {
                     ),
                   ),
                 bubble,
+                // Audit S-1: posted by an older app version without proof.
+                if (msg.isSenderUnverified)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, top: 2),
+                    child: Text(
+                      'Absender nicht bestätigt',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.orange.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ),
                 reactions,
               ],
             ),
