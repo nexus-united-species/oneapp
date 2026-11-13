@@ -576,6 +576,20 @@ Liste:
   und Löschungen (eigene Absenderprüfung über den Nostr-Schlüssel), LAN
   und BLE (S-3/C-4). Nach der Übergangszeit von einer Version: Nachrichten
   ohne Nachweis verwerfen statt kennzeichnen.
+- **Audit S-3 und C-4 (13.11.2026, Gerätetest offen):** Nachrichten über
+  LAN und BLE werden jetzt auf ihre Signatur geprüft
+  (`message_signature.dart`): Jede ausgehende Nachricht signiert der
+  `TransportManager` mit dem Ed25519-Schlüssel der DID, und `did:key`
+  enthält den öffentlichen Schlüssel. Ohne gültige Signatur oder nach einer
+  Änderung wird die Nachricht verworfen (`[S3-REJECT]`). Damit kann im
+  selben WLAN niemand mehr als Kontakt oder als „ich selbst“ schreiben
+  (C-4). Ältere Versionen signieren bereits, eine Übergangszeit ist nicht
+  nötig. Eingehende Nachrichten verarbeitet der Manager jetzt der Reihe
+  nach, damit eine spätere Nostr-Kopie die geprüfte LAN-Nachricht nicht
+  überholt. `NexusMessage.fromWireBytes` entpackt höchstens 16 MiB
+  (`maxDecodedWireBytes`). Offen aus S-3: LAN-Inhalt geht ohne bekannten
+  Schlüssel weiter unverschlüsselt; die LAN-Ankündigung (UDP) nennt die DID
+  weiterhin ungeprüft, sie dient aber nur der Erreichbarkeit.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

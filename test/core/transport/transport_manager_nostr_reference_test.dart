@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nexus_oneapp/core/identity/did.dart';
 import 'package:nexus_oneapp/core/transport/message_transport.dart';
 import 'package:nexus_oneapp/core/transport/nexus_message.dart';
 import 'package:nexus_oneapp/core/transport/nexus_peer.dart';
@@ -84,12 +87,20 @@ void main() {
     manager.clearTransports();
   });
 
-  NexusMessage channelPost() => NexusMessage.create(
-        fromDid: _bobDid,
-        toDid: NexusMessage.broadcastDid,
-        channel: '#kanal',
-        body: 'über LAN zuerst',
-      );
+  /// A channel post signed by its sender, as LAN requires (audit S-3).
+  Future<NexusMessage> channelPost() async {
+    final keyPair = await Ed25519().newKeyPairFromSeed(List<int>.filled(32, 5));
+    final did =
+        DidKey.fromPublicKeyBytes((await keyPair.extractPublicKey()).bytes);
+    final post = NexusMessage.create(
+      fromDid: did,
+      toDid: NexusMessage.broadcastDid,
+      channel: '#kanal',
+      body: 'über LAN zuerst',
+    );
+    final sig = await Ed25519().sign(post.toSignableBytes(), keyPair: keyPair);
+    return post.withSignature(base64.encode(sig.bytes));
+  }
 
   group('Nostr copy of an already delivered message', () {
     test('is delivered once and its event ID is handed over', () async {
@@ -99,11 +110,11 @@ void main() {
         manager.onMessageReceived.listen((m) => delivered.add(m.id)),
         manager.onNostrReference.listen(references.add),
       ];
-      final post = channelPost();
+      final post = await channelPost();
 
       lan.receive(post);
       nostr.receive(post.withNostrEventId(_eventId, authorPubkey: '44' * 32));
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(delivered, [post.id]);
       expect(references, hasLength(1));
@@ -117,11 +128,11 @@ void main() {
     test('a duplicate without event ID is dropped silently', () async {
       final references = <NexusMessage>[];
       final sub = manager.onNostrReference.listen(references.add);
-      final post = channelPost();
+      final post = await channelPost();
 
       lan.receive(post);
       lan.receive(post);
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(references, isEmpty);
       await sub.cancel();

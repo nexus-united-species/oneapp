@@ -188,10 +188,18 @@ class NexusMessage {
     return Uint8List.fromList(zlib.encode(raw));
   }
 
-  /// Decodes from ZLib-compressed wire bytes.
+  /// Upper limit for a decompressed wire message (audit S-3): a few bytes
+  /// of crafted ZLib data could otherwise expand to gigabytes.
+  static const int maxDecodedWireBytes = 16 * 1024 * 1024;
+
+  /// Decodes from ZLib-compressed wire bytes. Throws [FormatException] when
+  /// the content expands beyond [maxDecodedWireBytes].
   static NexusMessage fromWireBytes(Uint8List bytes) {
-    final decompressed = zlib.decode(bytes);
-    final jsonStr = utf8.decode(decompressed);
+    final collector = _LimitedByteSink(maxDecodedWireBytes);
+    ZLibDecoder().startChunkedConversion(collector)
+      ..add(bytes)
+      ..close();
+    final jsonStr = utf8.decode(collector.bytes);
     return NexusMessage.fromJson(
       jsonDecode(jsonStr) as Map<String, dynamic>,
     );
@@ -268,4 +276,25 @@ class NexusMessage {
   String toString() =>
       'NexusMessage(id: ${id.substring(0, 8)}, from: ${fromDid.substring(0, 12)}, '
       'type: ${type.name}, body: "${body.length > 30 ? body.substring(0, 30) : body}")';
+}
+
+/// Collects decompressed chunks and aborts once [limit] bytes are exceeded.
+class _LimitedByteSink implements Sink<List<int>> {
+  _LimitedByteSink(this.limit);
+
+  final int limit;
+  final _builder = BytesBuilder(copy: false);
+
+  Uint8List get bytes => _builder.toBytes();
+
+  @override
+  void add(List<int> chunk) {
+    if (_builder.length + chunk.length > limit) {
+      throw const FormatException('Wire message exceeds size limit');
+    }
+    _builder.add(chunk);
+  }
+
+  @override
+  void close() {}
 }

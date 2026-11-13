@@ -5,6 +5,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 
 import 'message_transport.dart';
+import 'message_signature.dart';
 import 'nexus_message.dart';
 import 'nexus_peer.dart';
 
@@ -244,18 +245,40 @@ class TransportManager {
   void _subscribeToTransport(MessageTransport transport) {
     // Incoming messages
     _subs.add(transport.onMessageReceived.listen((msg) {
-      if (msg.isExpired) return;
-      if (_isDuplicate(msg.id)) {
-        if (msg.nostrEventId != null) _nostrReferenceController.add(msg);
-        return;
-      }
-      _messageController.add(msg);
+      // Processed one after another in arrival order: the signature check
+      // below is asynchronous, and a later copy from another transport must
+      // not overtake an earlier one.
+      _inbound = _inbound
+          .then((_) => _processIncoming(transport.type, msg))
+          .catchError((Object e) {
+        debugPrint('[TRANSPORT] incoming message failed: $e');
+      });
     }));
 
     // Peer list updates
     _subs.add(transport.onPeersChanged.listen((peers) {
       _mergePeerUpdate(transport.type, peers);
     }));
+  }
+
+  Future<void> _inbound = Future<void>.value();
+
+  Future<void> _processIncoming(TransportType type, NexusMessage msg) async {
+    if (msg.isExpired) return;
+    // Audit S-3/C-4: LAN and BLE have no signed envelope, so the message
+    // signature is the only proof of the sender. Checked before the
+    // duplicate filter marks the ID, so a forged copy cannot block the
+    // genuine message. Nostr binds the sender in its own transport.
+    if (type != TransportType.nostr && !await hasValidSenderSignature(msg)) {
+      debugPrint('[S3-REJECT] ${type.name} message ${msg.id} dropped: '
+          'missing or invalid signature for ${msg.fromDid}');
+      return;
+    }
+    if (_isDuplicate(msg.id)) {
+      if (msg.nostrEventId != null) _nostrReferenceController.add(msg);
+      return;
+    }
+    _messageController.add(msg);
   }
 
   void _mergePeerUpdate(
