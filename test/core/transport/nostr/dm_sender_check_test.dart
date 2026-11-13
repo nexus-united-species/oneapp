@@ -216,4 +216,67 @@ void main() {
       await alice.stop();
     });
   });
+
+  group('presence sender check (audit S-1)', () {
+    NostrEvent presence(NostrKeys keys, {Map<String, String>? proof}) =>
+        NostrEvent.create(
+          keys: keys,
+          kind: NostrKind.presence,
+          content: jsonEncode({
+            'did': bobDid,
+            'pseudonym': 'Bob',
+            if (proof != null) IdentityProof.contentKey: proof,
+          }),
+          tags: [
+            ['d', 'nexus-presence'],
+            ['t', 'nexus-presence'],
+            ['did', bobDid],
+          ],
+        );
+
+    test('a presence with a valid proof teaches the key of a new DID',
+        () async {
+      final (alice, relay, _) = await aliceDevice();
+
+      relay.deliver(presence(bobKeys, proof: bobProof));
+      await pumpEventQueue();
+
+      expect(await replyTarget(alice, relay), bobKeys.publicKeyHex);
+      await alice.stop();
+    });
+
+    test('a presence without proof cannot replace a known key', () async {
+      final (alice, relay, _) = await aliceDevice();
+      alice.registerDidMapping(bobDid, bobKeys.publicKeyHex);
+
+      relay.deliver(presence(malloryKeys));
+      await pumpEventQueue();
+
+      expect(await replyTarget(alice, relay), bobKeys.publicKeyHex);
+      await alice.stop();
+    });
+
+    test("Bob's proof replayed in another key's presence is ignored",
+        () async {
+      final (alice, relay, _) = await aliceDevice();
+      alice.registerDidMapping(bobDid, bobKeys.publicKeyHex);
+
+      relay.deliver(presence(malloryKeys, proof: bobProof));
+      await pumpEventQueue();
+
+      expect(await replyTarget(alice, relay), bobKeys.publicKeyHex);
+      await alice.stop();
+    });
+
+    test('a proven new key replaces the old one (key change)', () async {
+      final (alice, relay, _) = await aliceDevice();
+      alice.registerDidMapping(bobDid, malloryKeys.publicKeyHex);
+
+      relay.deliver(presence(bobKeys, proof: bobProof));
+      await pumpEventQueue();
+
+      expect(await replyTarget(alice, relay), bobKeys.publicKeyHex);
+      await alice.stop();
+    });
+  });
 }

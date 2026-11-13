@@ -1566,6 +1566,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         nostrPubkeyHex: nostrPubkey,
       );
       transport.setIdentityProof(proof);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(IdentityProof.prefsKey, jsonEncode(proof));
       print('[ID-PROOF] Identity binding signed for ${nostrPubkey.substring(0, 8)}…');
     } catch (e) {
       print('[ID-PROOF] Identity binding failed: $e');

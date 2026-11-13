@@ -2053,11 +2053,12 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.presence,
-      content: jsonEncode({
+      // The identity proof binds our DID to this key (audit S-1).
+      content: jsonEncode(_withIdentityProof({
         'did': localDid,
         'pseudonym': name,
         if (_encryptionPublicKeyHex != null) 'enc_key': _encryptionPublicKeyHex,
-      }),
+      })),
       tags: tags,
     );
     _relayManager.publishFireAndForget(event);
@@ -3290,7 +3291,7 @@ class NostrTransport implements MessageTransport {
     }
   }
 
-  void _handlePresenceEvent(NostrEvent event) {
+  Future<void> _handlePresenceEvent(NostrEvent event) async {
     if (_keys == null) return;
     // Ignore our own presence events
     if (event.pubkey == _keys!.publicKeyHex) return;
@@ -3312,13 +3313,36 @@ class NostrTransport implements MessageTransport {
           'timestamp=${event.createdAt}, age=${ageSeconds}s, '
           'pseudonym=$pseudonym');
 
+      // Audit S-1: a presence event is public, so anyone can publish one
+      // naming any DID. Only a valid identity proof may change known keys.
+      final check = await checkSender(
+        proof: data[IdentityProof.contentKey],
+        signerPubkey: event.pubkey,
+        claimedDid: did,
+        knownPubkey: _didToNostrPubkey[did],
+      );
+      if (check == SenderCheck.forged) {
+        print('[S1-REJECT] Presence ${event.id.substring(0, 8)} dropped: '
+            'claims $did but is signed by ${event.pubkey.substring(0, 8)}… '
+            'without a valid proof');
+        return;
+      }
+      final verified = check == SenderCheck.verified;
+
       final encKey = data['enc_key'] as String?;
       if (encKey != null) {
-        // Store in ContactService so ChatProvider can encrypt to this peer
-        ContactService.instance.setEncryptionKey(did, encKey);
+        final knownEncKey =
+            ContactService.instance.findByDid(did)?.encryptionPublicKey;
+        if (verified || knownEncKey == null || knownEncKey == encKey) {
+          // Store in ContactService so ChatProvider can encrypt to this peer
+          ContactService.instance.setEncryptionKey(did, encKey);
+        } else {
+          print('[S1-KEEP] Encryption key of $did kept: presence has no proof');
+        }
       }
 
-      // Store DID ↔ Nostr pubkey mapping so we can send DMs.
+      // Store DID ↔ Nostr pubkey mapping so we can send DMs. Without proof
+      // this only happens for an unknown DID or the key already known.
       final isNewPubkey = _didToNostrPubkey[did] != event.pubkey;
       _didToNostrPubkey[did] = event.pubkey;
 
@@ -3326,6 +3350,7 @@ class NostrTransport implements MessageTransport {
       // _setupSubscriptions() can pre-populate _didToNostrPubkey and subscribe
       // to Kind-0 metadata before any messages have been exchanged.
       ContactService.instance.setNostrPubkey(did, event.pubkey);
+      print('[NOSTR] Presence sender=${check.name} for $did');
 
       // If this is a newly learned pubkey, immediately request their Kind-0
       // metadata so the display name is updated without waiting for the

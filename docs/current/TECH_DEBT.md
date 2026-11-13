@@ -552,9 +552,21 @@ Liste:
     #mesh-Beiträge; ein im Inhalt behaupteter `nostr_pubkey` wird nicht
     mehr übernommen. Ein vom Absender mitgeschicktes Prüfergebnis wird
     verworfen.
-  - Offen: Schritt 2 Präsenz (überschreibt Schlüssel noch ohne Nachweis),
-    Schritt 3 Kanalbeiträge. Das grüne Häkchen an Nachrichten zeigt nur,
+  - Offen: Schritt 3 Kanalbeiträge. Das grüne Häkchen an Nachrichten zeigt nur,
     dass eine Signatur mitgeschickt wurde; geprüft wird sie nicht (S-3).
+- **Audit S-1, Schritt 2 von 3: Präsenz (13.11.2026, Gerätetest offen):**
+  Präsenzmeldungen (Kind-30078 `nexus-presence`) tragen den
+  Identitätsnachweis, auch der Herzschlag des Android-Hintergrunddienstes:
+  Die App legt den Nachweis dafür in SharedPreferences ab
+  (`IdentityProof.prefsKey`; er ist öffentlich, kein Geheimnis). Beim
+  Empfang gelten dieselben Regeln wie bei Direktnachrichten: Fälschungen
+  und eine bekannte DID unter fremdem Schlüssel werden verworfen; ohne
+  Nachweis lernt die App nur den Schlüssel einer noch unbekannten DID und
+  ersetzt keinen bekannten Verschlüsselungsschlüssel. Mit gültigem
+  Nachweis wird ein neuer Schlüssel übernommen (Schlüsselwechsel).
+  Bekannte Lücke der Übergangszeit: Wer die DID einer noch unbekannten
+  Person zuerst ohne Nachweis meldet, blockiert deren eigene Meldungen ohne
+  Nachweis, bis sie eine Version mit Nachweis nutzt.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

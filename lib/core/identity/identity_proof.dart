@@ -19,6 +19,11 @@ class IdentityProof {
   /// JSON field name used inside event content.
   static const contentKey = '_idProof';
 
+  /// SharedPreferences key holding the current proof as JSON, so the
+  /// Android background service can attach it to its presence heartbeat
+  /// (audit S-1). The proof is public data, not a secret.
+  static const prefsKey = 'nexus_identity_proof';
+
   static const _domain = 'nexus-identity-binding:v1';
 
   static List<int> _message(String did, String nostrPubkeyHex) =>
