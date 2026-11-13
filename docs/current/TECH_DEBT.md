@@ -35,7 +35,7 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 | S-4-Rest | Neuer Kanalschlüssel nur bei bekanntem Verschlüsselungsschlüssel | Mitglieder ohne bekannten Schlüssel erhalten den neuen Kanalschlüssel nicht (Hinweis an den Admin, neu einladen); Beitritt per Annahme oder Einladung setzt die früheren Schlüssel zurück; Beiträge von Mitgliedern, die noch mit dem alten Schlüssel senden, kann der Entfernte weiter lesen, bis sie den neuen haben |
 | Z-4-Rest | „Gesendet“ heißt beim Relay angekommen | keine Empfangsbestätigung vom Empfänger (kommt mit dem Nachrichtenformat in Block 4); #mesh-Rundrufe zählen nach der Übergabe sofort als gesendet; erneut gesendete Bilder im Kanal werden neu komprimiert, Antwortzitate gehen beim erneuten Senden von Medien verloren |
 | Z-5-Rest | Warteschlange | „angenommen“ heißt ein Relay hat angenommen, nicht alle; kein Backoff beim Nachsenden; Warteschlange hält höchstens 7 Tage |
-| Z-6 | Relay-Verbindung | Reconnect fest nach 10 s ohne Backoff und Ping (Block 2) |
+| Z-6-Rest | Relay-Verbindung | nach jedem Reconnect werden alle Filter mit dem `since` des Sitzungsstarts neu gesendet (mehr Daten als nötig, Doppelte verwirft die Datenbank); der Android-Hintergrunddienst hat eigene Verbindungen ohne Ping |
 
 ## Mittel
 

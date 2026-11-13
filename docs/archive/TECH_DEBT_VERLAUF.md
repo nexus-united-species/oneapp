@@ -635,3 +635,16 @@ Liste:
   Präsenz (geht alle paar Minuten neu) und Governance-Ereignisse
   (31010–31013, eigener Retry). Ersetzbare Ereignisse nachzusenden ist
   unschädlich, Relays behalten das neueste.
+
+- **Audit Z-6: Relay-Verbindung (13.11.2026, Gerätetest offen):** Statt
+  fest alle 10 Sekunden versucht die App nach einem Abbruch mit wachsenden
+  Pausen neu zu verbinden: 5, 10, 20, 40 … Sekunden, höchstens 5 Minuten,
+  mit ±20 % Streuung (`relay_backoff.dart`); nach erfolgreicher Verbindung
+  beginnt es wieder bei 5 Sekunden. Mehrere Fehlermeldungen für denselben
+  Abbruch lösen nur einen neuen Versuch aus. Die WebSocket-Verbindung
+  sendet alle 30 Sekunden einen Ping; antwortet das Relay nicht, wird sie
+  geschlossen und neu aufgebaut (vorher blieb z. B. nach einem Wechsel
+  zwischen WLAN und Mobilfunk eine tote Verbindung unbemerkt stehen). Der
+  Verbindungsaufbau bricht nach 15 Sekunden ab. Ohne Internet stoppt der
+  ChatProvider den Transport wie bisher; beim Wiederkommen startet er neu
+  mit kurzer Pause.
