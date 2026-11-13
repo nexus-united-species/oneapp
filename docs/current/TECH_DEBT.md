@@ -590,6 +590,20 @@ Liste:
   (`maxDecodedWireBytes`). Offen aus S-3: LAN-Inhalt geht ohne bekannten
   Schlüssel weiter unverschlüsselt; die LAN-Ankündigung (UDP) nennt die DID
   weiterhin ungeprüft, sie dient aber nur der Erreichbarkeit.
+- **Audit S-4, Medien in privaten Kanälen (13.11.2026, Gerätetest offen):**
+  Bilder und Sprachnachrichten in privaten Kanälen werden jetzt wie Text
+  mit dem Kanalschlüssel verschlüsselt (`channel_payload.dart`). Auch die
+  Metadaten gehen verschlüsselt raus (`ch_enc_meta`): Vorschaubild, Größe,
+  Dauer und Antwortzitate, die vorher auch bei Text im Klartext mitliefen.
+  Der lokale Dateipfad einer Sprachnachricht (`audio_local_path`) verlässt
+  das Gerät nicht mehr und wird beim Empfang verworfen; vorher konnte ein
+  zufällig gleicher Pfad auf dem Empfänger die falsche Datei abspielen.
+  Schlägt die Verschlüsselung fehl, wird nicht gesendet statt im Klartext.
+  Ältere Versionen entschlüsseln Text und Bild weiter, sehen aber
+  Vorschaubild und Antwortzitat nicht. Offen aus S-4: kein neuer
+  Kanalschlüssel beim Entfernen eines Mitglieds (Block „Danach“,
+  Gruppenschlüssel mit Wechsel); in Direktnachrichten geht
+  `audio_local_path` noch mit (Ende-zu-Ende verschlüsselt, nur unschön).
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

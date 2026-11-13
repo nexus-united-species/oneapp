@@ -13,7 +13,7 @@ import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/contacts/contact_service.dart';
-import '../../core/crypto/channel_encryption.dart';
+import 'channel_payload.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
@@ -1833,34 +1833,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         processedMsg.channel != '#mesh') {
       final ch =
           GroupChannelService.instance.findByName(processedMsg.channel!);
-      if (ch != null && ch.channelSecret != null) {
-        final plaintext = await ChannelEncryption.decrypt(
-          processedMsg.body,
-          ch.channelSecret!,
-          ch.id,
-        );
+      final opened = ch != null && ch.channelSecret != null
+          ? await openChannelPayload(
+              body: processedMsg.body,
+              metadata: processedMsg.metadata,
+              channelId: ch.id,
+              channelSecret: ch.channelSecret!,
+            )
+          : null;
+      if (opened != null) {
         processedMsg = NexusMessage(
           id: processedMsg.id,
           fromDid: processedMsg.fromDid,
           toDid: processedMsg.toDid,
           type: processedMsg.type,
           channel: processedMsg.channel,
-          body: plaintext ?? '[Nachricht konnte nicht entschlüsselt werden]',
+          body: opened.body,
           timestamp: processedMsg.timestamp,
           ttlHours: processedMsg.ttlHours,
           hopCount: processedMsg.hopCount,
           signature: processedMsg.signature,
-          metadata: processedMsg.metadata,
+          metadata: opened.metadata,
         );
       } else {
-        // Non-member: store a placeholder.
+        // Non-member or undecryptable: a text placeholder, so image and
+        // voice decoders never see ciphertext.
         processedMsg = NexusMessage(
           id: processedMsg.id,
           fromDid: processedMsg.fromDid,
           toDid: processedMsg.toDid,
-          type: processedMsg.type,
+          type: NexusMessageType.text,
           channel: processedMsg.channel,
-          body: '🔒 Verschlüsselte Nachricht',
+          body: ch != null && ch.channelSecret != null
+              ? '[Nachricht konnte nicht entschlüsselt werden]'
+              : '🔒 Verschlüsselte Nachricht',
           timestamp: processedMsg.timestamp,
           ttlHours: processedMsg.ttlHours,
           hopCount: processedMsg.hopCount,
@@ -2012,6 +2018,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // permanent local file so playback survives app restarts and temp-dir
     // clean-ups.  This runs for both live and catch-up messages.
     if (processedMsg.type == NexusMessageType.voice) {
+      // A local path sent along by the sender (older versions) points to
+      // the sender's device and must not be used here.
+      if (processedMsg.metadata?.containsKey('audio_local_path') == true) {
+        processedMsg = processedMsg.copyWith(
+            metadata: {...?processedMsg.metadata}..remove('audio_local_path'));
+      }
       processedMsg = await _cacheVoiceAudio(processedMsg);
     }
 
@@ -2473,32 +2485,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final channel = GroupChannelService.instance.findByName(name);
 
-    // Build wire message (possibly encrypted).
-    String wireBody = text;
-    bool isChEnc = false;
-    if (!skipEncryption &&
-        channel != null &&
-        !channel.isPublic &&
-        channel.channelSecret != null) {
-      final enc = await ChannelEncryption.encrypt(
-          text, channel.channelSecret!, channel.id);
-      if (enc != null) {
-        wireBody = enc;
-        isChEnc = true;
-      }
-    }
-
-    final wireMeta = <String, dynamic>{
-      if (isChEnc) 'ch_enc': true,
-      ...?extraMeta,
-    };
+    // Build wire message; in a private channel body and metadata (reply
+    // previews) are encrypted (audit S-4).
+    final wire = await sealChannelPayload(
+      body: text,
+      metadata: extraMeta,
+      channelId: channel?.id ?? name,
+      channelSecret: skipEncryption ? null : _privateSecretOf(channel),
+    );
+    final isChEnc = wire.encrypted;
 
     final wireMsg = NexusMessage.create(
       fromDid: myDid,
       toDid: NexusMessage.broadcastDid,
-      body: wireBody,
+      body: wire.body,
       channel: name,
-      metadata: wireMeta.isNotEmpty ? wireMeta : null,
+      metadata: wire.metadata,
     );
 
     await _manager.sendMessage(wireMsg);
@@ -2944,6 +2946,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Sends an image to a named group channel.
+  /// The secret of [channel] when it is private, else null.
+  String? _privateSecretOf(GroupChannel? channel) =>
+      channel != null && !channel.isPublic ? channel.channelSecret : null;
+
+  /// Sends an image or voice post in [name]; in a private channel the
+  /// content and its metadata are encrypted (audit S-4). Returns the
+  /// plaintext message to store locally (with `ch_enc` for the lock icon).
+  Future<NexusMessage> _sendChannelMedia(NexusMessage msg, String name) async {
+    final channel = GroupChannelService.instance.findByName(name);
+    final wire = await sealChannelPayload(
+      body: msg.body,
+      metadata: msg.metadata,
+      channelId: channel?.id ?? name,
+      channelSecret: _privateSecretOf(channel),
+    );
+    await _manager.sendMessage(NexusMessage(
+      id: msg.id,
+      fromDid: msg.fromDid,
+      toDid: msg.toDid,
+      type: msg.type,
+      channel: msg.channel,
+      body: wire.body,
+      timestamp: msg.timestamp,
+      ttlHours: msg.ttlHours,
+      metadata: wire.metadata,
+    ));
+    if (!wire.encrypted) return msg;
+    return msg.copyWith(metadata: {...?msg.metadata, 'ch_enc': true});
+  }
+
   Future<void> sendImageToChannel(String channelName, Uint8List imageBytes) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? 'unknown';
     final name = channelName.startsWith('#') ? channelName : '#$channelName';
@@ -2964,9 +2996,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
+    final storedMsg =
+        _withSentNostrEventId(await _sendChannelMedia(msg, name));
 
     _conversationCache.putIfAbsent(name, () => []);
     _conversationCache[name]!.add(storedMsg);
@@ -3021,9 +3052,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
+    final storedMsg =
+        _withSentNostrEventId(await _sendChannelMedia(msg, name));
 
     _conversationCache.putIfAbsent(name, () => []);
     _conversationCache[name]!.add(storedMsg);
