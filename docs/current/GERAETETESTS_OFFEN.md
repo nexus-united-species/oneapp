@@ -25,26 +25,13 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Zellauflösung ohne Kind-5, noch nicht committet) | Windows gründet eine Gemeinschaft, das Handy (Superadmin) löscht sie; zweiter Durchgang: Windows löscht eine eigene Gemeinschaft, in der das Handy Mitglied ist | Die Gemeinschaft verschwindet jeweils auch auf dem anderen Gerät; im Log des Löschenden kein `deleted: user requested deletion` |
 | 46aceec | Optional: Windows offline (WLAN aus), dem Handy eine Nachricht schreiben (bleibt in der Warteschlange); auf dem Handy derweil eine neuere Nachricht von jemand anderem empfangen und die App schließen; Windows wieder online, dann Handy-App starten | Die nachgereichte Nachricht von Windows erscheint auf dem Handy; Log `[SYNC] DMs and channels fetched with 7 days overlap` |
 | 208fa71 | Zwei Geräte derselben Identität: Kontakt auf Gerät 2 löschen, kurz danach auf Gerät 1 die Vertrauensstufe dieses Kontakts ändern; Gerät 1 neu starten | Der Kontakt bleibt auf Gerät 1 erhalten, auch nach dem Neustart, samt Notiz; auf Gerät 2 kommt er zurück |
-| 0f43b2f | Handy gründet eine Testgemeinschaft, Windows tritt bei. Handy: Mitglied Windows → „Gründerrolle übertragen“ | Windows zeigt sich nach kurzer Zeit als Gründer (Log `[FOUNDER-HANDOVER] … now led by …`); Windows kann die Gemeinschaft umbenennen, Mitglieder entfernen und auflösen; das Handy ist einfaches Mitglied und kann Windows nicht entfernen |
-| 0f43b2f | Wie oben, aber Handy vor dem Übertragen in den Flugmodus, übertragen, dann wieder online | Die Übergabe kommt trotzdem auf Windows an (Log `Re-sent handover roster`), danach `successor confirmed` auf dem Handy |
 | 0f43b2f | Optional, braucht drei Identitäten: Handy gründet eine Gemeinschaft und ernennt Windows zum Moderator; ein drittes Gerät stellt eine Beitrittsanfrage, **Windows** bestätigt | Das dritte Gerät nimmt die Bestätigung an (Log `[ROSTER] Applicant roster …`, danach „Membership confirmed“) und sieht sofort alle Mitglieder |
-| 33026b9 | Zwei Geräte derselben Identität: auf Gerät 1 einen Kontakt hinzufügen bzw. Vertrauensstufe ändern, 1 Minute warten | Auf Gerät 2 erscheint der Kontakt bzw. die neue Stufe, Name und Bild folgen über das Profil; Log `[CONTACT-SYNC] Merged: +1 …` |
 | 33026b9 | Auf Gerät 2 einen Kontakt löschen, danach Gerät 1 neu starten | Der Kontakt ist auch auf Gerät 1 weg und kommt nicht zurück |
-| 33026b9 | Neues Gerät per Seed, **ohne** Backup | Kontakte erscheinen nach etwa einer halben Minute von selbst |
-| c26511b | Nur mit zwei Geräten derselben Identität (z. B. neues Gerät aus dem Kontoumzug-Test): auf Gerät 1 einem Kontakt schreiben | Auf Gerät 2 erscheint die Nachricht im Gespräch mit diesem Kontakt als **eigene** (rechts), ohne Benachrichtigung; Log `[SYNC] Own DM …` |
-| c26511b | Auf dem sendenden Gerät selbst nachsehen | Die Nachricht steht **einmal** im Gespräch, nicht doppelt |
-| c26511b | Neues Gerät nach dem Seed-Restore | Gespräche der letzten 30 Tage sind da (nicht nur 24 Stunden); Beitrittsbestätigungen älterer Gemeinschaften werden angenommen |
-| 43bb68c | Kontoumzug auf ein frisches Gerät oder Profil (am besten drittes Gerät; sonst nur nach Rückfrage, keine bestehende Identität überschreiben): Seed eingeben | Bildschirm „Kein Backup auf diesem Gerät“ mit „Backup-Datei auswählen“; Log `[PROFILE-RESTORE] Looking up own Kind-0`, danach „own profile found“; Name, Bio und Bild wie auf dem alten Gerät, kein Zufallsname |
+| c26511b | Neues Gerät nach dem Seed-Restore | **Fehlgeschlagen am 12.11.2026 (Laptop2):** Nur Nachrichten der letzten Stunden erscheinen. Ältere liegen nachweislich noch auf den Relays (eigenes Relay ab 11.11., nos.lol ab 07.11.). Verdacht: Sie kommen beim Start an, bevor die Kontakte da sind. Zur Diagnose fehlt ein Log vom Release-Build (Protokoll-Schalter geplant); vorerst zurückgestellt |
 | 43bb68c | Backup-Datei vom alten Gerät (Einstellungen → Backup exportieren) auf das neue kopieren und auswählen | Kontakte, Kanäle, Gemeinschaften übernommen; „Dein Name: …“ auf dem Erfolgsbildschirm |
 | 43bb68c | Eine fremde oder beschädigte `.enc`-Datei auswählen | Meldung „… lässt sich mit deiner Seed Phrase nicht öffnen …“, nichts wird übernommen |
-| 43bb68c | Auf dem anderen Gerät (Kontakt) den Namen beobachten, während das neue Gerät startet | Der Name wechselt **nicht** kurz auf einen Zufallsnamen |
-| a6dbd7e | Beide Geräte: Einstellungen → Nostr-Netzwerk | `relay.nexus-terminal.org`, `relay.damus.io`, `nos.lol` stehen auf „Verbunden“; `relay.snort.social` und `relay.nostr.band` sind weg. Chat, Antrag und Stimme kommen wie bisher an |
-| a6dbd7e | Eigenes Relay eintragen (z. B. `wss://relay.primal.net`), App neu starten, danach wieder entfernen | Nach dem Neustart noch da; Papierkorb nur bei eigenen Relays; nach dem Entfernen weg, auch nach erneutem Neustart |
-| a6dbd7e | Handy: App in den Hintergrund, von Windows eine DM schicken | Genau **eine** Benachrichtigung; Dienst-Benachrichtigung zeigt „Verbunden mit 3 von 3 Relays“ |
-| 39b5106 | Optional: Handy (Superadmin) löscht eine Zelle, in der Windows Mitglied, aber nicht Gründer ist | Die Zelle verschwindet auch auf Windows |
 | 0698c8f, 61f0545 | Läuft von selbst: Windows zählt testantrag911-2-Nachfolger nach Frist + Nachfrist (≈ 7,5 Tage) selbst aus | Gleiches Ergebnis wie auf dem Handy; kein `[TALLY-MISMATCH]`. Hinweis: `[GOV-AUTH] kind=31013 … rejected` ist normal, sobald ein Gerät schon selbst ausgezählt hat |
 | 2d346db | Optional: Antrag mit Optionen (Einzelauswahl); auf einem Gerät kurz vor der Auszählung das Netz trennen, danach wieder verbinden | Log zeigt `[RETRY] SUCCESS`; das andere Gerät meldet kein `[TALLY-MISMATCH]` |
 | 5fd72b5 | Optional, aufwendig: einem Gerät fehlen Stimmen (offline bis nach der eigenen Auszählung) | Oranger Hinweis „… meldet ein anderes Ergebnis“, ⚠️-Eintrag in der Historie |
@@ -54,6 +41,11 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
+| a6dbd7e | 12.11.2026 | Drei Standard-Relays verbunden; eigenes Relay übersteht den Neustart und lässt sich entfernen; eine Benachrichtigung im Hintergrund |
+| 0f43b2f | 12.11.2026 | Gründer-Übergabe Handy → Windows, auch mit Flugmodus (Bedienung versteckt: Zahnrad, lange drücken) |
+| 39b5106, dc5cab8, 950171c | 12.11.2026 | Superadmin löscht fremde Gemeinschaft ohne Beitritt, sie verschwindet auch auf Windows (vorher Fehler, behoben) |
+| 43bb68c, 33026b9 | 12.11.2026 | Laptop2 per Seed ohne Backup: Bildschirm „Kein Backup“, richtiger Name, Kontakte kommen von selbst |
+| c26511b, 33026b9 | 12.11.2026 | Nachricht von Laptop2 erscheint auf Laptop1 als eigene; Vertrauensstufe wandert zwischen Laptop2 und Laptop1 |
 | 2158ca3, 5bccb33 | 09.11.2026 | Identitätsnachweis, Austritt, Neustart, Wiederbeitritt, Entfernen, Antrag, Abstimmung, Delegation, Auflösung in Ordnung |
 | 5f23cc2, 4f1a73c | 09.11.2026 | Handy migriert bis v28 (`[DB-MIGRATION-28]`), Windows-DB steht auf v28 mit neuer Spalte; Daten vollständig |
 | 63556cb, f38d5a2, a728672 | 09.11.2026 | Keine Überläufe (Windows schmal/breit, Handy-Startseite); Admin-Bereich nur auf dem Handy |
