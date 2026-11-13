@@ -995,6 +995,10 @@ class NostrTransport implements MessageTransport {
     unawaited(_outbox.publish(event));
   }
 
+  /// IDs of chat events (DMs, channel posts, reactions, deletions) that a
+  /// relay accepted, immediately or later from the outbox (audit Z-4).
+  Stream<String> get onChatEventAccepted => _outbox.onAccepted;
+
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
   /// reaction, Kind-5 deletion) and returns the assigned Nostr event ID.
   ///
@@ -1791,8 +1795,12 @@ class NostrTransport implements MessageTransport {
     NexusMessage message, {
     String? recipientDid,
   }) async {
-    if (_keys == null) return;
-    if (_state == TransportState.error) return;
+    // Fail loudly so the TransportManager tries the next transport and the
+    // chat can show the message as not sent (audit Z-3).
+    if (_keys == null) throw StateError('Nostr: keys not initialised');
+    if (_state == TransportState.error) {
+      throw StateError('Nostr: transport in error state');
+    }
 
     if (message.isBroadcast) {
       await _sendBroadcast(message);

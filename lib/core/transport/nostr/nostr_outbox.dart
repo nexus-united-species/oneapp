@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../../storage/pod_database.dart';
@@ -72,6 +73,11 @@ class NostrOutbox {
   final NostrOutboxStore _store;
   final NostrEventPublisher _publish;
   bool _flushing = false;
+  final _accepted = StreamController<String>.broadcast();
+
+  /// IDs of events a relay accepted, right away or later from the queue
+  /// (audit Z-4: the chat shows „gesendet“ only then).
+  Stream<String> get onAccepted => _accepted.stream;
 
   /// DMs, channel posts, reactions and deletions. Presence, metadata and
   /// governance events are excluded (stale or retried elsewhere).
@@ -87,7 +93,10 @@ class NostrOutbox {
 
   /// Publishes [event]; keeps it for [flush] if no relay accepted it.
   Future<void> publish(NostrEvent event) async {
-    if (await _tryPublish(event)) return;
+    if (await _tryPublish(event)) {
+      _accepted.add(event.id);
+      return;
+    }
     if (!queuedKinds.contains(event.kind)) return;
     try {
       await _store.put(event);
@@ -120,6 +129,7 @@ class NostrOutbox {
         }
         if (await _tryPublish(event)) {
           await _store.remove(event.id);
+          _accepted.add(event.id);
           delivered++;
         }
       }

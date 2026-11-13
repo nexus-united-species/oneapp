@@ -137,4 +137,41 @@ void main() {
       expect(publishedIds, [dm.id]);
     });
   });
+
+  group('onAccepted (audit Z-4)', () {
+    test('reports an event the relay accepted right away', () async {
+      relayAccepts = true;
+      final accepted = <String>[];
+      outbox.onAccepted.listen(accepted.add);
+      final dm = _event();
+
+      await outbox.publish(dm);
+      await pumpEventQueue();
+
+      expect(accepted, [dm.id]);
+    });
+
+    test('reports nothing while no relay accepts', () async {
+      final accepted = <String>[];
+      outbox.onAccepted.listen(accepted.add);
+
+      await outbox.publish(_event());
+      await pumpEventQueue();
+
+      expect(accepted, isEmpty);
+    });
+
+    test('reports a queued event once a relay takes it later', () async {
+      final accepted = <String>[];
+      outbox.onAccepted.listen(accepted.add);
+      final dm = _event();
+      await outbox.publish(dm);
+      relayAccepts = true;
+
+      await outbox.flush();
+      await pumpEventQueue();
+
+      expect(accepted, [dm.id]);
+    });
+  });
 }

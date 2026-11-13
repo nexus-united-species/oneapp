@@ -205,9 +205,10 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      await manager.sendMessage(_toBob('fallback'),
+      final via = await manager.sendMessage(_toBob('fallback'),
           recipientDid: 'did:key:zBob');
 
+      expect(via, TransportType.nostr);
       expect(nostr.sent, hasLength(1));
     });
 
@@ -257,8 +258,11 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      await manager.sendMessage(_toBob('hi Bob'), recipientDid: 'did:key:zBob');
+      final via = await manager.sendMessage(_toBob('hi Bob'),
+          recipientDid: 'did:key:zBob');
 
+      expect(via, TransportType.lan,
+          reason: 'the manager reports which transport took it');
       expect(lan.sent, hasLength(1), reason: 'LAN should be preferred');
       expect(ble.sent, isEmpty);
     });

@@ -1271,6 +1271,7 @@ class PodDatabase {
     required String conversationId,
     required String senderDid,
     required Map<String, dynamic> data,
+    String status = 'pending',
   }) async {
     // Deduplicate: skip if this message ID already exists in the DB.
     // This prevents duplicate storage when missed Nostr messages are re-delivered
@@ -1294,7 +1295,7 @@ class PodDatabase {
       'sender_did': senderDid,
       'enc': enc,
       'ts': data['ts'] as int? ?? DateTime.now().millisecondsSinceEpoch,
-      'status': 'pending',
+      'status': status,
       // ignore: use_null_aware_elements
       if (msgId != null) 'message_id': msgId,
       // ignore: use_null_aware_elements
@@ -1321,6 +1322,7 @@ class PodDatabase {
         ...data,
         // Local-state columns – consumed by ChatProvider, not sent over wire.
         '_is_favorite': row['is_favorite'] as int? ?? 0,
+        '_status': row['status'] as String?,
         '_edited_body': row['edited_body'] as String?,
       });
     }
@@ -1329,6 +1331,16 @@ class PodDatabase {
   }
 
   /// Sets or clears the favorite flag for [messageId].
+  /// Sets the delivery status of an own chat message (audit Z-4).
+  Future<void> setMessageStatus(String messageId, String status) async {
+    await _database.update(
+      'pod_messages',
+      {'status': status},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
   Future<void> setMessageFavorite(String messageId, {required bool isFavorite}) async {
     await _database.update(
       'pod_messages',

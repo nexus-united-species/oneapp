@@ -33,7 +33,8 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 | TD-68 | Reaktion und Löschen am Desktop kaum erreichbar | Nachrichtenmenü nur per langem Drücken; Rechtsklick fehlt |
 | Verlauf-Neu | Neues Gerät zeigt ältere Nachrichten nicht | Gerätetest 12.11.2026 (Laptop2): nur die letzten Stunden erscheinen, obwohl ältere auf den Relays liegen. Verdacht: Nachrichten kommen vor den Kontakten an. Zurückgestellt; braucht Log aus dem Release-Build (Protokoll-Schalter) |
 | S-4-Rest | Neuer Kanalschlüssel nur bei bekanntem Verschlüsselungsschlüssel | Mitglieder ohne bekannten Schlüssel erhalten den neuen Kanalschlüssel nicht (Hinweis an den Admin, neu einladen); Beitritt per Annahme oder Einladung setzt die früheren Schlüssel zurück; Beiträge von Mitgliedern, die noch mit dem alten Schlüssel senden, kann der Entfernte weiter lesen, bis sie den neuen haben |
-| Z-3 bis Z-6 | Zustellung | stille Sendefehler, kein Zustellstatus, Outbox nur für vier Event-Arten, Reconnect ohne Backoff/Ping (Block 2) |
+| Z-3/Z-4-Rest | Zustellstatus nur für Text-Direktnachrichten | Bilder, Sprachnachrichten, Kanal- und #mesh-Beiträge werden noch erst gesendet, dann gespeichert; „gesendet“ heißt ein Relay hat angenommen, nicht der Empfänger hat empfangen |
+| Z-5, Z-6 | Zustellung | Outbox nur für vier Event-Arten (Beitrittsanfragen u. a. gehen offline verloren); Reconnect fest nach 10 s ohne Backoff und Ping (Block 2) |
 
 ## Mittel
 

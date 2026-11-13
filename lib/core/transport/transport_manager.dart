@@ -129,7 +129,10 @@ class TransportManager {
   ///   - **Directed messages**: prefer LAN if recipient is reachable via LAN,
   ///     otherwise try transports in registration order (cascade: first success
   ///     wins).
-  Future<void> sendMessage(
+  ///
+  /// Returns the transport that took a directed message (null for
+  /// broadcasts), so the chat can tell a direct delivery from a relay hand-off.
+  Future<TransportType?> sendMessage(
     NexusMessage message, {
     String? recipientDid,
   }) async {
@@ -165,7 +168,7 @@ class TransportManager {
           debugPrint('[TRANSPORT]   ✗ ${transport.type}: $e');
         }
       }
-      return;
+      return null;
     }
 
     // Directed message: cascade – first transport that delivers successfully wins.
@@ -181,7 +184,7 @@ class TransportManager {
       if (transport.type == TransportType.lan) {
         await _mirrorToNostr(msg, recipientDid);
       }
-      return;
+      return transport.type;
     }
     throw StateError(
       'No transport available. Register and start at least one transport.',

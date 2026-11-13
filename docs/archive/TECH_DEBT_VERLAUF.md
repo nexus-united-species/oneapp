@@ -597,3 +597,17 @@ Liste:
   erledigt galt. Jetzt fällt nur Bluetooth weg (`plannedTransports`); der
   Chat läuft über LAN und Nostr, oben steht ein Hinweis mit „Erlauben“, der
   die App-Einstellungen öffnet.
+
+- **Audit Z-3/Z-4 für Text-Direktnachrichten (13.11.2026, Gerätetest
+  offen):** Eine Direktnachricht wird jetzt zuerst gespeichert (Status
+  `sending`, Spalte `pod_messages.status`, keine Schemaänderung) und erst
+  dann gesendet. Schlägt jeder Weg fehl, bleibt sie mit `failed` sichtbar
+  („Nicht gesendet – erneut senden“); vorher war sie spurlos weg und der
+  eingegebene Text gelöscht. Direkt über LAN/BLE zugestellt heißt `sent`;
+  über Nostr bleibt sie bei `sending` (Uhr-Symbol), bis ein Relay sie
+  annimmt – die Outbox meldet das (`onAccepted`), auch beim späteren
+  Nachsenden nach einem Neustart. Der Nostr-Transport kehrt ohne Schlüssel
+  oder im Fehlerzustand nicht mehr still zurück, sondern meldet einen
+  Fehler; der `TransportManager` gibt zurück, welcher Weg die Nachricht
+  übernommen hat. Ältere Nachrichten (Status `pending`) zeigen keinen
+  Zustand.

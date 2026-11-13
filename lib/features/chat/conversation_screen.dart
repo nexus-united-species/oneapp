@@ -30,6 +30,7 @@ import '../../shared/widgets/linkified_text.dart';
 import '../contacts/contact_detail_screen.dart';
 import '../contacts/widgets/trust_badge.dart';
 import 'chat_provider.dart';
+import 'delivery_status.dart';
 import 'conversation.dart';
 import 'conversation_service.dart';
 import 'voice_player.dart';
@@ -2095,6 +2096,8 @@ class _TextContent extends StatelessWidget {
     );
     final metaColor =
         isMe ? AppColors.onDark.withValues(alpha: 0.55) : Colors.grey;
+    final delivery = DeliveryState.fromValue(
+        message.metadata?[localDeliveryMetaKey] as String?);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -2146,8 +2149,37 @@ class _TextContent extends StatelessWidget {
                       : AppColors.gold,
                 ),
               ],
+              // Audit Z-4: waiting for a relay (or offline in the outbox).
+              if (isMe && delivery == DeliveryState.sending) ...[
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Wartet auf Zustellung',
+                  child: Icon(Icons.schedule, size: 11, color: metaColor),
+                ),
+              ],
             ],
           ),
+          // Audit Z-3: no transport took the message.
+          if (isMe && delivery == DeliveryState.failed)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: () => context
+                    .read<ChatProvider>()
+                    .resendFailedMessage(message),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.error_outline, size: 13, color: Colors.redAccent),
+                    SizedBox(width: 4),
+                    Text(
+                      'Nicht gesendet – erneut senden',
+                      style: TextStyle(fontSize: 11, color: Colors.redAccent),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           // Audit S-1: sent by an older app version without identity proof.
           if (!isMe && message.isSenderUnverified)
             Padding(

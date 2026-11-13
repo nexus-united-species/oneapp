@@ -15,6 +15,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../core/contacts/contact_service.dart';
 import 'channel_payload.dart';
 import 'transport_plan.dart';
+import 'delivery_status.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
@@ -225,7 +226,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _reactionSub;
   StreamSubscription<MessageDeletionRequest>? _deletionSub;
   StreamSubscription<NexusMessage>? _nostrReferenceSub;
+  StreamSubscription<String>? _acceptedSub;
   Timer? _muteExpiryTimer;
+
+  /// Chat event IDs a relay accepted recently (bounded), so an acceptance
+  /// arriving before the message is stored is not lost (audit Z-4).
+  final Set<String> _acceptedEventIds = <String>{};
+  static const int _acceptedEventCap = 500;
 
   /// Reactions already being processed, so parallel relay deliveries of the
   /// same Kind-7 are stored and announced once (bounded, oldest dropped).
@@ -239,6 +246,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Registers the incoming Kind-7 and Kind-5 listeners, replacing any
   /// previous ones.
   void _subscribeToReactions(NostrTransport transport) {
+    _acceptedSub?.cancel();
+    _acceptedSub =
+        transport.onChatEventAccepted.listen(_onChatEventAccepted);
     _reactionSub?.cancel();
     _reactionSub = transport.onFeedReaction.listen(_handleIncomingReaction);
     _deletionSub?.cancel();
@@ -2167,12 +2177,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _persistMessage(String convId, NexusMessage msg) async {
+  Future<void> _persistMessage(String convId, NexusMessage msg,
+      {String status = 'pending'}) async {
     try {
+      // The delivery state lives in its own column, not in the stored JSON.
+      final meta = msg.metadata;
+      final data = meta != null && meta.containsKey(localDeliveryMetaKey)
+          ? msg
+              .copyWith(
+                  metadata: Map<String, dynamic>.from(meta)
+                    ..remove(localDeliveryMetaKey))
+              .toJson()
+          : msg.toJson();
       await PodDatabase.instance.insertMessage(
         conversationId: convId,
         senderDid: msg.fromDid,
-        data: msg.toJson(),
+        data: data,
+        status: status,
       );
       debugPrint('[CHAT] DB insert OK: convId=$convId');
     } catch (e) {
@@ -2416,18 +2437,111 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
-
-    // Optimistic local cache update – always use plaintext local message, but
-    // retain the outer Nostr event ID produced from the wire copy.
-    final storedMsg = _withSentNostrEventId(localMsg);
+    // Save first, then send (audit Z-3): the message exists locally even if
+    // every transport fails, and shows its delivery state (Z-4).
     final convId = _conversationId(recipientDid, myDid);
+    final pendingMsg = localMsg.copyWith(metadata: {
+      ...?localMsg.metadata,
+      localDeliveryMetaKey: DeliveryState.sending.value,
+    });
     _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, pendingMsg);
+    await _persistMessage(convId, pendingMsg,
+        status: DeliveryState.sending.value);
     ConversationService.instance.notifyUpdate();
-
     notifyListeners();
+
+    TransportType? deliveredVia;
+    try {
+      deliveredVia =
+          await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
+    } catch (e) {
+      debugPrint('[DELIVERY] ${localMsg.id} not sent: $e');
+      await _setDelivery(convId, localMsg.id, DeliveryState.failed);
+      return;
+    }
+
+    // Keep the outer Nostr event ID produced from the wire copy.
+    final withEventId = _withSentNostrEventId(localMsg);
+    final eventId = withEventId.nostrEventId;
+    if (eventId != null) {
+      await PodDatabase.instance
+          .attachNostrEventId(localMsg.id, withEventId.toJson());
+      _updateCachedMessage(convId, localMsg.id,
+          (m) => m.withNostrEventId(eventId));
+    }
+    await _setDelivery(
+      convId,
+      localMsg.id,
+      deliveryAfterHandOff(
+        deliveredVia,
+        relayAlreadyAccepted:
+            eventId != null && _acceptedEventIds.contains(eventId),
+      ),
+    );
+  }
+
+  /// Sets the delivery state of an own message in cache and database.
+  Future<void> _setDelivery(
+      String convId, String messageId, DeliveryState state) async {
+    await PodDatabase.instance.setMessageStatus(messageId, state.value);
+    _updateCachedMessage(convId, messageId, (m) {
+      final meta = Map<String, dynamic>.from(m.metadata ?? {});
+      if (state == DeliveryState.sent) {
+        meta.remove(localDeliveryMetaKey);
+      } else {
+        meta[localDeliveryMetaKey] = state.value;
+      }
+      return m.copyWith(metadata: meta);
+    });
+    debugPrint('[DELIVERY] $messageId → ${state.value}');
+    notifyListeners();
+  }
+
+  /// A relay accepted a chat event: the matching own message is sent.
+  Future<void> _onChatEventAccepted(String eventId) async {
+    _acceptedEventIds.add(eventId);
+    while (_acceptedEventIds.length > _acceptedEventCap) {
+      _acceptedEventIds.remove(_acceptedEventIds.first);
+    }
+    for (final entry in _conversationCache.entries) {
+      for (final m in entry.value) {
+        if (m.nostrEventId == eventId &&
+            m.metadata?[localDeliveryMetaKey] != null) {
+          await _setDelivery(entry.key, m.id, DeliveryState.sent);
+          return;
+        }
+      }
+    }
+    // Not in memory (e.g. resent from the outbox after a restart).
+    final rows =
+        await PodDatabase.instance.findMessagesByNostrEventIds({eventId});
+    for (final row in rows) {
+      final id = row['message_id'] as String?;
+      if (id != null) {
+        await PodDatabase.instance
+            .setMessageStatus(id, DeliveryState.sent.value);
+      }
+    }
+  }
+
+  /// Sends a failed text message again: the old copy is removed and the
+  /// text goes out as a new message (with its reply reference).
+  Future<void> resendFailedMessage(NexusMessage msg) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    if (msg.fromDid != myDid || msg.isBroadcast) return;
+    if (DeliveryState.fromValue(msg.metadata?[localDeliveryMetaKey] as String?) !=
+        DeliveryState.failed) {
+      return;
+    }
+    final convId = _conversationId(msg.toDid, myDid);
+    await deleteMessageLocally(msg, convId);
+    final keep = <String, dynamic>{
+      for (final e in (msg.metadata ?? const <String, dynamic>{}).entries)
+        if (e.key.startsWith('reply_to_')) e.key: e.value,
+    };
+    await sendMessage(msg.toDid, msg.body,
+        extraMeta: keep.isEmpty ? null : keep);
   }
 
   /// Sends a broadcast message to the #mesh channel.
@@ -3527,11 +3641,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         try {
           final isFavorite = (row['_is_favorite'] as int? ?? 0) == 1;
           final editedBody = row['_edited_body'] as String?;
+          final delivery = DeliveryState.fromValue(row['_status'] as String?);
           final cleaned = Map<String, dynamic>.from(row)
             ..remove('sender_did')
             ..remove('_is_favorite')
+            ..remove('_status')
             ..remove('_edited_body');
           var msg = NexusMessage.fromJson(cleaned);
+          if (delivery == DeliveryState.sending ||
+              delivery == DeliveryState.failed) {
+            msg = msg.copyWith(metadata: {
+              ...?msg.metadata,
+              localDeliveryMetaKey: delivery!.value,
+            });
+          }
           // Merge local-state into metadata so the UI can use them.
           if (isFavorite || editedBody != null) {
             final meta = Map<String, dynamic>.from(msg.metadata ?? {});
@@ -3850,6 +3973,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _reactionSub?.cancel();
     _deletionSub?.cancel();
     _nostrReferenceSub?.cancel();
+    _acceptedSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
     // Only an initialized provider owns a running manager lifecycle. This also
