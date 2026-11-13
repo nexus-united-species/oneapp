@@ -581,3 +581,11 @@ Liste:
   über alle Wege; nur gezielte Nachrichten laufen als Kaskade. Die Tests
   nutzen jetzt gezielte Nachrichten, ein neuer Test prüft den Rundruf über
   alle Wege. Der App-Code war richtig. Volle Suite: 1838 Tests grün.
+
+- **CI angelegt (13.11.2026, Block 2):** `.github/workflows/ci.yml` prüft bei
+  jedem Push auf `main` und `lead/**` sowie bei Pull Requests mit
+  `flutter analyze --no-fatal-infos --no-fatal-warnings` und `flutter test`,
+  auf einem Windows-Runner mit Flutter 3.41.5 wie in der Entwicklung. Die
+  Analyse bricht nur bei Fehlern ab; die rund 1050 Hinweise und Warnungen
+  bleiben Baseline und sollen schrittweise sinken. Der erste Lauf kommt mit
+  dem nächsten Push.

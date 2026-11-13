@@ -59,7 +59,9 @@ Entwurf beziehungsweise Platzhalter und kein aktives Produktmodul.
 - `flutter test`: alle 1838 Tests grün. Ausnahme: LAN-Discovery-Tests
   schlagen fehl, wenn eine Windows-App im selben Netz läuft (TD-25).
 - `flutter analyze`: keine Fehler; Hinweise und Warnungen als Baseline.
-- Es gibt noch keine CI (Block 2).
+- CI (`.github/workflows/ci.yml`, Windows-Runner): `flutter analyze` (bricht nur
+  bei Fehlern ab) und `flutter test` bei jedem Push auf `main`/`lead/**` und
+  bei Pull Requests; aktiv ab dem nächsten Push (13.11.2026 angelegt).
 
 ## Offene Punkte
 
