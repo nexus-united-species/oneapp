@@ -25,6 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
+| (Audit Z-7, noch nicht committet) | Handy: in den Android-Einstellungen der App Bluetooth/„Geräte in der Nähe“ verbieten, App neu starten | Chat funktioniert über Internet (Nachricht an Laptop1 kommt an); oben orangener Hinweis „Bluetooth ist nicht erlaubt …“; „Erlauben“ öffnet die App-Einstellungen. Danach wieder erlauben |
 | 7e540ef | Handy legt einen privaten Kanal an, Laptop1 und Laptop2 treten bei; Handy entfernt Laptop2 und schreibt danach eine Nachricht | Laptop1 liest die neue Nachricht; Laptop2 sieht sie nicht (bzw. nur „konnte nicht entschlüsselt werden“); ältere Nachrichten bleiben auf Laptop1 lesbar; Handy-Log `[CHAN-KEY] … members informed` |
 | e1e834b | Privaten Kanal mit Handy und Laptop1: Bild, Sprachnachricht und eine Antwort auf eine Nachricht schicken | Alles kommt an und ist sichtbar bzw. abspielbar, Antwortzitat wird angezeigt, Schloss-Symbol an den Nachrichten |
 | e1e834b | Laptop2 (alte ZIP) ist Mitglied im selben privaten Kanal | Text und Bild kommen an; Vorschaubild und Antwortzitat fehlen dort (erwartet) |

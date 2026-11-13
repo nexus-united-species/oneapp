@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/contacts/contact_service.dart';
 import 'channel_payload.dart';
+import 'transport_plan.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
@@ -125,12 +126,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _nostrTimestampKey = 'last_nostr_timestamp_seconds';
 
   bool _initialized = false;
-  bool _permissionsGranted = false;
+  bool _bluetoothGranted = false;
   bool _running = false;
   String? _error;
 
   bool get initialized => _initialized;
-  bool get permissionsGranted => _permissionsGranted;
+  /// Whether Bluetooth may be used. Without it the chat runs over LAN and
+  /// Nostr (audit Z-7); the UI shows a hint instead of blocking.
+  bool get bluetoothGranted => _bluetoothGranted;
   bool get running => _running;
   String? get error => _error;
 
@@ -256,12 +259,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     try {
-      _permissionsGranted = await _requestPermissions();
-      if (!_permissionsGranted) {
-        _error = 'Bluetooth-Berechtigungen verweigert.';
-        notifyListeners();
-        return;
+      // A denied Bluetooth permission only drops Bluetooth; LAN and Nostr
+      // still start (audit Z-7).
+      _bluetoothGranted = await _requestPermissions();
+      if (!_bluetoothGranted) {
+        debugPrint('[PERM] Bluetooth not permitted – chat continues over '
+            'LAN and Nostr');
       }
+      final plan = plannedTransports(
+        isMobile: Platform.isAndroid || Platform.isIOS,
+        bluetoothGranted: _bluetoothGranted,
+      );
 
       final identity = IdentityService.instance.currentIdentity;
       if (identity == null) {
@@ -278,9 +286,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       _manager.clearTransports();
 
-      // BLE transport – mobile only (desktop degrades gracefully via timeout,
-      // but we skip registration entirely on desktop to avoid plugin issues).
-      if (Platform.isAndroid || Platform.isIOS) {
+      // BLE transport – mobile only and only with permission (desktop is
+      // skipped entirely to avoid plugin issues).
+      if (plan.contains(TransportType.ble)) {
         _manager.registerTransport(
           BleTransport(
             localDid: identity.did,

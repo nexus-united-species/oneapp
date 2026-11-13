@@ -589,3 +589,11 @@ Liste:
   Analyse bricht nur bei Fehlern ab; die rund 1050 Hinweise und Warnungen
   bleiben Baseline und sollen schrittweise sinken. Der erste Lauf kommt mit
   dem nächsten Push.
+
+- **Audit Z-7 erledigt (13.11.2026, Gerätetest offen):** Wer auf dem Handy
+  die Bluetooth-Berechtigung verweigerte, hatte gar keinen Chat:
+  `ChatProvider.initialize` brach ab, bevor LAN und Nostr starteten, und der
+  Knopf „Erneut versuchen“ tat nichts, weil die Initialisierung schon als
+  erledigt galt. Jetzt fällt nur Bluetooth weg (`plannedTransports`); der
+  Chat läuft über LAN und Nostr, oben steht ein Hinweis mit „Erlauben“, der
+  die App-Einstellungen öffnet.
