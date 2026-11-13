@@ -19,7 +19,7 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 | S-5 | Direktnachrichten außen NIP-04 (AES-CBC ohne Authentisierung, Metadaten sichtbar) | ein Nachrichtenformat NIP-17/NIP-44 als ADR (Block 4) |
 | S-6 | Eigene secp256k1-Rechnung in reinem Dart (Sperrstufe 1) | Punktprüfung in `computeSharedSecret`; Wechsel auf geprüfte Bibliothek als eigener Schritt |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays; Entscheidung zur Vertraulichkeit offen |
-| TD-61-Rest | `version.json` unsigniert | Update-Prüfung läuft wieder (seit 8dd4647), aber ohne Signatur; signieren in Block 2 |
+| TD-61-Rest | Hosting bleibt GitHub Raw | kein eigenes Update-Hosting (vorerst keine Priorität, Signatur deckt das Vertrauensproblem bereits ab) |
 
 ## Hoch – vor breiter Nutzung
 

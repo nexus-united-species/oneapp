@@ -648,3 +648,22 @@ Liste:
   Verbindungsaufbau bricht nach 15 Sekunden ab. Ohne Internet stoppt der
   ChatProvider den Transport wie bisher; beim Wiederkommen startet er neu
   mit kurzer Pause.
+
+- **Audit TD-61: Update-Information signiert (13.11.2026, Gerätetest
+  offen):** `version.json` wird jetzt mit einem eigenen Ed25519-Schlüssel
+  signiert (`version_signature.dart`); ohne gültige Signatur ignoriert die
+  App die Datei vollständig, als gäbe es kein Update. Vorher genügte
+  Zugriff auf die Hosting-URL (GitHub Raw), um eine beliebige „neue
+  Version“ samt Download-Link anzukündigen. Die Signatur deckt jedes Feld
+  außer sich selbst ab, auch den SHA-256 der Datei – ein verändertes Ziel
+  fällt also doppelt auf.
+  - Signiert wird mit `tool/sign_version_json.dart` vor jedem Release; der
+    private Schlüssel liegt nur in der Schlüssel-Sicherung
+    (`%USERPROFILE%\NEXUS-Schluessel-Sicherung\release_signing_key.txt`),
+    nie im Repository. Der öffentliche Schlüssel steckt im Code
+    (`VersionSignature.releasePublicKeyHex`).
+  - Das bestehende `version.json` im Repository ist mit dem neuen Schlüssel
+    signiert, damit es zum neuen Code passt.
+  - Tests signieren ihre Testdaten mit einem eigenen Wegwerf-Schlüssel
+    (`publicKeyHexOverride`, nur für Tests), nie mit dem echten privaten
+    Schlüssel.

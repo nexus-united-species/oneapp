@@ -46,7 +46,7 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
   und neuen Kanalschlüssel beim Entfernen eines Mitglieds.
 - [ ] Android-Release mit eigenem Release-Schlüssel statt Debug-Schlüssel
   (R-1); Debug-Keystore seit 13.11.2026 gesichert.
-- [ ] `version.json` signieren (Rest TD-61).
+- [x] `version.json` signieren (Rest TD-61, 13.11.2026).
 - [x] CI mit `flutter analyze` und `flutter test` (13.11.2026; erster Lauf
   beim nächsten Push).
 - [ ] `eligibleVotersCount` in Decision Record, Datenbank, Wire-Format und Hash

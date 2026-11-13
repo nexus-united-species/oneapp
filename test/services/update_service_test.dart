@@ -2,11 +2,39 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:cryptography/cryptography.dart' as crypto;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:nexus_oneapp/services/update_service.dart';
+import 'package:nexus_oneapp/services/version_signature.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// ── Test-only signing key (audit TD-61) ──────────────────────────────────
+//
+// Fixtures are signed with this throwaway key, never the real release key;
+// _testPublicKeyHex is passed to checkForUpdateWithMock as an override so
+// VersionSignature verifies against it instead of the real release key.
+crypto.SimpleKeyPair? _testKeyPair;
+String _testPublicKeyHex = '';
+
+Future<void> _ensureTestKey() async {
+  if (_testKeyPair != null) return;
+  _testKeyPair = await crypto.Ed25519()
+      .newKeyPairFromSeed(List<int>.filled(32, 7));
+  final publicKey = await _testKeyPair!.extractPublicKey();
+  _testPublicKeyHex =
+      publicKey.bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}
+
+Future<Map<String, dynamic>> _signed(Map<String, dynamic> data) async {
+  await _ensureTestKey();
+  final signature = await crypto.Ed25519().sign(
+    VersionSignature.canonicalBytes(data),
+    keyPair: _testKeyPair!,
+  );
+  return {...data, 'sig': base64Encode(signature.bytes)};
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -21,6 +49,7 @@ http.Client _mockClient({
   int minVersionCode = 1,
   String? sha256Apk,
   String? sha256Exe,
+  bool signed = true,
 }) {
   final body = <String, dynamic>{
     'version': version,
@@ -33,12 +62,17 @@ http.Client _mockClient({
   if (sha256Apk != null) body['sha256_apk'] = sha256Apk;
   if (sha256Exe != null) body['sha256_exe'] = sha256Exe;
 
-  return MockClient((_) async => http.Response(jsonEncode(body), statusCode));
+  return MockClient((_) async {
+    final payload = signed ? await _signed(body) : body;
+    return http.Response(jsonEncode(payload), statusCode);
+  });
 }
 
 // ── parseVersion ─────────────────────────────────────────────────────────────
 
 void main() {
+  setUpAll(() => _ensureTestKey());
+
   group('parseVersion', () {
     test('parses plain semver', () {
       expect(parseVersion('1.2.3'), [1, 2, 3]);
@@ -128,6 +162,7 @@ void main() {
       });
 
       await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 12,
       );
@@ -146,6 +181,7 @@ void main() {
         apkUrl: 'https://example.com/nexus-v0.2.0.apk',
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 5,
       );
@@ -158,6 +194,7 @@ void main() {
     test('returns null when remote version_code equals local', () async {
       final client = _mockClient(version: '0.1.9', versionCode: 9);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -167,6 +204,7 @@ void main() {
     test('returns null when remote version_code is lower than local', () async {
       final client = _mockClient(version: '0.1.0', versionCode: 5);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -177,6 +215,7 @@ void main() {
       final client =
           _mockClient(version: '9.9.9', versionCode: 999, statusCode: 500);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -186,6 +225,7 @@ void main() {
     test('does not crash when server is unreachable', () async {
       final client = MockClient((_) async => throw Exception('no network'));
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -197,6 +237,7 @@ void main() {
       final client =
           _mockClient(version: '1.0.0', versionCode: 100, releaseNotes: longNotes);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -214,6 +255,7 @@ void main() {
         exeUrl: 'https://project-nexus-official.github.io/terminal/downloads/Setup_NexusOneApp_v1.0.0.exe',
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         platformOverride: 'android',
@@ -233,6 +275,7 @@ void main() {
         exeUrl: 'https://project-nexus-official.github.io/terminal/downloads/Setup_NexusOneApp_v1.0.0.exe',
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         platformOverride: 'windows',
@@ -252,6 +295,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         skipDialogThrottle: false,
@@ -265,6 +309,7 @@ void main() {
       });
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         skipDialogThrottle: false,
@@ -279,6 +324,7 @@ void main() {
       });
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         skipDialogThrottle: false,
@@ -295,6 +341,7 @@ void main() {
       // we mirror here via skipDialogThrottle: true.
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         skipDialogThrottle: true,
@@ -327,6 +374,7 @@ void main() {
       // checkForUpdateWithMock bypasses the rate limit — confirms the network
       // is still hit (rate limit lives only in _checkWithRateLimit, not here).
       await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -339,6 +387,7 @@ void main() {
       });
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -351,6 +400,7 @@ void main() {
       });
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -366,6 +416,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final client = _mockClient(version: '2.0.0', versionCode: 200);
       await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
       );
@@ -553,6 +604,7 @@ void main() {
         sha256Exe: exeHash,
       );
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         platformOverride: 'android',
@@ -565,6 +617,7 @@ void main() {
     test('missing sha256 fields → null in UpdateInfo', () async {
       final client = _mockClient(version: '1.0.0', versionCode: 100);
       final info = await UpdateService.instance.checkForUpdateWithMock(
+        publicKeyHexOverride: _testPublicKeyHex,
         client: client,
         currentVersionCode: 9,
         platformOverride: 'android',

@@ -10,6 +10,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'version_signature.dart';
+
 /// Holds information about an available update.
 class UpdateInfo {
   final String version;
@@ -220,6 +222,7 @@ class UpdateService {
     int? currentVersionCodeOverride,
     String? platformOverride,
     bool skipDialogThrottle = false,
+    String? publicKeyHexOverride,
   }) async {
     final ownClient = clientOverride == null;
     final client = clientOverride ?? http.Client();
@@ -238,6 +241,17 @@ class UpdateService {
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      // Audit TD-61: version.json must carry a valid signature from the
+      // release key, otherwise whoever controls the hosting URL could
+      // announce an arbitrary "update". An unsigned/invalid file is
+      // treated exactly like no update being available.
+      if (!await VersionSignature.isValid(data,
+          publicKeyHexOverride: publicKeyHexOverride)) {
+        debugPrint('[UPDATE-CHECK] version.json signature invalid — ignored');
+        return null;
+      }
+
       final remoteVersionCode = data['version_code'] as int? ?? 0;
       final remoteVersion = data['version'] as String? ?? '';
       final rawNotes = data['release_notes'] as String? ?? '';
@@ -359,12 +373,14 @@ class UpdateService {
     required int currentVersionCode,
     String platformOverride = 'android',
     bool skipDialogThrottle = true,
+    String? publicKeyHexOverride,
   }) =>
       _fetchAndEvaluate(
         clientOverride: client,
         currentVersionCodeOverride: currentVersionCode,
         platformOverride: platformOverride,
         skipDialogThrottle: skipDialogThrottle,
+        publicKeyHexOverride: publicKeyHexOverride,
       );
 }
 
