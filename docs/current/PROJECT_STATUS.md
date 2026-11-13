@@ -1,35 +1,45 @@
 # Projektstatus – N.E.X.U.S. OneApp
 
-Stand: 15. Juli 2026  
-Codeversion: `0.2.0+12` laut `pubspec.yaml`  
-Datenbankschema: Version 23
+Stand: 13. November 2026 (vorher 15. Juli 2026)  
+Codeversion: `0.2.0+12` laut `pubspec.yaml` (kein neues Release geplant)  
+Datenbankschema: Version 28
 
 ## Kurzfassung
 
-Die App ist eine funktionsreiche Alpha für Android und Windows. Der letzte
-große Entwicklungsblock war G2.1.6: antragsbezogene, nicht-transitive
-Stimmdelegation (Liquid Democracy) einschließlich Widerruf, Auto-Revoke,
-Auszählung und Nutzeroberfläche. Quadratic Voting ist spezifiziert, aber noch
-nicht implementiert. AETHER ist ein Entwurf beziehungsweise Platzhalter und
-kein aktives Produktmodul.
+Die App ist eine funktionsreiche Alpha für Android und Windows. Nach dem
+Release-Härtungsblock (7.–10.11.2026) und Stufe B (eigenes Relay,
+Kontoumzug, Abgleich zwischen eigenen Geräten, netzweite Gründer-Übergabe)
+läuft Block 1 des [Arbeitsplans nach dem Audit](../planning/NOW_NEXT_LATER.md):
+Vertrauen. Die P0-Befunde des Audits vom November 2026 sind bis auf R-1
+(Release-Schlüssel, bewusst verschoben) umgesetzt; ihre Gerätetests stehen
+teilweise noch aus ([GERAETETESTS_OFFEN.md](GERAETETESTS_OFFEN.md)).
 
-Der sinnvolle Wiedereinstieg ist keine neue Großfunktion, sondern ein kurzer
-Release-Härtungsblock. Drei bestätigte Fehler gefährden derzeit die
-geräteübergreifende Zuverlässigkeit. Zusätzlich fehlen zentrale
-Authentizitäts- und Autorisierungsprüfungen für eingehende Nostr-Events; diese
-sind spätestens vor einem produktiven Release erforderlich.
+Quadratic Voting ist spezifiziert, aber nicht implementiert. AETHER ist ein
+Entwurf beziehungsweise Platzhalter und kein aktives Produktmodul.
 
 ## Implementierter Stand
 
 | Bereich | Aktueller Stand |
 |---|---|
-| Identität | BIP-39-Seed, deterministische Schlüssel/DID, lokaler Identity-Flow |
-| Kommunikation | Direktchat, Kanäle, Text/Bilder/Audio, Reaktionen und Löschpfade; Transport über Nostr, LAN und BLE |
-| Gemeinschaften | Zellen, Beitritts- und Mitgliederverwaltung, Pinnwand und Agora |
+| Identität | BIP-39-Seed, deterministische Schlüssel/DID, Identitätsnachweis (DID ↔ Nostr-Schlüssel, ADR-0001); Kontoumzug per Seed mit oder ohne Backup-Datei |
+| Kommunikation | Direktchat, Kanäle, Text/Bilder/Audio, Reaktionen und Löschpfade; Transport über Nostr (eigenes Relay plus damus, nos.lol), LAN und BLE als Direktverbindung (kein Weiterleiten) |
+| Mehrere Geräte | eigene DMs und verschlüsselte Kontaktliste werden zwischen den eigenen Geräten abgeglichen |
+| Gemeinschaften | Zellen, Beitritt, Mitgliederliste vom Gründer, Gründer-Übergabe netzweit, Auflösung durch Gründer oder Superadmin, Pinnwand und Agora |
 | Dorfplatz | Posts, Kommentare, Reposts, Reaktionen und Löschungen |
-| Governance | Anträge, Diskussion, YNA/Single Choice/Candidate Choice, Tally, Decision Records, Stichwahlpfade |
+| Governance | Anträge, Diskussion, YNA/Single Choice/Candidate Choice, eingefrorene Stimmberechtigten-Liste, Tally mit einer Stimme pro Person, Decision Records mit Retry, Stichwahlpfade |
 | Liquid Democracy | Pro Antrag delegieren, widerrufen und durch eigene Stimme aufheben; nicht transitiv; Candidate Choice ausgenommen |
 | Plattformen | Android und Windows im aktiven Projektumfang |
+
+## Empfangsprüfung (Stand 13.11.2026)
+
+- Jedes Nostr-Event wird beim Empfang mit `NostrEvent.verify()` geprüft
+  (TD-39).
+- Governance- und Zell-Events: Absender über den Identitätsnachweis und die
+  fachliche Berechtigung geprüft (TD-40, TD-33).
+- Direktnachrichten, Präsenz, Kanal- und #mesh-Beiträge: Identitätsnachweis
+  geprüft; ohne Nachweis eine Version lang angenommen und als „Absender
+  nicht bestätigt“ gekennzeichnet (S-1).
+- LAN und BLE: Signatur der Nachricht gegen die DID geprüft (S-3/C-4).
 
 ## Nicht als fertig behandeln
 
@@ -39,51 +49,22 @@ sind spätestens vor einem produktiven Release erforderlich.
 - interzelluläre Governance
 - AETHER-Wallet und Marktplatz
 - iOS/macOS-Auslieferung
-- NIP-44-Migration
-- vertrauliche Governance-Events
-- belastbare Manipulations- und Berechtigungsprüfung beim Event-Empfang
+- NIP-17/NIP-44 statt NIP-04 (S-5)
+- vertrauliche Governance-Events (TD-42)
+- Weiterleiten über BLE/LAN (Mesh-Zweig)
+- signierte Update-Information (`version.json`)
 
-## Verifizierte Testbaseline
+## Testbaseline (13.11.2026)
 
-Bei der Wiederaufnahme am 15. Juli 2026 wurden folgende vorhandene Tests
-ausgeführt:
+- `flutter test`: 1832 bestanden, 5 fehlgeschlagen. Die 5 Fehler liegen in
+  `transport_manager_test.dart` (Sende-Kaskade, LAN-Vorrang) und bestehen
+  auch auf unverändertem Stand (TD-25). LAN-Discovery-Tests schlagen
+  zusätzlich fehl, wenn eine Windows-App im selben Netz läuft.
+- `flutter analyze`: keine Fehler; Hinweise und Warnungen als Baseline.
+- Es gibt noch keine CI (Block 2).
 
-- Governance-Suite: **596 von 596 Tests bestanden**.
-- Navigation-/Dashboard-Auswahl: **54 bestanden, 11 fehlgeschlagen**.
-- Die 11 Fehler bestehen überwiegend aus veralteten Text-/Label-Erwartungen;
-  zusätzlich wurde ein realer Desktop-Overflow von 30 Pixeln beobachtet.
-- Der vollständige Testlauf endet derzeit mit Exitcode 1.
-- `flutter analyze` meldet 947 Hinweise/Probleme; diese Zahl ist eine Baseline,
-  nicht automatisch 947 Release-Blocker.
-- Die macOS-Registrierung des Pakets `open_file` erzeugt eine Plugin-Warnung,
-  obwohl macOS derzeit nicht das Ziel der Alpha ist.
+## Offene Punkte
 
-## Bestätigte Risiken
-
-Die vollständigen Belege stehen in [Audit Lauf A](../audits/2026-07/AUDIT_LAUF_A.md)
-und [Audit Lauf B](../audits/2026-07/AUDIT_LAUF_B.md).
-
-1. Chat-/Kanal-Reaktionen, Löschungen und Kanal-Metadaten können interne UUIDs
-   statt 64-Hex-Nostr-Event-IDs in `e`-Tags senden.
-2. Der `eligibleVoters`-Snapshot wird beim Start einer Abstimmung nicht gesetzt;
-   Beteiligung und Quorum können dadurch von der lokalen Mitgliederansicht
-   abhängen.
-3. Decision-Record-Retries übertragen nicht dieselbe vollständige Nutzlast wie
-   der Erstversand.
-4. Eingehende Nostr-Events werden im Produktivpfad nicht mit
-   `NostrEvent.verify()` verifiziert.
-5. Governance-Events liegen derzeit als Klartext auf öffentlichen Relays;
-   Direktnachrichten über Nostr verwenden NIP-04, nicht NIP-44.
-
-## Empfohlener nächster Arbeitsblock
-
-1. Die drei geräteübergreifenden Release-Blocker F-001 bis F-003 beheben.
-2. Betroffene Cross-Device-Flows mit Android und Windows testen.
-3. Veraltete UI-/Navigation-Tests und den Desktop-Overflow bereinigen.
-4. Signaturprüfung und Absenderautorisierung als eigenen Härtungsblock planen.
-5. Erst danach über Quadratic Voting oder einen anderen Funktionsblock
-   entscheiden.
-
-Die operative Checkliste steht in
+Aktuelle Liste: [TECH_DEBT.md](TECH_DEBT.md). Reihenfolge:
+[NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md). Release-Checkliste:
 [RELEASE_READINESS.md](RELEASE_READINESS.md).
-

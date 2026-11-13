@@ -416,7 +416,13 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Stand 11. November 2026: Block 1 des Arbeitsplans nach dem Audit, beginnend
+Stand 13. November 2026: Block 1 ist im Code bis auf R-1 Teil 2 (Wechsel
+auf einen Release-Schlüssel, bewusst später) umgesetzt: C-1 bis C-3, S-1,
+S-2, S-3/C-4, S-4 mit neuem Kanalschlüssel beim Entfernen, Z-1/Z-2,
+Debug-Keystore gesichert, D-1/D-2. Offen: die gesammelten Gerätetests,
+danach Push und Block 2.
+
+Frühere Fassung, Stand 11. November 2026: Block 1 des Arbeitsplans nach dem Audit, beginnend
 mit den Korrekturen am Kontakt-Sync (C-1 bis C-3).
 
 Frühere Fassung, Stand 10. November 2026: Stufe A abschließen

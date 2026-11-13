@@ -25,8 +25,9 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Audit S-4, noch nicht committet) | Privaten Kanal mit Handy und Laptop1: Bild, Sprachnachricht und eine Antwort auf eine Nachricht schicken | Alles kommt an und ist sichtbar bzw. abspielbar, Antwortzitat wird angezeigt, Schloss-Symbol an den Nachrichten |
-| (Audit S-4, noch nicht committet) | Laptop2 (alte ZIP) ist Mitglied im selben privaten Kanal | Text und Bild kommen an; Vorschaubild und Antwortzitat fehlen dort (erwartet) |
+| 7e540ef | Handy legt einen privaten Kanal an, Laptop1 und Laptop2 treten bei; Handy entfernt Laptop2 und schreibt danach eine Nachricht | Laptop1 liest die neue Nachricht; Laptop2 sieht sie nicht (bzw. nur „konnte nicht entschlüsselt werden“); ältere Nachrichten bleiben auf Laptop1 lesbar; Handy-Log `[CHAN-KEY] … members informed` |
+| e1e834b | Privaten Kanal mit Handy und Laptop1: Bild, Sprachnachricht und eine Antwort auf eine Nachricht schicken | Alles kommt an und ist sichtbar bzw. abspielbar, Antwortzitat wird angezeigt, Schloss-Symbol an den Nachrichten |
+| e1e834b | Laptop2 (alte ZIP) ist Mitglied im selben privaten Kanal | Text und Bild kommen an; Vorschaubild und Antwortzitat fehlen dort (erwartet) |
 | (Audit S-3/C-4, noch nicht committet) | Handy und Laptop1 im selben WLAN, beide auf neuem Stand: einander schreiben (geht per LAN, wenn erreichbar) | Nachricht kommt an; kein `[S3-REJECT]` im Log |
 | 24ea9d3 | Handy und Laptop1 auf neuem Stand: im Kanal einer gemeinsamen Gemeinschaft schreiben | Kein Hinweis unter den neuen Beiträgen; Log ohne `[S1-REJECT]` |
 | 252b060 | Handy und Laptop1 auf neuem Stand starten, kurz warten | Log auf beiden `[NOSTR] Presence sender=verified`; kein `[S1-REJECT]` für das andere Gerät |

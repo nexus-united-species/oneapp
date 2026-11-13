@@ -1,6 +1,6 @@
 # Release Readiness – v0.2.0-alpha
 
-Stand: 15. Juli 2026  
+Stand: 15. Juli 2026, nachgeführt 13. November 2026  
 Status: **nicht bereit für einen produktiven Release**
 
 Ein Release an einen kleinen, informierten und vertrauten Alpha-Testkreis ist
@@ -33,11 +33,21 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
 
 ## P1 – vor Öffnung für nicht vertraute Nutzer
 
-- [ ] Eingehende Nostr-Events vor jeder Zustandsänderung kryptografisch
-  verifizieren.
-- [ ] Senderberechtigungen prüfen: insbesondere Zellauflösung nur durch den
+- [x] Eingehende Nostr-Events vor jeder Zustandsänderung kryptografisch
+  verifizieren. (TD-39, 08.11.2026)
+- [x] Senderberechtigungen prüfen: insbesondere Zellauflösung nur durch den
   berechtigten Gründer-Pubkey sowie Votes/Anträge nur durch bestätigte
-  Mitglieder.
+  Mitglieder. (TD-40, im Zwei-Geräte-Test bestätigt; Zellauflösung durch
+  Superadmin seit 12.11.2026 am Gerät bestätigt)
+- [ ] Absender von Direktnachrichten, Präsenz, Kanal- und #mesh-Beiträgen
+  sowie LAN/BLE prüfen (Audit S-1, S-3/C-4). Code seit 13.11.2026,
+  Gerätetest offen; Übergangszeit für Nachrichten ohne Nachweis beenden.
+- [ ] Medien in privaten Kanälen verschlüsseln (S-4, Code seit 13.11.2026)
+  und neuen Kanalschlüssel beim Entfernen eines Mitglieds.
+- [ ] Android-Release mit eigenem Release-Schlüssel statt Debug-Schlüssel
+  (R-1); Debug-Keystore seit 13.11.2026 gesichert.
+- [ ] `version.json` signieren (Rest TD-61).
+- [ ] CI mit `flutter analyze` und `flutter test` (Block 2).
 - [ ] `eligibleVotersCount` in Decision Record, Datenbank, Wire-Format und Hash
   explizit aufnehmen. Code und Tests seit 09.11.2026 (TD-34), Gerätetest
   offen.
@@ -45,16 +55,18 @@ verbindliche Reihenfolge; Zukunftsfunktionen gehören nicht in diesen Block.
 - [ ] Produktentscheidung treffen: Governance-Daten bewusst öffentlich lassen
   oder vertraulich transportieren; danach Datenschutztexte angleichen.
 - [ ] Backup/Restore mit Zellmitgliedschaften auf einem frischen Zweitgerät
-  testen.
+  testen. (Kontoumzug ohne Backup am 12.11.2026 bestätigt; mit
+  Backup-Datei und Zellmitgliedschaften offen, TD-43)
 
 ## P2 – nach der Härtung
 
-- [ ] Architekturkarte `Nostr-Kind → Handler → Service` erstellen.
+- [x] Architekturkarte `Nostr-Kind → Handler → Service` erstellen.
+  ([EVENT_MAP.md](EVENT_MAP.md))
 - [ ] Reparatur- und Debug-Funktionen aus der regulären Nutzeroberfläche
   trennen.
 - [ ] `proposal_service.dart` und `nostr_transport.dart` schrittweise
   modularisieren, nicht als Big-Bang-Refactoring.
-- [ ] NIP-44-Migration bewerten.
+- [ ] NIP-17/NIP-44 als ein Nachrichtenformat festlegen (S-5, Block 4).
 - [ ] Quadratic Voting gemäß G2 v1.5 planen.
 
 ## Kein Bestandteil dieses Release-Blocks
