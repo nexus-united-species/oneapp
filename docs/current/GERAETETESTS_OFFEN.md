@@ -25,7 +25,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Zustellstatus Medien und Kanäle, noch nicht committet) | Laptop1 WLAN aus: im Direktgespräch ein Bild und eine Sprachnachricht, in einem Kanal einen Text schicken; dann WLAN wieder an | Alles bleibt mit „wartet“ stehen und geht nach dem Wiederverbinden raus; „wartet“ verschwindet |
+| (Warteschlange Z-5, noch nicht committet) | Laptop1 WLAN aus: einer Gemeinschaft des Handys eine Beitrittsanfrage stellen, dann WLAN wieder an | Die Anfrage kommt nach dem Wiederverbinden beim Handy an (Log Laptop1 `[OUTBOX] Queued kind=31003`, später `Flush: … delivered`) |
+| 0d2d2de | Laptop1 WLAN aus: im Direktgespräch ein Bild und eine Sprachnachricht, in einem Kanal einen Text schicken; dann WLAN wieder an | Alles bleibt mit „wartet“ stehen und geht nach dem Wiederverbinden raus; „wartet“ verschwindet |
 | 12c0636 | Laptop1 online: dem Handy schreiben | Nachricht erscheint sofort, kurz mit Uhr-Symbol, das nach Annahme durch ein Relay verschwindet |
 | 12c0636 | Laptop1 WLAN aus: dem Handy schreiben, dann WLAN wieder an | Nachricht bleibt mit Uhr-Symbol stehen (kein Verlust), nach dem Wiederverbinden verschwindet die Uhr und das Handy erhält die Nachricht |
 | 681fbbd | Handy: in den Android-Einstellungen der App Bluetooth/„Geräte in der Nähe“ verbieten, App neu starten | Chat funktioniert über Internet (Nachricht an Laptop1 kommt an); oben orangener Hinweis „Bluetooth ist nicht erlaubt …“; „Erlauben“ öffnet die App-Einstellungen. Danach wieder erlauben |

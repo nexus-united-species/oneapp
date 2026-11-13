@@ -79,13 +79,27 @@ class NostrOutbox {
   /// (audit Z-4: the chat shows „gesendet“ only then).
   Stream<String> get onAccepted => _accepted.stream;
 
-  /// DMs, channel posts, reactions and deletions. Presence, metadata and
-  /// governance events are excluded (stale or retried elsewhere).
+  /// Everything that must not get lost while offline (audit Z-5): chat,
+  /// Dorfplatz, profile, channels, cells and founding permits. Replaceable
+  /// events are harmless to resend: relays keep the newest. Excluded:
+  /// presence (sent again every few minutes anyway) and governance events
+  /// (31010–31013, retried through their own publish results).
   static const Set<int> queuedKinds = {
+    NostrKind.metadata,
+    NostrKind.textNote,
     NostrKind.encryptedDm,
-    NostrKind.channelMessage,
-    NostrKind.reaction,
     NostrKind.deletion,
+    NostrKind.repost,
+    NostrKind.reaction,
+    NostrKind.channelCreate,
+    NostrKind.channelMetadata,
+    NostrKind.channelMessage,
+    NostrKind.cellAnnounce,
+    NostrKind.cellJoinRequest,
+    NostrKind.cellMembershipConfirmed,
+    NostrKind.cellMemberUpdate,
+    NostrKind.cellFoundingPermit,
+    NostrKind.cellRoster,
   };
 
   /// Events older than this are dropped instead of resent.

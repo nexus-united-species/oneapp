@@ -33,8 +33,9 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 | TD-68 | Reaktion und Löschen am Desktop kaum erreichbar | Nachrichtenmenü nur per langem Drücken; Rechtsklick fehlt |
 | Verlauf-Neu | Neues Gerät zeigt ältere Nachrichten nicht | Gerätetest 12.11.2026 (Laptop2): nur die letzten Stunden erscheinen, obwohl ältere auf den Relays liegen. Verdacht: Nachrichten kommen vor den Kontakten an. Zurückgestellt; braucht Log aus dem Release-Build (Protokoll-Schalter) |
 | S-4-Rest | Neuer Kanalschlüssel nur bei bekanntem Verschlüsselungsschlüssel | Mitglieder ohne bekannten Schlüssel erhalten den neuen Kanalschlüssel nicht (Hinweis an den Admin, neu einladen); Beitritt per Annahme oder Einladung setzt die früheren Schlüssel zurück; Beiträge von Mitgliedern, die noch mit dem alten Schlüssel senden, kann der Entfernte weiter lesen, bis sie den neuen haben |
-| Z-4-Rest | „Gesendet“ heißt beim Relay angekommen | keine Empfangsbestätigung vom Empfänger (kommt mit dem Nachrichtenformat in Block 4); #mesh-Rundrufe gehen ohne Warteschlange raus und zählen sofort als gesendet; erneut gesendete Bilder im Kanal werden neu komprimiert, Antwortzitate gehen beim erneuten Senden von Medien verloren |
-| Z-5, Z-6 | Zustellung | Outbox nur für vier Event-Arten (Beitrittsanfragen u. a. gehen offline verloren); Reconnect fest nach 10 s ohne Backoff und Ping (Block 2) |
+| Z-4-Rest | „Gesendet“ heißt beim Relay angekommen | keine Empfangsbestätigung vom Empfänger (kommt mit dem Nachrichtenformat in Block 4); #mesh-Rundrufe zählen nach der Übergabe sofort als gesendet; erneut gesendete Bilder im Kanal werden neu komprimiert, Antwortzitate gehen beim erneuten Senden von Medien verloren |
+| Z-5-Rest | Warteschlange | „angenommen“ heißt ein Relay hat angenommen, nicht alle; kein Backoff beim Nachsenden; Warteschlange hält höchstens 7 Tage |
+| Z-6 | Relay-Verbindung | Reconnect fest nach 10 s ohne Backoff und Ping (Block 2) |
 
 ## Mittel
 

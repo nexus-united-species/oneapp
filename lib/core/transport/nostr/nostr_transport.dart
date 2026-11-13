@@ -664,7 +664,7 @@ class NostrTransport implements MessageTransport {
     print('[CHANNEL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CHANNEL-CREATE] Tags: t=$nostrTag t=nexus-channel access=${isPublic ? 'public' : 'private'} discoverable=$isDiscoverable');
     print('[CHANNEL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     return event.id;
   }
 
@@ -764,7 +764,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(publicData),
       tags: tags,
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[NOSTR] Published Kind-41 channel metadata: ${channelData['name']}');
   }
 
@@ -831,7 +831,7 @@ class NostrTransport implements MessageTransport {
     print('[CELL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CELL-CREATE] Tags: [d,$cellId] [t,nexus-cell]');
     print('[CELL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL-RENAME] Kind-30000 published: accepted=${connectedRelays > 0}');
   }
 
@@ -854,7 +854,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[JOIN] Request sent to cell: $cellId (requestId: ${requestId.substring(0, 8)}…)');
   }
 
@@ -879,7 +879,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[JOIN] Confirmation sent to ${requesterNostrPubkeyHex.substring(0, 8)}… for cell: $cellId');
   }
 
@@ -907,7 +907,7 @@ class NostrTransport implements MessageTransport {
         ['deleted', 'true'], // explicit tag so receivers can filter without parsing JSON
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL-DEL] Publishing deleted-flag Kind-30000: $cellId ($cellName)'
         ' idProof=${_identityProof != null}');
   }
@@ -940,7 +940,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL] Published Kind-31005 member-$action event for cell: $cellId '
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
@@ -961,7 +961,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[ROSTER] Published Kind-31007 for cell: $cellId '
         '(${(roster['members'] as List?)?.length ?? 0} members)');
   }
@@ -991,11 +991,16 @@ class NostrTransport implements MessageTransport {
 
   /// Publishes a chat event (DM, channel post, reaction, deletion); if no
   /// relay accepts it, it is queued and resent on reconnect (TD-74).
-  void _publishChatEvent(NostrEvent event) {
+  void _publishChatEvent(NostrEvent event) => _publishQueued(event);
+
+  /// Publishes [event] through the outbox: if no relay accepts it now, it is
+  /// kept and sent again on reconnect (audit Z-5). Only kinds listed in
+  /// [NostrOutbox.queuedKinds] are kept.
+  void _publishQueued(NostrEvent event) {
     unawaited(_outbox.publish(event));
   }
 
-  /// IDs of chat events (DMs, channel posts, reactions, deletions) that a
+  /// IDs of queued events (chat, cells, channels, profile, feed) that a
   /// relay accepted, immediately or later from the outbox (audit Z-4).
   Stream<String> get onChatEventAccepted => _outbox.onAccepted;
 
@@ -1026,7 +1031,7 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Feed Kind-$kind published: ${event.id.substring(0, 8)}… '
           '→ $connectedRelays relay(s)');
     }
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     return event.id;
   }
 
@@ -1687,7 +1692,7 @@ class NostrTransport implements MessageTransport {
           ['status', permit.status.name],
         ],
       );
-      _relayManager.publishFireAndForget(event);
+      _publishQueued(event);
       print('[PERMIT-PUBLISH] action=$action '
           'id=${permit.id.substring(0, 8)}… '
           '→ ${recipient.substring(0, 8)}…');
@@ -1849,7 +1854,7 @@ class NostrTransport implements MessageTransport {
     _rememberSentNostrEventId(message.id, event.id);
     print('[NOSTR] Publishing broadcast kind=1 '
         'id=${event.id.substring(0, 8)}… tags=${event.tags.map((t) => t.join('=')).join(',')}');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
   }
 
   Future<void> _sendDm(NexusMessage message) async {
@@ -1970,7 +1975,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(content),
       tags: [],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     debugPrint('[Nostr] Kind-0 event published: ${event.id}');
   }
 

@@ -78,10 +78,27 @@ void main() {
       expect(await store.pending(), hasLength(3));
     });
 
-    test('does not keep events of other kinds (e.g. presence)', () async {
-      await outbox.publish(_event(kind: NostrKind.metadata));
+    test('does not keep presence or governance events', () async {
+      await outbox.publish(_event(kind: NostrKind.presence, idChar: '4'));
+      await outbox.publish(_event(kind: NostrKind.voteEvent, idChar: '5'));
 
       expect(await store.pending(), isEmpty);
+    });
+
+    test('keeps join requests, cell events, profile and feed posts (Z-5)',
+        () async {
+      for (final (kind, idChar) in [
+        (NostrKind.cellJoinRequest, '6'),
+        (NostrKind.cellMembershipConfirmed, '7'),
+        (NostrKind.cellRoster, '8'),
+        (NostrKind.cellAnnounce, '9'),
+        (NostrKind.metadata, 'd'),
+        (NostrKind.textNote, 'e'),
+      ]) {
+        await outbox.publish(_event(kind: kind, idChar: idChar));
+      }
+
+      expect(await store.pending(), hasLength(6));
     });
 
     test('keeps the event when publishing throws', () async {

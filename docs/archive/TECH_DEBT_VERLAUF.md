@@ -622,3 +622,16 @@ Liste:
   steht in Direktgesprächen und Kanälen unter jeder eigenen Nachricht.
   „Erneut senden“ funktioniert für Text, Bilder und Sprachnachrichten in
   allen drei Gesprächsarten.
+
+- **Audit Z-5: Warteschlange für alle wichtigen Ereignisse (13.11.2026,
+  Gerätetest offen):** Bisher kamen nur DMs, Kanalbeiträge, Reaktionen und
+  Löschungen in die Outbox; zwölf andere Stellen sendeten ohne
+  Warteschlange (`publishFireAndForget`). Offline gestellte
+  Beitrittsanfragen, Bestätigungen, Mitglieder-Updates, Mitgliederlisten,
+  Zellankündigungen und -auflösungen, Gründungsfreigaben, Kanal-Anlage und
+  -Metadaten, das eigene Profil sowie Dorfplatz-Beiträge und #mesh-Rundrufe
+  gingen dabei verloren. Sie laufen jetzt alle über die Outbox und werden
+  bei der nächsten Relay-Verbindung nachgesendet. Ausgenommen bleiben die
+  Präsenz (geht alle paar Minuten neu) und Governance-Ereignisse
+  (31010–31013, eigener Retry). Ersetzbare Ereignisse nachzusenden ist
+  unschädlich, Relays behalten das neueste.

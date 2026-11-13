@@ -543,20 +543,26 @@ void main() {
         () async {
       final (:transport, :relay) = await startTransport();
 
+      // Only the deletion counts; the queued Kind-0 from the start is resent
+      // as well since Z-5.
+      List<NostrEvent> deletions() => relay.published
+          .where((e) => e.kind == NostrKind.deletion)
+          .toList();
+
       transport.publishDeletion(validTargetEventId);
       await Future<void>.delayed(const Duration(milliseconds: 20));
       relay.accepts = true;
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(relay.published, hasLength(2));
-      expect(relay.published.last.id, relay.published.first.id,
+      expect(deletions(), hasLength(2));
+      expect(deletions().last.id, deletions().first.id,
           reason: 'The signed event is resent unchanged');
 
       // Delivered now: a further reconnect sends nothing again.
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(relay.published, hasLength(2));
+      expect(deletions(), hasLength(2));
       await stopTransport(transport, relay);
     });
 
@@ -569,7 +575,8 @@ void main() {
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(relay.published, hasLength(1));
+      expect(relay.published.where((e) => e.kind == NostrKind.reaction),
+          hasLength(1));
       await stopTransport(transport, relay);
     });
 
