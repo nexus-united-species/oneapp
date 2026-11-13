@@ -878,4 +878,156 @@ void main() {
       },
     );
   });
+
+  group('founder handover (TD-33)', () {
+    final successorKeys = _nostrKeys(
+        'legal winner thank year wave sausage worth useful legal winner thank yellow');
+
+    CellRoster rosterLedBy(Cell cell, String founderDid, String otherDid) =>
+        CellRoster(cellId: cell.id, updatedAtMs: 2000, members: [
+          CellRosterEntry(did: founderDid, role: MemberRole.founder, joinedAtMs: 1),
+          CellRosterEntry(did: otherDid, role: MemberRole.member, joinedAtMs: 2),
+        ]);
+
+    test('the current founder may hand over with a signed roster', () async {
+      final creator = await _identity(1, founderKeys);
+      final successor = await _identity(3, successorKeys);
+      final cell = _cellFoundedBy(creator.did);
+      final roster = rosterLedBy(cell, successor.did, creator.did);
+
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: roster,
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: creator.proof,
+        ),
+        GovernanceAuthDecision.allowed,
+      );
+      expect(isFounderHandover(cell, roster), isTrue);
+      expect(isFounderHandover(cell, rosterLedBy(cell, creator.did, successor.did)),
+          isFalse);
+    });
+
+    test('nobody else can claim the founder role', () async {
+      final creator = await _identity(1, founderKeys);
+      final successor = await _identity(3, successorKeys);
+      final cell = _cellFoundedBy(creator.did);
+
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterLedBy(cell, successor.did, creator.did),
+          signerPubkey: successorKeys.publicKeyHex,
+          idProof: successor.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
+    test('after the handover only the new founder leads', () async {
+      final creator = await _identity(1, founderKeys);
+      final successor = await _identity(3, successorKeys);
+      final cell = _cellFoundedBy(creator.did).withFounder(successor.did);
+
+      expect(cell.currentFounder, successor.did);
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterLedBy(cell, successor.did, creator.did),
+          signerPubkey: successorKeys.publicKeyHex,
+          idProof: successor.proof,
+        ),
+        GovernanceAuthDecision.allowed,
+      );
+      expect(
+        await authorizeCellRoster(
+          cell: cell,
+          roster: rosterLedBy(cell, creator.did, successor.did),
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: creator.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+        reason: 'the creator cannot take the role back',
+      );
+      expect(mayDissolveCell(successor.did, cell, null), isTrue);
+      expect(mayDissolveCell(creator.did, cell, null), isFalse);
+    });
+
+    test('member updates and announcements follow the new founder', () async {
+      final creator = await _identity(1, founderKeys);
+      final successor = await _identity(3, successorKeys);
+      final cell = _cellFoundedBy(creator.did).withFounder(successor.did);
+
+      expect(
+        await authorizeMemberUpdate(
+          cell: cell,
+          members: const [],
+          action: 'removed',
+          targetDid: creator.did,
+          signerPubkey: successorKeys.publicKeyHex,
+          idProof: successor.proof,
+        ),
+        GovernanceAuthDecision.allowed,
+      );
+      expect(
+        await authorizeMemberUpdate(
+          cell: cell,
+          members: const [],
+          action: 'removed',
+          targetDid: successor.did,
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: creator.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+        reason: 'the new founder cannot be removed, least of all by the creator',
+      );
+      expect(
+        await authorizeCellAnnouncement(
+          existing: cell,
+          incoming: cell.copyWith(name: 'Neuer Name'),
+          signerPubkey: successorKeys.publicKeyHex,
+          idProof: successor.proof,
+        ),
+        GovernanceAuthDecision.allowed,
+      );
+      expect(
+        await authorizeCellAnnouncement(
+          existing: cell,
+          incoming: cell.copyWith(name: 'Alter Name'),
+          signerPubkey: founderKeys.publicKeyHex,
+          idProof: creator.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
+    test('a device discovering the cell still trusts only the creator',
+        () async {
+      final creator = await _identity(1, founderKeys);
+      final successor = await _identity(3, successorKeys);
+      final cell = _cellFoundedBy(creator.did);
+
+      expect(
+        await authorizeCellAnnouncement(
+          existing: null,
+          incoming: cell,
+          signerPubkey: successorKeys.publicKeyHex,
+          idProof: successor.proof,
+        ),
+        GovernanceAuthDecision.notAuthorized,
+      );
+    });
+
+    test('the current founder survives JSON, copyWith and handing back', () {
+      final cell = _cellFoundedBy('did:key:creator').withFounder('did:key:next');
+
+      expect(Cell.fromJson(cell.toJson()).currentFounder, 'did:key:next');
+      expect(cell.copyWith(name: 'X').currentFounder, 'did:key:next');
+      final back = cell.withFounder('did:key:creator');
+      expect(back.founderDid, isNull);
+      expect(back.toJson().containsKey('founderDid'), isFalse);
+      expect(_cellFoundedBy('did:key:a').currentFounder, 'did:key:a');
+    });
+  });
 }

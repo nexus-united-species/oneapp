@@ -31,13 +31,14 @@ Quelle: [nostr_event.dart:10](../../lib/core/transport/nostr/nostr_event.dart)
 |---:|---|---|---|
 | 30000 | `cellAnnounce` | `_handleCellAnnounceEvent` | `CellService` |
 | 30078 | `presence` | `_handlePresenceEvent` | Node-Counter, Discovery |
+| 30078 (`d=nexus-contacts`) | Kontaktliste der eigenen Geräte (TD-60, seit 10.11.2026) | `_handleContactSyncEvent` → `onContactSync` | `ContactSyncService` (AES-GCM mit Schlüssel aus der Seed Phrase; nur vom eigenen Schlüssel signiert) |
 | 31001 | `roleAssignment` | – (über Subscription) | `RoleService` |
 | 31002 | `channelRoleAssignment` | – (über Subscription) | `RoleService` |
 | 31003 | `cellJoinRequest` | `_handleCellJoinRequestEvent` | `CellService` |
 | 31004 | `cellMembershipConfirmed` | `_handleCellMembershipConfirmedEvent` | `CellService` |
 | 31005 | `cellMemberUpdate` | `_handleCellMemberUpdateEvent` | `CellService` |
 | 31006 | `cellFoundingPermit` | `_handleIncomingPermitEvent` | `CellFoundingPermitService` |
-| 31007 | `cellRoster` (TD-33) | `_handleCellRosterEvent` | `CellService.applyRoster` (nur vom nachgewiesenen Gründer) |
+| 31007 | `cellRoster` (TD-33) | `_handleCellRosterEvent` | `CellService.applyRoster` (nur vom nachgewiesenen aktuellen Gründer; nennt die Liste einen anderen Gründer, ist das eine Gründer-Übergabe, seit 11.11.2026). Bewerber merken sich die Liste getrennt (`rememberApplicantRoster`) |
 | 31010 | `proposalEvent` | `_handleProposalEvent` | `ProposalService` |
 | 31011 | `voteEvent` | `_handleVoteEvent` | `ProposalService` |
 | 31012 | `delegationEvent` | `_handleDelegationEvent` | `ProposalService` |

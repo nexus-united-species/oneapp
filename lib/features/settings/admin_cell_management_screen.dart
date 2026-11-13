@@ -43,7 +43,9 @@ class _AdminCellManagementScreenState
     await CellFoundingPermitService.instance.load();
     if (!mounted) return;
     setState(() {
-      _cells = List.from(CellService.instance.myCells);
+      // All known cells, not only joined ones: the superadmin must be able
+      // to delete a cell without joining it first.
+      _cells = List.from(CellService.instance.allKnownCells);
       _permits =
           List.from(CellFoundingPermitService.instance.allReceivedPermits);
       _loading = false;
@@ -366,8 +368,6 @@ class _AdminCellManagementScreenState
       await CellService.instance.deleteCell(cell.id);
       await chatProvider.deleteCellChannels(cell.id);
 
-      // Kind-5: asks relays to delete the original announcement.
-      chatProvider.publishNostrCellDeletion(cell.id, cell.name);
       // Kind-30000 with deleted:true: notifies all member devices.
       chatProvider.publishNostrCellDissolution(cell.toJson());
 

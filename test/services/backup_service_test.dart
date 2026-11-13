@@ -421,4 +421,55 @@ void main() {
       expect(result.restoredContacts, 0);
     });
   });
+
+  // ── Name from backup (TD-58) ──────────────────────────────────────────────
+
+  group('pseudonymToAdoptFromBackup', () {
+    test('replaces the generated name after a seed restore', () {
+      expect(
+        pseudonymToAdoptFromBackup(
+          backupName: ' Joachim ',
+          currentName: 'Mutiger Fuchs 42',
+          generatedName: 'Mutiger Fuchs 42',
+        ),
+        'Joachim',
+      );
+    });
+
+    test('never overwrites a name the user or the relays already set', () {
+      expect(
+        pseudonymToAdoptFromBackup(
+          backupName: 'Joachim alt',
+          currentName: 'Joachim',
+          generatedName: 'Mutiger Fuchs 42',
+        ),
+        isNull,
+      );
+    });
+
+    test('keeps the name for empty, missing or identical backup names', () {
+      for (final backupName in [null, '', '   ', 'Mutiger Fuchs 42']) {
+        expect(
+          pseudonymToAdoptFromBackup(
+            backupName: backupName,
+            currentName: 'Mutiger Fuchs 42',
+            generatedName: 'Mutiger Fuchs 42',
+          ),
+          isNull,
+          reason: 'backupName=$backupName',
+        );
+      }
+    });
+
+    test('keeps the name without a known generated name', () {
+      expect(
+        pseudonymToAdoptFromBackup(
+          backupName: 'Joachim',
+          currentName: 'Mutiger Fuchs 42',
+          generatedName: null,
+        ),
+        isNull,
+      );
+    });
+  });
 }

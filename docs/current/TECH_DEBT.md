@@ -20,15 +20,15 @@ Release-Reihenfolge steht separat in
 | ID | Thema | Aktueller Stand |
 |---|---|---|
 | TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
-| TD-33 | Seit 10.11.2026 Mitgliederliste vom Gründer (Kind 31007, Gerätetest offen) | offen: Änderungen von Moderatoren erreichen andere über die Liste erst, wenn der Gründer online ist; Gründer-Übergabe wird weiterhin nicht übertragen |
+| TD-33 | Seit 10./11.2026 Mitgliederliste vom Gründer (Kind 31007), auch für Bewerber; Gründer-Übergabe netzweit (Gerätetest offen) | offen: Änderungen von Moderatoren erreichen andere über die Liste erst, wenn der Gründer online ist (über 31005 direkt schon); ein Gerät, das die Zelle neu entdeckt, kennt eine Übergabe erst nach der ersten Mitgliederliste |
 | TD-34 | Seit 09.11.2026 in Modell, DB (v27, additiv), Wire-Format und Vergleich (Gerätetest offen) | ältere Records ohne Zahl: Nenner weiter aus der Beteiligung rekonstruiert |
 | TD-41 | Seit 09.11.2026: eigene Auszählung hat Vorrang, Abweichungen erscheinen beim Ergebnis und in der Historie (Gerätetest offen) | Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung; fehlende Stimmen werden nicht nachgeladen |
 | TD-42 | Governance-Daten im Klartext | Anträge, Stimmen und Delegationen mit DID/Pseudonym liegen öffentlich auf Relays |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
-| TD-57 | Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
-| TD-58 | Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
-| TD-59 | Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
-| TD-60 | Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
+| TD-57 | Seit 10.11.2026 abonniert, entschlüsselt und als ausgehend eingeordnet (Gerätetest offen). Ursprünglich: Selbst gesendete Direktnachrichten erreichen das Zweitgerät nie | DM-Abo filtert nur `#p` = eigener Pubkey, kein `authors`-Filter ([nostr_transport.dart:1823](../../lib/core/transport/nostr/nostr_transport.dart)); Gespräche zeigen auf dem anderen Gerät nur die Antworten des Gegenübers |
+| TD-58 | Seit 10.11.2026 Backup-Datei auswählbar, Name aus dem Backup übernommen (Gerätetest offen). Ursprünglich: Kontoumzug auf ein Zweitgerät verliert die Daten | Restore sucht Backups nur im eigenen Geräteordner, keine Dateiauswahl ([backup_service.dart:443](../../lib/services/backup_service.dart)); Seed-Restore setzt einen Zufallsnamen; der im Backup gesicherte Name wird nicht übernommen |
+| TD-59 | Seit 10.11.2026 holt ein frisch wiederhergestelltes Gerät erst sein Profil von den Relays (Gerätetest offen). Ursprünglich: Neues Gerät überschreibt das öffentliche Profil | Nach Seed-Restore wird sofort Kind-0 mit Zufallsnamen und leerer Bio veröffentlicht ([nostr_transport.dart:1636](../../lib/core/transport/nostr/nostr_transport.dart)); eigene Kind-0-Events werden ignoriert, das Profil lässt sich also nicht von Relays zurückholen. Kontakte sehen den Namen zwischen den Geräten wechseln |
+| TD-60 | Seit 10.11.2026 verschlüsselte Kontaktliste zwischen den eigenen Geräten (Gerätetest offen). Ursprünglich: Kontakte werden nicht zwischen eigenen Geräten abgeglichen | kein Kontaktlisten-Event; Kontakte existieren nur lokal oder im Backup |
 | TD-61 | Update-Prüfung nach GitHub-Umzug tot | `version.json` unter `project-nexus-official.github.io/terminal/…` liefert 404 ([update_service.dart:48](../../lib/services/update_service.dart)); installierte Apps erfahren nicht von neuen Versionen. Download-Links und Einladungs-Ersatzlink funktionieren nur noch über GitHub-Weiterleitungen |
 | TD-62 | Keine Mehrsprachigkeit | keinerlei Lokalisierungsgrundlage; rund 1.500 deutsche Texte fest im Code. Ziel: DE, EN, ES, FR, RU wie die Webseite |
 | TD-68 | Reaktion und Löschen am Desktop praktisch nicht erreichbar | Nachrichtenmenü nur per `onLongPress` ([conversation_screen.dart:1787](../../lib/features/chat/conversation_screen.dart), [channel_conversation_screen.dart:1151](../../lib/features/chat/channel_conversation_screen.dart)); kein Rechtsklick, kein Hover-Menü. Mit der Maus nur durch langes Gedrückthalten erreichbar |
@@ -42,9 +42,9 @@ Release-Reihenfolge steht separat in
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | seltener partieller Secure-Storage-Zustand; nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Init-Race kann UNIQUE-Kollision erzeugen; Abstimmung ohne Pubkey ablehnen |
 | TD-46 | Geräteübergreifende Idempotenz teils in SharedPreferences | nach Reset/Zweitgerät sind doppelte Auto-Aktionen möglich |
-| TD-47 | Fest verdrahtete Standard-Relays | Verfügbarkeit und Aufbewahrung hängen von Drittservern ab. **Live geprüft 06.11.2026:** `relay.nostr.band` nicht erreichbar; `relay.snort.social` läuft nur noch im Arbeitsspeicher (speichert nichts dauerhaft); `nos.lol` nimmt höchstens 128 KB pro Event an. Faktisch trägt nur `relay.damus.io`. Selbst eingetragene Relays werden nicht gespeichert; der Hintergrunddienst nutzt nur das erste Relay |
+| TD-47 | Seit 10.11.2026 eigenes Relay `relay.nexus-terminal.org` als erstes Standard-Relay, eigene Relays werden gespeichert, Hintergrunddienst nutzt alle Relays (Gerätetest offen) | Rest: `nos.lol` begrenzt Events auf 128 KB (große Bilder erreichen nur die anderen beiden, bis TD-64). Ursprünglicher Befund, **live geprüft 06.11.2026:** `relay.nostr.band` nicht erreichbar; `relay.snort.social` läuft nur noch im Arbeitsspeicher (speichert nichts dauerhaft); `nos.lol` nimmt höchstens 128 KB pro Event an. Faktisch trägt nur `relay.damus.io`. Selbst eingetragene Relays werden nicht gespeichert; der Hintergrunddienst nutzt nur das erste Relay |
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen |
-| TD-63 | Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
+| TD-63 | Seit 10.11.2026 DMs 30 Tage, Beitrittsbestätigungen ohne Zeitgrenze (Gerätetest offen). Ursprünglich: Neues Gerät lädt nur kurze Historie | DMs ohne bekannten Zeitstempel nur 24 h zurück, Mitgliedschaftsbestätigungen nur 7 Tage ([nostr_transport.dart:1925](../../lib/core/transport/nostr/nostr_transport.dart)); plausible Ursache von TD-33 |
 | TD-64 | Medien inline als Base64 in Events | Bilder auf 1024 px verkleinert, Base64 und verschlüsselt im Event; übersteigt vermutlich das 128-KB-Limit von `nos.lol`. Keine Videos oder Dateien möglich; Lösung über Medienserver (Blossom) |
 | TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | Der Transport verwirft eigene Kind-7-Events ([nostr_transport.dart](../../lib/core/transport/nostr/nostr_transport.dart), `_handleReaction`). Wer mit derselben Identität auf zwei Geräten arbeitet, sieht seine Reaktion nur auf dem Gerät, auf dem er sie gesetzt hat. Vor einer Änderung muss der Dorfplatz eigene Reaktionen getrennt behandeln, sonst entstehen Doppelungen |
 | TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | `NostrKeys.loadOrDerive` nutzt einen zwischengespeicherten Schlüssel; `restoreFromMnemonic` löscht ihn nicht. War vorher eine andere Identität auf dem Gerät, könnte der Hintergrunddienst mit dem alten Schlüssel arbeiten. Nicht am Gerät bestätigt; verwandt mit TD-44 |
@@ -204,10 +204,9 @@ Liste:
     Gründer der bekannten Zelle darf sich nicht ändern, übernommen werden
     die lokal bekannten Zelldaten. Bestätigungen, die vor der
     Zell-Ankündigung eintreffen, werden bis zu deren Eintreffen gehalten.
-    **Einschränkung:** Ein Bewerber kennt die Moderatoren einer Zelle noch
-    nicht. Bestätigt ein Moderator statt des Gründers, verwirft das Gerät des
-    Bewerbers die Bestätigung. Lösbar erst mit übertragbaren Mitgliederlisten
-    (TD-33/TD-37) oder einem vom Gründer signierten Moderatoren-Nachweis.
+    Seit 10.11.2026 (TD-33) kennt der Bewerber die Moderatoren aus der vom
+    Gründer signierten Mitgliederliste; Bestätigungen durch Moderatoren
+    werden damit angenommen.
   - Entscheidungsprotokoll (Kind 31013, seit 09.11.2026): jedes Gerät zählt
     selbst aus und veröffentlicht dasselbe Protokoll, darum darf jedes
     nachgewiesene Mitglied der Zelle senden. Der Antrag muss zur genannten
@@ -363,6 +362,178 @@ Liste:
   in der Gesamtsuite gelegentlich nicht.
 - **TD-25 ergänzt:** Bei der Messung am 06.11.2026 schlugen zusätzlich 5 Tests
   im TransportManager fehl.
+- **TD-47 weitgehend erledigt (10.11.2026, Gerätetest offen):** Auf dem
+  Projekt-VPS läuft ein eigenes strfry-Relay `wss://relay.nexus-terminal.org`
+  (dauerhafte Aufbewahrung, Events bis 512 KB, bis 100 Abos pro Verbindung,
+  nur die Event-Kinds der App, tägliche Sicherung). Neue Standardliste: eigenes
+  Relay, `relay.damus.io`, `nos.lol`; `relay.snort.social` und
+  `relay.nostr.band` sind entfernt (`relay_config.dart`). Selbst eingetragene
+  Relays werden in `nostr_custom_relays` gespeichert, normalisiert und lassen
+  sich wieder entfernen; Standard-Relays nicht. Der Android-Hintergrunddienst
+  verbindet sich mit allen Relays statt nur mit dem ersten und meldet eine DM,
+  die über mehrere Relays kommt, nur einmal.
+- **TD-78 neu (10.11.2026): keine Anmeldung nach NIP-42.** strfry gibt DMs
+  (Kind 4, später 1059) normalerweise nur nach einer NIP-42-Anmeldung heraus.
+  Die App kann das nicht, deshalb ist diese Sperre am eigenen Relay vorerst
+  aus: Wer wem schreibt, ist dort ohne Anmeldung abrufbar (wie bei damus).
+  Sobald die App NIP-42 beherrscht, schaltet der Server-Betrieb
+  `restrictedReadKinds = "4, 1059"` ein. Gehört fachlich zu NIP-17 (Stufe D).
+- **TD-59 erledigt (10.11.2026, Gerätetest offen):** Nach einem Seed-Restore
+  setzt die App `nexus_profile_restore_pending`. Solange das gilt, hält der
+  Transport das eigene Kind-0 zurück und fragt stattdessen das neueste eigene
+  Kind-0 bei den Relays ab. Nach dem ersten Treffer oder dem ersten EOSE
+  wartet er 3 Sekunden auf langsamere Relays und übernimmt dann das neueste:
+  Name, Bio, öffentliches Bild und die öffentlichen Felder aus
+  `nexus_profile` (`profile_restore.dart`). Erst danach wird das eigene Kind-0
+  wieder veröffentlicht. Antwortet kein Relay, bleibt die Sperre bestehen,
+  auch über einen Neustart; so wird nie ein Zufallsname veröffentlicht.
+  Bearbeitet der Nutzer vorher selbst sein Profil, gilt seine Eingabe und
+  die Abfrage endet. Log-Präfix `[PROFILE-RESTORE]`.
+- **TD-58 erledigt (10.11.2026, Gerätetest offen):** Nach dem Seed-Restore
+  zeigt die App auch ohne Backup auf dem Gerät einen Bildschirm mit
+  „Backup-Datei auswählen“ (neues Paket `file_picker`), zusätzlich „Andere
+  Backup-Datei wählen“, wenn schon eines gefunden wurde. Eine Datei, die sich
+  mit der Seed Phrase nicht öffnen lässt, wird mit klarer Meldung abgelehnt.
+  Der im Backup gesicherte Name ersetzt den generierten Namen, aber nie einen
+  selbst gewählten oder von den Relays geholten
+  (`pseudonymToAdoptFromBackup`). Offen: Bio und Profilbild stehen nicht im
+  Backup; sie kommen über TD-59 von den Relays, sofern dort veröffentlicht.
+- **Testumgebung (10.11.2026):** `flutter test` brach mit „failed to delete
+  build\unit_test_assets“ ab, weil die Ordner dort das Attribut
+  „Schreibgeschützt“ trugen. Attribut entfernt, danach lief alles. Wer es
+  setzt, ist unklar (Verdacht: Sandbox-Umgebung).
+- **TD-57 erledigt (10.11.2026, Gerätetest offen):** Zusätzlich zum Abo
+  `#p` = eigener Schlüssel gibt es ein Abo `authors` = eigener Schlüssel für
+  Kind 4. Eine selbst signierte DM wird mit dem Schlüssel des Empfängers
+  (`p`-Tag) entschlüsselt (NIP-04 nutzt ECDH, beide Seiten haben dasselbe
+  Geheimnis) und nur angenommen, wenn die Nachricht unsere eigene DID als
+  Absender trägt. Der ChatProvider ordnet sie dem Gespräch mit dem Empfänger
+  zu, entschlüsselt den inneren Text mit dessen X25519-Schlüssel, zeigt sie
+  als ausgehend und benachrichtigt nicht. Eigene Steuer-DMs
+  (Kontaktanfragen, Kanalzugang u. a.) werden ignoriert; sie wirken nur auf
+  dem sendenden Gerät. Kommt das Relay-Echo einer gerade gesendeten
+  Nachricht vor dem lokalen Eintrag an, ersetzt der lokale Eintrag das Echo
+  (`_putOwnMessage`); in der Datenbank verhindert die Nachrichten-ID
+  Doppelungen. Einschränkung: Kennt das Zweitgerät den X25519-Schlüssel des
+  Empfängers nicht, zeigt es „[Nachricht konnte nicht entschlüsselt
+  werden]“.
+- **TD-63 erledigt (10.11.2026, Gerätetest offen):** Ohne bekannten
+  Zeitstempel holt ein Gerät DMs jetzt 30 Tage zurück statt 24 Stunden
+  (`NostrTransport.newDeviceDmHistory`); Broadcasts bleiben bei 24 Stunden,
+  weil `#mesh` globaler Verkehr ist. Beitrittsbestätigungen (Kind 31004, nur
+  an uns adressiert) werden ohne `since` abonniert. Mitgliederlisten kommen
+  seit TD-33 ohnehin über Kind 31007.
+- **TD-60 erledigt (10.11.2026, Gerätetest offen):** Die Kontaktliste geht
+  als ersetzbares Event Kind 30078 mit `d=nexus-contacts` an die eigenen
+  Geräte; Relays behalten nur die neueste Fassung. Inhalt AES-256-GCM mit
+  eigenem Schlüssel aus der Seed Phrase (`deriveContactSyncKey`, getrennt
+  vom Backup-Schlüssel), angenommen nur vom eigenen Nostr-Schlüssel.
+  Übertragen werden DID, Name, Vertrauensstufe, Blockieren, Stummschalten
+  und die Schlüssel; Notizen und lokale Bildpfade bleiben auf dem Gerät,
+  Profilangaben holt jedes Gerät über Kind-0. Zusammenführung pro Kontakt
+  nach dem neuen Feld `Contact.changedAt` (nur Nutzeraktionen: hinzufügen,
+  Vertrauensstufe, blockieren, stummschalten), Schlüssel werden nur ergänzt.
+  Gelöschte Kontakte gehen als Löschvermerk mit Zeitpunkt mit; ein Kontakt
+  fehlt in einer empfangenen Liste löscht nie etwas. Löschvermerke von vor
+  diesem Stand bekommen beim ersten Start einmalig das aktuelle Datum.
+  Veröffentlicht wird 5 Sekunden nach einer Änderung, nach dem Start nach
+  20 Sekunden, wenn bis dahin keine Liste angekommen ist; ein Gerät ohne
+  Kontakte veröffentlicht nichts. Log-Präfix `[CONTACT-SYNC]`.
+- **TD-33 ergänzt (10.11.2026, Gerätetest offen): Bewerber übernehmen die
+  Mitgliederliste.** Ein Gerät mit offener Beitrittsanfrage prüft die
+  Liste des Gründers gegen die angekündigte Zelle und merkt sie sich
+  getrennt (`rememberApplicantRoster`); sie macht es nicht zum Mitglied und
+  ändert keine Mitgliederdaten. Beim Prüfen einer Beitrittsbestätigung
+  zählen die Moderatoren aus dieser Liste mit (`approversFor`). Kommt die
+  Bestätigung eines Moderators vor der Liste an, wird sie zurückgelegt und
+  beim Eintreffen der Liste erneut geprüft. Nach der Aufnahme übernimmt das
+  neue Mitglied die gemerkte Liste sofort. Noch offen in TD-33: die
+  Gründer-Übergabe über das Netz (braucht eine Entscheidung, wer nach einer
+  Übergabe netzweit als Gründer gilt) und Moderator-Änderungen in der Liste
+  ohne den Gründer.
+- **TD-33 Gründer-Übergabe netzweit (11.11.2026, Gerätetest offen;
+  Entscheidung Joachim: „Netzweit übertragen“):** Die Zelle kennt neben dem
+  Ersteller (`createdBy`, unveränderlich) den aktuellen Gründer
+  (`Cell.founderDid`, Getter `currentFounder`). Alle Rechteprüfungen laufen
+  über den aktuellen Gründer: Auflösen, Ankündigungen bekannter Zellen,
+  Mitglieder-Updates (der aktuelle Gründer ist nicht entfernbar),
+  Beitrittsbestätigungen, Mitgliederlisten, Abstimmung starten, Liste der
+  Stimmberechtigten. Die Übergabe geht als Mitgliederliste hinaus, die der
+  bisherige Gründer signiert und in der der Nachfolger als Gründer steht;
+  nur diese Signatur wird angenommen. Der Nachfolger übernimmt danach das
+  Veröffentlichen der Liste, der bisherige Gründer ist einfaches Mitglied
+  und kann die Rolle nicht zurückholen. Weil Listen ohne Bestätigung
+  verschickt werden, wiederholt das abgebende Gerät die Übergabe bei jeder
+  Relay-Verbindung, bis es eine eigene Liste des Nachfolgers sieht
+  (`nexus_pending_founder_handovers`). Eine Liste des neuen Gründers, die vor
+  der Übergabe ankommt, wird zurückgelegt und danach erneut geprüft. Ein
+  Gründerwert aus Zell-Ankündigungen wird nie übernommen. Grenzen: Ein
+  Gerät, das die Zelle neu entdeckt, vertraut zunächst nur dem Ersteller
+  und lernt die Übergabe erst mit der Mitgliederliste; eine Übergabe, die
+  der Superadmin lokal auslöst, bleibt lokal. Log-Präfix
+  `[FOUNDER-HANDOVER]`.
+- **Audit November 2026, Block 1 begonnen (11.11.2026):** Befunde und
+  Arbeitsplan: [AUDIT_BERICHT.md](../audits/2026-11/AUDIT_BERICHT.md),
+  [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md). Die neuen Befunde
+  (Kürzel S-, Z-, C-, R-, U-, F-, D-, M-, W-, L-, P-) stehen bis zur
+  geplanten Neuordnung dieser Datei nur im Audit-Bericht.
+- **Audit C-1 bis C-3 erledigt (11.11.2026, Gerätetest offen),
+  Nacharbeit zu TD-60:**
+  - C-1: Ein fremder Löschvermerk für einen Kontakt, der hier nach der
+    Löschung geändert wurde, wird nicht mehr gespeichert. Vorher überschrieb
+    er die Datenbankzeile des Kontakts; nach dem Neustart war der Kontakt
+    samt Notizen weg. Zusätzlich schreibt `applySyncMerge` nie einen
+    Löschvermerk über einen vorhandenen Kontakt.
+  - C-2: Die erste eigene Kontaktliste geht erst hinaus, wenn ein Relay das
+    Ende seiner gespeicherten Events meldet (EOSE) und danach 3 Sekunden
+    lang keine Liste angekommen ist; die feste 20-Sekunden-Wartezeit ist
+    entfernt. Ohne Antwort eines Relays wird nichts veröffentlicht.
+  - C-3: `ContactSyncService.attach` registriert alle Listener vor dem
+    ersten `await`; die Seed Phrase wird danach geladen, eingehende Listen
+    warten auf den Schlüssel (Sync-Gesetz 2).
+- **Audit S-2 erledigt (11.11.2026): eine Stimme pro Person.** Stimmen
+  werden nach DID berechtigt, aber nach Nostr-Schlüssel gespeichert und
+  ersetzt. Ein Mitglied, das mehrere Nostr-Schlüssel an seine DID bindet,
+  konnte so mehrfach zählen (per Test nachgestellt). Jetzt zählt jede
+  Auszählung und der Zwischenstand nur die neueste Stimme je DID
+  (`vote_dedup.dart`, aufgerufen in `_countableVotes`; Gleichstand nach
+  Schlüssel, damit jedes Gerät dieselbe wählt). Log `[TALLY-DEDUP]`.
+  Gespeichert bleiben alle Stimmen; die Ergebnisliste auf Empfängergeräten
+  (Rückfall auf `getVotes`) kann zusätzliche Stimmen derselben DID noch
+  anzeigen, zählt sie aber nicht. Kein Gerätetest nötig: Für den Angriff
+  braucht es einen manipulierten Client.
+- **Audit Z-1 und Z-2 erledigt (11.11.2026, Gerätetest offen):**
+  - Z-1: Die Zeitmarke der letzten Nachricht, ab der nach einem Neustart
+    nachgeholt wird, stammt vom Absender. Sie wird jetzt beim Speichern
+    (`ChatProvider._saveNostrTimestamp`) und beim Übernehmen
+    (`NostrTransport.setLastMessageTimestamp`) auf „jetzt“ begrenzt; auch
+    ein schon gespeicherter Wert aus der Zukunft wirkt nicht mehr. Vorher
+    genügte eine Nachricht mit Zukunftsdatum, damit das Gerät bis zu diesem
+    Datum keine Direktnachrichten mehr holte.
+  - Z-2: Direktnachrichten, eigene Direktnachrichten und Kanalbeiträge
+    werden ab der letzten Zeitmarke **7 Tage überlappend** geholt
+    (`NostrTransport.catchUpOverlap` = Haltezeit der Outbox) statt 60
+    Sekunden. Die Outbox des Absenders sendet mit dem ursprünglichen
+    Zeitstempel; mit 60 Sekunden Puffer fielen solche Nachrichten durch.
+    Doppelte verwirft die Datenbank. `#mesh`-Rundrufe behalten 60 Sekunden
+    (weltweiter Verkehr, nicht in der Outbox).
+- **TD-25 ergänzt (11.11.2026):** Die gelegentlich roten LAN-Discovery-Tests
+  sind kein Code-Fehler: Sie empfangen echte Ankündigungen einer App, die im
+  selben Netz läuft (UDP-Port 51000), statt nur ihrer eigenen Testdaten.
+  Bei laufender Windows-App rot, sonst grün.
+- **Zellauflösung kam nicht an (12.11.2026, Gerätetest offen):** Beim
+  Löschen einer Gemeinschaft gingen zwei Ereignisse gleichzeitig raus: eine
+  NIP-09-Löschanfrage (Kind-5, `a`-Tag auf die eigene Kind-30000-Adresse)
+  und die Ankündigung mit `deleted: true`. Kam die Löschanfrage zuerst an,
+  lehnten die Relays die Ankündigung ab („deleted: user requested
+  deletion“, eigenes Relay und damus), und die anderen Geräte behielten die
+  Gemeinschaft. Gefunden im Gerätetest: Superadmin löscht eine fremde
+  Gemeinschaft. Die Kind-5-Löschanfrage entfällt jetzt; die Ankündigung mit
+  `deleted: true` ersetzt die alte Ankündigung allein. Die Kind-5 wurde beim
+  Empfang ohnehin nicht als Auflösung ausgewertet.
+- **Rote Tests in `transport_manager_test.dart` (12.11.2026):** 5 Tests der
+  Sende-Kaskade und des LAN-Vorrangs schlagen auch auf dem unveränderten
+  Stand fehl. Ursache noch nicht untersucht.
 - Einordnung in den Projektablauf: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 ## Quellen

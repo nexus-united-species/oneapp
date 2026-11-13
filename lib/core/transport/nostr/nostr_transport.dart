@@ -11,6 +11,7 @@ import 'package:cryptography/cryptography.dart' show AesCbc, MacAlgorithm,
 
 import '../../../core/config/system_config.dart';
 import '../../../core/contacts/contact_service.dart';
+import '../../../core/contacts/contact_sync.dart';
 import '../../../core/identity/identity_proof.dart';
 import '../../../core/identity/identity_service.dart';
 import '../../../core/identity/profile.dart';
@@ -157,9 +158,59 @@ class NostrTransport implements MessageTransport {
 
   // Active relay subscriptions
   String? _dmSubId;
+  // DMs we sent ourselves, e.g. from our other device (TD-57).
+  String? _ownDmSubId;
+
+  /// How far back a device without any known message fetches DMs (TD-63).
+  /// Previously 24 hours, so a new device saw almost no history.
+  static const newDeviceDmHistory = Duration(days: 30);
+
+  /// How far before the last known message DMs and channel posts are
+  /// fetched again after a restart (audit Z-2). A sender's outbox re-sends
+  /// unaccepted events with their original timestamp for up to
+  /// [NostrOutbox.maxAge]; a short buffer would skip them. Duplicates are
+  /// dropped by the message database.
+  static const catchUpOverlap = NostrOutbox.maxAge;
+
+  // ── Contact list of our own devices (TD-60) ───────────────────────────────
+  String? _contactSyncSubId;
+  final _contactSyncController =
+      StreamController<({String content, int createdAt})>.broadcast();
+
+  /// Encrypted contact lists published by our own devices (including this
+  /// one): the still encrypted content and its `created_at`.
+  Stream<({String content, int createdAt})> get onContactSync =>
+      _contactSyncController.stream;
+
+  /// Fires when a relay has delivered all stored events of the own contact
+  /// list subscription (NIP-01 EOSE), i.e. it has no newer list (audit C-2).
+  Stream<void> get onContactSyncEose => _relayManager.onEose
+      .where((subId) => subId == _contactSyncSubId)
+      .map((_) {});
   String? _meshSubId;
   String? _presenceSubId;
   String? _metadataSubId;
+
+  // ── Own profile lookup after a seed restore (TD-59) ──────────────────────
+  /// While `true`, our own Kind-0 is held back and the newest own Kind-0 is
+  /// fetched from the relays instead. Set by the app after a seed restore;
+  /// cleared via [completeProfileRestore].
+  bool profileRestorePending = false;
+  String? _ownProfileSubId;
+  StreamSubscription<String>? _eoseSub;
+  Timer? _ownProfileSettleTimer;
+  NostrEvent? _ownProfileCandidate;
+  final _ownProfileController =
+      StreamController<Map<String, dynamic>?>.broadcast();
+
+  /// Window after the first own Kind-0 or first EOSE in which slower relays
+  /// may still deliver a newer own Kind-0.
+  static const ownProfileSettleDelay = Duration(seconds: 3);
+
+  /// Result of the own-profile lookup: the content of the newest own Kind-0
+  /// found on the relays, or `null` if no relay had one.
+  Stream<Map<String, dynamic>?> get onOwnProfileLookup =>
+      _ownProfileController.stream;
   String? _channelDiscoverySubId;
   String? _channelDeleteSubId;
 
@@ -378,6 +429,9 @@ class NostrTransport implements MessageTransport {
   /// Adds a custom relay URL.
   void addRelay(String url) => _relayManager.addRelay(url);
 
+  /// Removes a relay and closes its connection.
+  Future<void> removeRelay(String url) => _relayManager.removeRelay(url);
+
   /// Sets the X25519 encryption public key to broadcast in presence events.
   void setEncryptionPublicKey(String hexKey) {
     _encryptionPublicKeyHex = hexKey;
@@ -399,11 +453,24 @@ class NostrTransport implements MessageTransport {
   /// Persists the timestamp of the last received message so that the next
   /// [_setupSubscriptions] call fetches only events newer than this point.
   /// Call this whenever a message is received (from any transport).
+  ///
+  /// Capped at the current time (audit Z-1): timestamps are set by senders,
+  /// and a single message dated in the future would otherwise make every
+  /// later catch-up skip all messages until that date.
   void setLastMessageTimestamp(int epochSeconds) {
+    final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final capped = epochSeconds > nowSeconds ? nowSeconds : epochSeconds;
     if (_lastMessageTimestampSeconds == null ||
-        epochSeconds > _lastMessageTimestampSeconds!) {
-      _lastMessageTimestampSeconds = epochSeconds;
+        capped > _lastMessageTimestampSeconds!) {
+      _lastMessageTimestampSeconds = capped;
     }
+  }
+
+  /// `since` for DMs and channel posts after a restart: the last known
+  /// message minus [catchUpOverlap] (audit Z-2), or [fallback] without one.
+  int _catchUpSince(int fallback) {
+    final last = _lastMessageTimestampSeconds;
+    return last == null ? fallback : last - catchUpOverlap.inSeconds;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -481,9 +548,14 @@ class NostrTransport implements MessageTransport {
     _metadataRefreshTimer?.cancel();
     _metadataRefreshTimer = null;
     if (_dmSubId != null) _relayManager.closeSubscription(_dmSubId!);
+    if (_ownDmSubId != null) _relayManager.closeSubscription(_ownDmSubId!);
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
+    if (_contactSyncSubId != null) {
+      _relayManager.closeSubscription(_contactSyncSubId!);
+    }
+    _stopOwnProfileLookup();
     if (_channelDiscoverySubId != null) {
       _relayManager.closeSubscription(_channelDiscoverySubId!);
     }
@@ -535,9 +607,7 @@ class NostrTransport implements MessageTransport {
     if (_channelSubIds.containsKey(nostrTag)) return; // already subscribed
     final nowSeconds =
         DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final since = _lastMessageTimestampSeconds != null
-        ? _lastMessageTimestampSeconds! - 60
-        : nowSeconds - 86400 * 30;
+    final since = _catchUpSince(nowSeconds - 86400 * 30);
     final subId = _relayManager.subscribe({
       'kinds': [NostrKind.channelMessage],
       '#t': [nostrTag],
@@ -762,28 +832,6 @@ class NostrTransport implements MessageTransport {
     print('[CELL-RENAME] Kind-30000 published: accepted=${connectedRelays > 0}');
   }
 
-  /// Publishes a Kind-5 deletion event for a cell (NIP-09).
-  ///
-  /// Uses the proper NIP-09 `a` tag for parameterized replaceable events:
-  /// `['a', '30000:{pubkeyHex}:{cellId}']` so compliant relays actually
-  /// remove the original Kind-30000 announcement.
-  void publishCellDeletion(String cellId, String cellName) {
-    if (_keys == null) return;
-    // NIP-09: 'a' tag identifies the parameterized replaceable event to delete.
-    final aTag = '${NostrKind.cellAnnounce}:${_keys!.publicKeyHex}:$cellId';
-    final event = NostrEvent.create(
-      keys: _keys!,
-      kind: NostrKind.deletion,
-      content: 'Gemeinschaft "$cellName" wurde aufgelöst.',
-      tags: [
-        ['a', aTag],
-        ['t', 'nexus-cell'], // keep for backward-compat with older clients
-      ],
-    );
-    _relayManager.publishFireAndForget(event);
-    print('[CELL-DEL] Publishing Kind-5 delete for cell: $cellId');
-  }
-
   /// Publishes a Kind-31003 cell join request.
   ///
   /// [reqJson] is the full `CellJoinRequest.toJson()` map, which must already
@@ -837,6 +885,11 @@ class NostrTransport implements MessageTransport {
   /// Uses the same d-tag as the original announcement so relays replace it
   /// with this "deleted" version.  All devices subscribed to
   /// `#t: ['nexus-cell']` will receive it and clean up their local state.
+  ///
+  /// Deliberately not combined with a NIP-09 Kind-5 for the same address:
+  /// relays honour such a deletion for every later event at that address
+  /// and rejected this one, so the dissolution never reached other devices
+  /// (device test 2026-11-12).
   void publishCellDissolution(Map<String, dynamic> cellJson) {
     if (_keys == null) return;
     final cellId = cellJson['id'] as String? ?? '';
@@ -1844,6 +1897,7 @@ class NostrTransport implements MessageTransport {
   /// name without waiting for the next periodic heartbeat.
   Future<void> republishMetadata() async {
     if (_state != TransportState.connected) return;
+    if (profileRestorePending) return;
     await _publishMetadata();
     await _sendPresenceAnnouncement();
   }
@@ -1855,6 +1909,11 @@ class NostrTransport implements MessageTransport {
   /// at any time to learn our pseudonym even without a live presence event.
   Future<void> _publishMetadata() async {
     if (_keys == null) return;
+    if (profileRestorePending) {
+      print('[PROFILE-RESTORE] Own Kind-0 held back until the profile has '
+          'been fetched from the relays');
+      return;
+    }
     final name = _effectivePseudonym;
     final profile = ProfileService.instance.currentProfile;
     debugPrint('[Nostr] _publishMetadata called  name=$name');
@@ -1898,6 +1957,79 @@ class NostrTransport implements MessageTransport {
     );
     _relayManager.publishFireAndForget(event);
     debugPrint('[Nostr] Kind-0 event published: ${event.id}');
+  }
+
+  // ── Own profile lookup (TD-59) ────────────────────────────────────────────
+
+  void _startOwnProfileLookup() {
+    if (_keys == null) return;
+    _stopOwnProfileLookup();
+    _ownProfileSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.metadata],
+      'authors': [_keys!.publicKeyHex],
+      'limit': 1,
+    });
+    _eoseSub = _relayManager.onEose.listen((subId) {
+      if (subId == _ownProfileSubId) _scheduleOwnProfileSettle();
+    });
+    print('[PROFILE-RESTORE] Looking up own Kind-0 on the relays');
+  }
+
+  void _stopOwnProfileLookup() {
+    _ownProfileSettleTimer?.cancel();
+    _ownProfileSettleTimer = null;
+    _eoseSub?.cancel();
+    _eoseSub = null;
+    if (_ownProfileSubId != null) {
+      _relayManager.closeSubscription(_ownProfileSubId!);
+      _ownProfileSubId = null;
+    }
+  }
+
+  void _onOwnProfileCandidate(NostrEvent event) {
+    final current = _ownProfileCandidate;
+    if (current == null || event.createdAt > current.createdAt) {
+      _ownProfileCandidate = event;
+    }
+    _scheduleOwnProfileSettle();
+  }
+
+  void _scheduleOwnProfileSettle() {
+    _ownProfileSettleTimer ??=
+        Timer(ownProfileSettleDelay, _finishOwnProfileLookup);
+  }
+
+  void _finishOwnProfileLookup() {
+    final candidate = _ownProfileCandidate;
+    _ownProfileCandidate = null;
+    _stopOwnProfileLookup();
+    Map<String, dynamic>? content;
+    if (candidate != null) {
+      try {
+        final decoded = jsonDecode(candidate.content);
+        if (decoded is Map<String, dynamic>) content = decoded;
+      } on FormatException catch (e) {
+        print('[PROFILE-RESTORE] Own Kind-0 unreadable: $e');
+      }
+    }
+    print('[PROFILE-RESTORE] Lookup finished: '
+        '${content == null ? "no own profile on the relays" : "own profile found"}');
+    _ownProfileController.add(content);
+  }
+
+  /// Ends the own-profile lookup and publishes our Kind-0 and presence.
+  /// Call after the fetched profile has been applied (or none was found),
+  /// or when the user edits the profile before the lookup finished.
+  Future<void> completeProfileRestore() async {
+    if (!profileRestorePending) return;
+    profileRestorePending = false;
+    _ownProfileCandidate = null;
+    _stopOwnProfileLookup();
+    print('[PROFILE-RESTORE] Completed, publishing own Kind-0');
+    if (_state == TransportState.connected) {
+      await _publishMetadata();
+      await _sendPresenceAnnouncement();
+    }
   }
 
   /// Publishes a Kind 30078 presence announcement so other nodes can find us.
@@ -2030,10 +2162,16 @@ class NostrTransport implements MessageTransport {
     final msgSince = _lastMessageTimestampSeconds != null
         ? _lastMessageTimestampSeconds! - 60
         : nowSeconds - 86400;
+    // DMs reach further back on a device without history (TD-63) and
+    // overlap by days after a restart, so outbox re-sends with their
+    // original timestamp are not skipped (audit Z-2). Broadcasts keep the
+    // short buffer because the #mesh tag is global traffic.
+    final dmSince = _catchUpSince(nowSeconds - newDeviceDmHistory.inSeconds);
 
     // Close stale subscriptions before recreating to avoid accumulating
     // orphaned REQ IDs in the relay manager.
     if (_dmSubId != null) _relayManager.closeSubscription(_dmSubId!);
+    if (_ownDmSubId != null) _relayManager.closeSubscription(_ownDmSubId!);
     if (_meshSubId != null) _relayManager.closeSubscription(_meshSubId!);
     if (_presenceSubId != null) _relayManager.closeSubscription(_presenceSubId!);
     if (_metadataSubId != null) _relayManager.closeSubscription(_metadataSubId!);
@@ -2041,17 +2179,26 @@ class NostrTransport implements MessageTransport {
     print('[NOSTR] Setting up subscriptions for pubkey: '
         '${myPubkey.substring(0, 8)}…${myPubkey.substring(myPubkey.length - 4)}');
 
-    final humanSince = DateTime.fromMillisecondsSinceEpoch(msgSince * 1000).toUtc();
+    final humanSince = DateTime.fromMillisecondsSinceEpoch(dmSince * 1000).toUtc();
     print('[SYNC] DM filter: {"kinds":[4],"#p":["${myPubkey.substring(0, 8)}…"],'
-        '"since":$msgSince}  ← ${humanSince.toIso8601String()}');
+        '"since":$dmSince}  ← ${humanSince.toIso8601String()}');
 
-    // DMs addressed to us – since last known message (or last 24 h)
+    // DMs addressed to us – since last known message (or last 30 days)
     _dmSubId = _relayManager.subscribe({
       'kinds': [NostrKind.encryptedDm],
       '#p': [myPubkey],
-      'since': msgSince,
+      'since': dmSince,
     });
     print('[NOSTR] DM sub: $_dmSubId  (#p: ${myPubkey.substring(0, 8)}…)');
+
+    // DMs we sent ourselves (from this or our other device), so a
+    // conversation shows both sides on every device (TD-57).
+    _ownDmSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.encryptedDm],
+      'authors': [myPubkey],
+      'since': dmSince,
+    });
+    print('[SYNC] Own DM sub: $_ownDmSubId  (authors: ${myPubkey.substring(0, 8)}…)');
 
     // Mesh broadcasts – same since window.
     // Always subscribe to 'nexus-mesh' tag.  If we have a geohash we also
@@ -2077,6 +2224,18 @@ class NostrTransport implements MessageTransport {
       'since': nowSeconds - 300,
     });
     print('[NOSTR] Presence sub: $_presenceSubId');
+
+    // Our own encrypted contact list (TD-60). Replaceable, so relays only
+    // keep the newest one and no `since` is needed.
+    if (_contactSyncSubId != null) {
+      _relayManager.closeSubscription(_contactSyncSubId!);
+    }
+    _contactSyncSubId = _relayManager.subscribe({
+      'kinds': [NostrKind.presence],
+      'authors': [myPubkey],
+      '#d': [contactSyncDTag],
+    });
+    print('[CONTACT-SYNC] Subscribed to own contact list: $_contactSyncSubId');
 
     // ── Kind-0 metadata sync ──────────────────────────────────────────────
     //
@@ -2104,6 +2263,8 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Metadata sub: $_metadataSubId  '
           '(${contactPubkeys.length} contacts, pubkeys pre-populated)');
     }
+
+    if (profileRestorePending) _startOwnProfileLookup();
 
     // Refresh metadata every 30 minutes to pick up name changes.
     _metadataRefreshTimer?.cancel();
@@ -2147,10 +2308,11 @@ class NostrTransport implements MessageTransport {
     if (_cellMembershipSubId != null) {
       _relayManager.closeSubscription(_cellMembershipSubId!);
     }
+    // No `since` (TD-63): only confirmations addressed to us, so the volume
+    // is tiny, and a new device must also see confirmations older than a week.
     _cellMembershipSubId = _relayManager.subscribe({
       'kinds': [NostrKind.cellMembershipConfirmed],
       '#p': [myPubkey],
-      'since': nowSeconds - 7 * 86400,
     });
     print('[JOIN] Subscribed to membership confirmations for $myPubkey, subId=$_cellMembershipSubId');
 
@@ -2354,7 +2516,11 @@ class NostrTransport implements MessageTransport {
       case NostrKind.channelMessage:
         _handleChannelMessageEvent(event);
       case NostrKind.presence:
-        _handlePresenceEvent(event);
+        if (event.tagValue('d') == contactSyncDTag) {
+          _handleContactSyncEvent(event);
+        } else {
+          _handlePresenceEvent(event);
+        }
       case NostrKind.cellAnnounce:
         _handleCellAnnounceEvent(event);
       case NostrKind.cellJoinRequest:
@@ -2970,10 +3136,15 @@ class NostrTransport implements MessageTransport {
 
   void _handleDm(NostrEvent event) async {
     if (_keys == null) return;
-    // Ignore our own events
-    if (event.pubkey == _keys!.publicKeyHex) return;
-
     final myPubkey = _keys!.publicKeyHex;
+
+    // DMs we sent ourselves (TD-57), e.g. from our other device: NIP-04 uses
+    // ECDH, so the shared secret with the recipient (`p` tag) decrypts them.
+    if (event.pubkey == myPubkey) {
+      await _handleOwnDm(event);
+      return;
+    }
+
     final isForMe = event.tagValues('p').contains(myPubkey);
     print('[ContactRequest] incoming event received: ${event.kind}');
     print('[ContactRequest] for my pubkey: $isForMe '
@@ -3005,6 +3176,64 @@ class NostrTransport implements MessageTransport {
     } catch (e) {
       print('[NOSTR] DM decrypt FAILED (not for us or malformed): $e');
       print('[ContactRequest] decrypt error detail: $e');
+    }
+  }
+
+  /// Forwards our own encrypted contact list (TD-60). Only events signed
+  /// with our own key count; decryption happens in the app layer.
+  void _handleContactSyncEvent(NostrEvent event) {
+    if (_keys == null || event.pubkey != _keys!.publicKeyHex) return;
+    print('[CONTACT-SYNC] Contact list received: ${event.id.substring(0, 8)} '
+        'created_at=${event.createdAt}');
+    _contactSyncController.add((content: event.content, createdAt: event.createdAt));
+  }
+
+  /// Publishes our encrypted contact list as a replaceable kind-30078 event
+  /// (`d` = [contactSyncDTag]). Returns whether a relay accepted it.
+  Future<bool> publishContactSync(String encryptedContent) async {
+    if (_keys == null) return false;
+    final event = NostrEvent.create(
+      keys: _keys!,
+      kind: NostrKind.presence,
+      content: encryptedContent,
+      tags: [
+        ['d', contactSyncDTag],
+      ],
+    );
+    final outcome = await _relayManager.publish(event);
+    print('[CONTACT-SYNC] Published contact list ${event.id.substring(0, 8)} '
+        '(${encryptedContent.length} chars): '
+        '${outcome.acceptedRelays.isNotEmpty ? "[RELAY-OK] ${outcome.acceptedRelays.length} relays" : "not accepted ${outcome.rejections}"}');
+    return outcome.acceptedRelays.isNotEmpty;
+  }
+
+  /// Decrypts a DM signed with our own key and forwards it as an outgoing
+  /// message, so the conversation shows it on every device (TD-57).
+  Future<void> _handleOwnDm(NostrEvent event) async {
+    final recipientPubkey = event.tagValue('p');
+    if (recipientPubkey == null ||
+        recipientPubkey.length != 64 ||
+        recipientPubkey == _keys!.publicKeyHex) {
+      return;
+    }
+    try {
+      final plaintext = await _nip04Decrypt(
+        event.content,
+        Uint8List.fromList(_hexToBytes(recipientPubkey)),
+      );
+      final message = _withWrapperId(
+        NexusMessage.fromJson(jsonDecode(plaintext) as Map<String, dynamic>),
+        event,
+      );
+      // Only accept what we really sent: our own DID as sender.
+      if (message.fromDid != localDid || message.isBroadcast) {
+        print('[SYNC] Own DM ignored: sender ${message.fromDid} is not us');
+        return;
+      }
+      print('[SYNC] Own DM ${event.id.substring(0, 8)} → ${message.toDid}');
+      _msgController.add(message);
+    } catch (e) {
+      print('[SYNC] Own DM decrypt FAILED: $e');
     }
   }
 
@@ -3105,8 +3334,14 @@ class NostrTransport implements MessageTransport {
   /// persisted contacts on startup) and updates the stored pseudonym.
   void _handleMetadataEvent(NostrEvent event) {
     if (_keys == null) return;
-    // Ignore our own metadata events.
-    if (event.pubkey == _keys!.publicKeyHex) return;
+    // Own metadata only matters while looking up the profile after a seed
+    // restore (TD-59); otherwise ignore it.
+    if (event.pubkey == _keys!.publicKeyHex) {
+      if (profileRestorePending && _ownProfileSubId != null) {
+        _onOwnProfileCandidate(event);
+      }
+      return;
+    }
 
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;

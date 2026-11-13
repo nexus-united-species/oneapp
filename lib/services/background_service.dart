@@ -12,7 +12,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/transport/nostr/nostr_event.dart';
 import '../core/transport/nostr/nostr_keys.dart';
-import '../core/transport/nostr/nostr_relay_manager.dart';
+import '../core/transport/nostr/relay_config.dart';
+import '../core/transport/nostr/seen_event_ids.dart';
 import 'notification_settings_service.dart';
 
 /// Configures and starts the Android foreground service.
@@ -76,8 +77,13 @@ void _onStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   bool paused = false;
-  WebSocketChannel? ws;
-  StreamSubscription<dynamic>? wsSub;
+  // TD-47: one connection per relay instead of only the first one.
+  var relayUrls = defaultRelays;
+  final sockets = <String, WebSocketChannel>{};
+  final socketSubs = <String, StreamSubscription<dynamic>>{};
+  final reconnectTimers = <String, Timer>{};
+  // The same DM arrives once per relay; notify only once.
+  final seenDmIds = SeenEventIds();
 
   // ── Foreground notification helpers ──────────────────────────────────────
   void updateForeground(String content) {
@@ -140,7 +146,7 @@ void _onStart(ServiceInstance service) async {
   Timer? presenceTimer;
 
   Future<void> sendPresenceHeartbeat() async {
-    if (ws == null || nostrKeys == null || localDid == null) return;
+    if (sockets.isEmpty || nostrKeys == null || localDid == null) return;
     try {
       final event = NostrEvent.create(
         keys: nostrKeys,
@@ -156,7 +162,14 @@ void _onStart(ServiceInstance service) async {
           ['name', localPseudonym ?? ''],
         ],
       );
-      ws!.sink.add(jsonEncode(['EVENT', event.toJson()]));
+      final message = jsonEncode(['EVENT', event.toJson()]);
+      for (final entry in sockets.entries) {
+        try {
+          entry.value.sink.add(message);
+        } catch (e) {
+          debugPrint('[BGS] presence heartbeat to ${entry.key} failed: $e');
+        }
+      }
     } catch (e) {
       debugPrint('[BGS] presence heartbeat failed: $e');
     }
@@ -169,66 +182,113 @@ void _onStart(ServiceInstance service) async {
     });
   }
 
+  void updateConnectionStatus() {
+    if (sockets.isEmpty) {
+      updateForeground('Verbinde…');
+    } else {
+      updateForeground(
+          'Verbunden mit ${sockets.length} von ${relayUrls.length} Relays');
+    }
+  }
+
+  void closeRelay(String url) {
+    reconnectTimers.remove(url)?.cancel();
+    socketSubs.remove(url)?.cancel();
+    sockets.remove(url)?.sink.close();
+  }
+
+  // Assigned below; scheduleReconnect and connectRelay call each other.
+  late final Future<void> Function(String url) connectRelay;
+
+  void scheduleReconnect(String url, Duration delay) {
+    reconnectTimers.remove(url)?.cancel();
+    if (paused) return;
+    reconnectTimers[url] = Timer(delay, () => connectRelay(url));
+  }
+
+  void handleRelayMessage(dynamic raw) {
+    try {
+      final msg = jsonDecode(raw as String) as List<dynamic>;
+      if (msg.length < 3 || msg[0] != 'EVENT') return;
+      final event = msg[2] as Map<String, dynamic>;
+      if ((event['kind'] as int? ?? 0) != 4) return;
+      final id = event['id'] as String? ?? '';
+      if (id.isEmpty || !seenDmIds.add(id)) return;
+      final senderPubkey = event['pubkey'] as String? ?? '';
+      final shortSender = senderPubkey.length >= 8
+          ? 'Peer ${senderPubkey.substring(0, 8)}'
+          : 'Unbekannt';
+      showNotif(shortSender, 'Neue verschlüsselte Nachricht');
+    } catch (e) {
+      debugPrint('[BGS] unreadable relay message: $e');
+    }
+  }
+
+  connectRelay = (String url) async {
+    if (paused || pubKeyHex == null) return;
+    closeRelay(url);
+    final ws = WebSocketChannel.connect(Uri.parse(url));
+    try {
+      await ws.ready;
+    } catch (e) {
+      debugPrint('[BGS] relay $url not reachable: $e');
+      scheduleReconnect(url, const Duration(seconds: 15));
+      updateConnectionStatus();
+      return;
+    }
+    if (paused) {
+      await ws.sink.close();
+      return;
+    }
+    sockets[url] = ws;
+
+    // Subscribe to incoming NIP-04 DMs for our pubkey.
+    ws.sink.add(jsonEncode([
+      'REQ',
+      'bg-sub-1',
+      {
+        'kinds': [4],
+        '#p': [pubKeyHex],
+        'since': DateTime.now().millisecondsSinceEpoch ~/ 1000 - 60,
+      }
+    ]));
+
+    socketSubs[url] = ws.stream.listen(
+      handleRelayMessage,
+      onDone: () {
+        sockets.remove(url);
+        socketSubs.remove(url);
+        updateConnectionStatus();
+        scheduleReconnect(url, const Duration(seconds: 5));
+      },
+      onError: (Object e) {
+        debugPrint('[BGS] relay $url error: $e');
+        sockets.remove(url);
+        socketSubs.remove(url)?.cancel();
+        updateConnectionStatus();
+        scheduleReconnect(url, const Duration(seconds: 10));
+      },
+    );
+    updateConnectionStatus();
+  };
+
   Future<void> connectNostr() async {
     if (paused || pubKeyHex == null) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedRelays = prefs.getStringList('nostr_relay_urls') ?? defaultRelays;
-      final relayUrl = savedRelays.isNotEmpty ? savedRelays.first : defaultRelays.first;
-
-      ws = WebSocketChannel.connect(Uri.parse(relayUrl));
-      updateForeground('Verbunden mit ${Uri.parse(relayUrl).host}');
-
-      // Subscribe to incoming NIP-04 DMs for our pubkey
-      final req = jsonEncode([
-        'REQ',
-        'bg-sub-1',
-        {
-          'kinds': [4],
-          '#p': [pubKeyHex],
-          'since': DateTime.now().millisecondsSinceEpoch ~/ 1000 - 60,
-        }
-      ]);
-      ws!.sink.add(req);
-
-      wsSub = ws!.stream.listen(
-        (raw) {
-          try {
-            final msg = jsonDecode(raw as String) as List<dynamic>;
-            if (msg.length >= 3 && msg[0] == 'EVENT') {
-              final event = msg[2] as Map<String, dynamic>;
-              final kind = event['kind'] as int? ?? 0;
-              if (kind == 4) {
-                final senderPubkey = event['pubkey'] as String? ?? '';
-                final shortSender = senderPubkey.length >= 8
-                    ? 'Peer ${senderPubkey.substring(0, 8)}'
-                    : 'Unbekannt';
-                showNotif(shortSender, 'Neue verschlüsselte Nachricht');
-              }
-            }
-          } catch (_) {}
-        },
-        onDone: () {
-          if (!paused) {
-            presenceTimer?.cancel();
-            Future.delayed(const Duration(seconds: 5), connectNostr);
-          }
-        },
-        onError: (_) {
-          if (!paused) {
-            presenceTimer?.cancel();
-            Future.delayed(const Duration(seconds: 10), connectNostr);
-          }
-        },
-      );
-
-      // Send an immediate heartbeat, then every 90 s.
-      await sendPresenceHeartbeat();
-      startPresenceTimer();
+      // The main isolate writes custom relays; drop this isolate's cache.
+      await prefs.reload();
+      relayUrls = effectiveRelays(await loadCustomRelays(prefs));
     } catch (e) {
-      updateForeground('Verbindungsfehler');
-      Future.delayed(const Duration(seconds: 15), connectNostr);
+      debugPrint('[BGS] relay list unavailable, using defaults: $e');
+      relayUrls = defaultRelays;
     }
+    debugPrint('[BGS] connecting to ${relayUrls.length} relays: $relayUrls');
+    await Future.wait(relayUrls.map(connectRelay));
+
+    // Send an immediate heartbeat, then every 90 s.
+    await sendPresenceHeartbeat();
+    startPresenceTimer();
   }
 
   await connectNostr();
@@ -238,8 +298,9 @@ void _onStart(ServiceInstance service) async {
     paused = true;
     presenceTimer?.cancel();
     presenceTimer = null;
-    wsSub?.cancel();
-    ws?.sink.close();
+    for (final url in {...sockets.keys, ...reconnectTimers.keys}) {
+      closeRelay(url);
+    }
     updateForeground('App im Vordergrund');
   });
 

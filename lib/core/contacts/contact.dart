@@ -79,8 +79,13 @@ class Contact {
   TrustLevel trustLevel;
   final DateTime addedAt;
   DateTime lastSeen;
+
+  /// Last change by the user to the synced fields (trust level, block,
+  /// mute) or when the contact was added. Decides which device wins when
+  /// contact lists are merged (TD-60); metadata updates do not touch it.
+  DateTime changedAt;
   String? notes; // private local note, never transmitted
-  bool blocked;          // local-only, never transmitted
+  bool blocked;          // synced to own devices only (TD-60), never to others
   DateTime? mutedUntil; // null = not muted; DateTime(9999) = permanent
   String? encryptionPublicKey; // X25519 pubkey hex (32 bytes = 64 hex chars)
   String? previousEncryptionPublicKey; // for key-change warning
@@ -138,7 +143,9 @@ class Contact {
     this.website,
     this.nip05,
     Map<String, dynamic>? nexusProfile,
-  }) : nexusProfile = nexusProfile ?? {};
+    DateTime? changedAt,
+  })  : nexusProfile = nexusProfile ?? {},
+        changedAt = changedAt ?? addedAt;
 
   Map<String, dynamic> toJson() => {
         'did': did,
@@ -147,6 +154,7 @@ class Contact {
         'trustLevel': trustLevel.name,
         'addedAt': addedAt.toIso8601String(),
         'lastSeen': lastSeen.toIso8601String(),
+        'changedAt': changedAt.toIso8601String(),
         'notes': notes,
         'blocked': blocked,
         'mutedUntil': mutedUntil?.toIso8601String(),
@@ -179,6 +187,9 @@ class Contact {
         website: json['website'] as String?,
         nip05: json['nip05'] as String?,
         nexusProfile: (json['nexusProfile'] as Map<String, dynamic>?) ?? {},
+        changedAt: json['changedAt'] is String
+            ? DateTime.tryParse(json['changedAt'] as String)
+            : null,
       );
 
   static DateTime _parseDate(dynamic v) {

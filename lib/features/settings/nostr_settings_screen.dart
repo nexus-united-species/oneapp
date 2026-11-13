@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/transport/nostr/nostr_relay_manager.dart';
+import '../../core/transport/nostr/relay_config.dart';
 import '../../shared/theme/app_theme.dart';
 import '../chat/chat_provider.dart';
 
@@ -111,7 +112,17 @@ class _NostrSettingsScreenState extends State<NostrSettingsScreen> {
                     style: TextStyle(color: Colors.grey),
                   ),
                 ),
-              ...relays.map((r) => _RelayTile(relay: r)),
+              ...relays.map((r) => _RelayTile(
+                    relay: r,
+                    onRemove: isDefaultRelay(r.url)
+                        ? null
+                        : () async {
+                            await provider.removeNostrRelay(r.url);
+                            if (context.mounted) {
+                              _snack(context, 'Relay entfernt');
+                            }
+                          },
+                  )),
               const Divider(height: 1),
 
               // ── Add relay ──────────────────────────────────────────────────
@@ -144,12 +155,11 @@ class _NostrSettingsScreenState extends State<NostrSettingsScreen> {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
-                      onPressed: () {
-                        final url = _relayCtrl.text.trim();
-                        if (url.isNotEmpty &&
-                            (url.startsWith('wss://') ||
-                                url.startsWith('ws://'))) {
-                          provider.addNostrRelay(url);
+                      onPressed: () async {
+                        final added =
+                            await provider.addNostrRelay(_relayCtrl.text);
+                        if (!context.mounted) return;
+                        if (added) {
                           _relayCtrl.clear();
                           _snack(context, 'Relay hinzugefügt');
                           setState(() {});
@@ -165,12 +175,13 @@ class _NostrSettingsScreenState extends State<NostrSettingsScreen> {
               ),
 
               // ── Default relays hint ────────────────────────────────────────
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 24),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 child: Text(
-                  'Standard-Relays: relay.damus.io, relay.snort.social, '
-                  'nos.lol, relay.nostr.band, nostr.wine',
-                  style: TextStyle(color: Colors.grey, fontSize: 11),
+                  'Standard-Relays: '
+                  '${defaultRelays.map((u) => u.replaceAll('wss://', '')).join(', ')}. '
+                  'Eigene Relays bleiben nach einem Neustart erhalten.',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
                 ),
               ),
             ],
@@ -188,8 +199,11 @@ class _NostrSettingsScreenState extends State<NostrSettingsScreen> {
 }
 
 class _RelayTile extends StatelessWidget {
-  const _RelayTile({required this.relay});
+  const _RelayTile({required this.relay, this.onRemove});
   final RelayStatus relay;
+
+  /// Removes a custom relay; `null` for default relays.
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -220,6 +234,13 @@ class _RelayTile extends StatelessWidget {
         label,
         style: TextStyle(color: color, fontSize: 11),
       ),
+      trailing: onRemove == null
+          ? null
+          : IconButton(
+              icon: const Icon(Icons.delete_outline, size: 20),
+              tooltip: 'Relay entfernen',
+              onPressed: onRemove,
+            ),
     );
   }
 

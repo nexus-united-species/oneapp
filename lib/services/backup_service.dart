@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/contacts/contact_service.dart';
 import '../core/identity/bip39.dart';
 import '../core/identity/identity_service.dart';
+import '../core/identity/profile.dart';
+import '../core/identity/profile_service.dart';
 import '../core/storage/pod_encryption.dart';
 import '../features/chat/group_channel_service.dart';
 import '../features/governance/cell_service.dart';
@@ -63,6 +65,9 @@ class RestoreResult {
   final int restoredContacts;
   final int restoredChannels;
   final int restoredCells;
+
+  /// Display name taken over from the backup (TD-58), if any.
+  final String? restoredPseudonym;
   final String? error;
 
   const RestoreResult({
@@ -70,6 +75,7 @@ class RestoreResult {
     this.restoredContacts = 0,
     this.restoredChannels = 0,
     this.restoredCells = 0,
+    this.restoredPseudonym,
     this.error,
   });
 }
@@ -95,6 +101,23 @@ String hashBackupPayload(Map<String, dynamic> payload) {
   final stable = Map<String, dynamic>.from(payload)..remove('createdAt');
   final digest = pkg_crypto.sha256.convert(utf8.encode(jsonEncode(stable)));
   return digest.toString();
+}
+
+/// The display name to take over from a backup, or `null` to keep the
+/// current one (TD-58).
+///
+/// Only replaces a name that is still the one generated from the public key
+/// (fresh seed restore); a name the user already chose or that came from the
+/// relays is never overwritten.
+String? pseudonymToAdoptFromBackup({
+  required String? backupName,
+  required String currentName,
+  required String? generatedName,
+}) {
+  final name = backupName?.trim() ?? '';
+  if (name.isEmpty || name == currentName) return null;
+  if (generatedName == null || currentName != generatedName) return null;
+  return name;
 }
 
 // ── BackupService ─────────────────────────────────────────────────────────────
@@ -427,15 +450,39 @@ class BackupService {
       await PrinciplesService.instance.restoreFromBackup(principlesData);
     }
 
+    // Display name: the seed restore only knows a generated name (TD-58).
+    final restoredPseudonym = await _adoptPseudonym(data['pseudonym']);
+
     print('[RESTORE] Backup applied: $restoredContacts contacts, '
-        '$restoredChannels channels, $restoredCells cells restored');
+        '$restoredChannels channels, $restoredCells cells restored, '
+        'name ${restoredPseudonym ?? "unchanged"}');
 
     return RestoreResult(
       success: true,
       restoredContacts: restoredContacts,
       restoredChannels: restoredChannels,
       restoredCells: restoredCells,
+      restoredPseudonym: restoredPseudonym,
     );
+  }
+
+  Future<String?> _adoptPseudonym(Object? backupName) async {
+    final identity = IdentityService.instance.currentIdentity;
+    if (identity == null) return null;
+    final name = pseudonymToAdoptFromBackup(
+      backupName: backupName is String ? backupName : null,
+      currentName: identity.pseudonym,
+      generatedName: IdentityService.instance.generatedPseudonym,
+    );
+    if (name == null) return null;
+    await IdentityService.instance.updatePseudonym(name);
+    final profile = ProfileService.instance.currentProfile;
+    if (profile != null && profile.pseudonym.value == identity.pseudonym) {
+      final updated = UserProfile.fromJson(profile.toJson())
+        ..pseudonym = profile.pseudonym.copyWith(value: name);
+      await ProfileService.instance.save(updated);
+    }
+    return name;
   }
 
   // ── Filesystem ────────────────────────────────────────────────────────────

@@ -1381,7 +1381,7 @@ class _DiscoveredCellTile extends StatelessWidget {
 
     // Founder display name
     final founderName =
-        ContactService.instance.getDisplayName(cell.createdBy);
+        ContactService.instance.getDisplayName(cell.currentFounder);
 
     final msgCtrl = TextEditingController();
 

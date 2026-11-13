@@ -19,6 +19,10 @@ import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
 import '../../core/identity/identity_proof.dart';
 import '../../core/identity/identity_service.dart';
+import '../../core/identity/profile_restore.dart';
+import '../../core/identity/profile_service.dart';
+import '../profile/profile_image_service.dart';
+import '../contacts/contact_sync_service.dart';
 import '../../core/storage/pod_database.dart';
 import '../../core/transport/ble/ble_transport.dart';
 import '../../core/transport/lan/lan_transport.dart';
@@ -28,6 +32,8 @@ import '../../core/transport/nexus_peer.dart';
 import '../../core/transport/nostr/nostr_event.dart';
 import '../../core/transport/nostr/nostr_keys.dart';
 import '../../core/transport/nostr/nostr_outbox.dart';
+import '../../core/transport/nostr/nostr_relay_manager.dart';
+import '../../core/transport/nostr/relay_config.dart';
 import '../../core/transport/nostr/nostr_transport.dart';
 import '../../core/transport/transport_manager.dart';
 import '../../services/background_service.dart';
@@ -136,7 +142,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Re-publishes Kind-0 metadata and presence with the current effective
   /// pseudonym. Call this immediately after the user saves a new display name
   /// so peers see the update without waiting for the next heartbeat.
-  Future<void> republishIdentity() => _nostrTransport?.republishMetadata() ?? Future.value();
+  ///
+  /// An explicit profile edit during the own-profile lookup after a seed
+  /// restore ends that lookup: the user's input wins (TD-59).
+  Future<void> republishIdentity() async {
+    final transport = _nostrTransport;
+    if (transport == null) return;
+    if (transport.profileRestorePending) {
+      await setProfileRestorePending(false);
+      await transport.completeProfileRestore();
+      return;
+    }
+    await transport.republishMetadata();
+  }
+
+  /// Applies the result of the own-profile lookup after a seed restore and
+  /// then lets the transport publish our Kind-0 again (TD-59).
+  Future<void> _applyOwnProfileLookup(Map<String, dynamic>? content) async {
+    final transport = _nostrTransport;
+    if (transport == null || !transport.profileRestorePending) return;
+    final profile = ProfileService.instance.currentProfile;
+    if (content != null && profile != null) {
+      String? picturePath;
+      final picture = content['picture'];
+      if (picture is String && picture.startsWith('data:')) {
+        picturePath = await ProfileImageService.instance.saveFromBase64(picture);
+      }
+      final updated =
+          profileFromOwnKind0(profile, content, picturePath: picturePath);
+      await ProfileService.instance.save(updated);
+      final name = nameFromKind0(content);
+      if (name != null) await IdentityService.instance.updatePseudonym(name);
+      print('[PROFILE-RESTORE] Applied own profile from relays: name=$name, '
+          'picture=${picturePath != null}');
+    }
+    await setProfileRestorePending(false);
+    await transport.completeProfileRestore();
+    notifyListeners();
+  }
 
   /// Actively fetches the latest Kind-0 metadata from Nostr relays for [did].
   /// No-op if the contact has no known Nostr pubkey or Nostr is not connected.
@@ -254,12 +297,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _manager.registerTransport(_lanTransport!);
 
       // Nostr transport – internet fallback; started conditionally below.
+      // Default relays plus the user's own, persisted relays (TD-47).
+      final relayUrls = _nostrTransport == null
+          ? effectiveRelays(await loadCustomRelays())
+          : null;
       _nostrTransport ??= NostrTransport(
         localDid: identity.did,
         localPseudonym: identity.pseudonym,
+        relayManager: NostrRelayManager(relayUrls: relayUrls),
         // Unsent chat events survive restarts and go out on reconnect.
         outboxStore: PodNostrOutboxStore(),
       );
+      // After a seed restore: fetch our own profile before publishing it
+      // (TD-59). Must be set before the transport starts.
+      if (relayUrls != null) {
+        _nostrTransport!.profileRestorePending =
+            await isProfileRestorePending();
+        _nostrTransport!.onOwnProfileLookup.listen(_applyOwnProfileLookup);
+        // Contact list between own devices (TD-60). Listens before the
+        // transport starts, so the first list from the relays is not missed.
+        unawaited(ContactSyncService.instance.attach(
+          _nostrTransport!,
+          onContactsAdded: (added) {
+            for (final contact in added) {
+              final pubkey = contact.nostrPubkey;
+              if (pubkey == null) continue;
+              _nostrTransport?.registerDidMapping(contact.did, pubkey);
+              _nostrTransport?.fetchContactMetadata(pubkey);
+            }
+            notifyListeners();
+          },
+        ));
+      }
       _manager.registerTransport(_nostrTransport!);
 
       // Wire FeedService to the Nostr transport for publishing and receiving.
@@ -311,6 +380,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         _lastRosterPublishByRelay[relayUrl] = now;
         CellService.instance.publishRostersForFoundedCells();
+        unawaited(CellService.instance.republishPendingHandovers());
       });
 
       // G2 governance – wire ProposalService callbacks to NostrTransport.
@@ -924,7 +994,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ..remove('_nostr_pubkey')
         ..remove('_created_at')
         ..remove('_own_device')
-        ..remove(IdentityProof.contentKey);
+        ..remove(IdentityProof.contentKey)
+        // A founder handover is accepted only from a roster signed by the
+        // previous founder, never from an announcement (TD-33).
+        ..remove('founderDid');
       final ownDevice = data['_own_device'] as bool? ?? false;
       final cell = Cell.fromJson(cellJson);
       print('[CELL-UPDATE] _onCellAnnounced: cellId=${cell.id}, name="${cell.name}", version=n/a, self=$ownDevice');
@@ -1061,7 +1134,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final knownCell = _knownCell(cell.id);
         final decision = await authorizeMembershipConfirmation(
           knownCell: knownCell,
-          knownMembers: CellService.instance.membersOf(cell.id),
+          // TD-33: while applying, the founder's roster tells which
+          // moderators may confirm.
+          knownMembers: CellService.instance.approversFor(cell.id),
           payloadCell: cell,
           member: member,
           myDid: IdentityService.instance.currentIdentity?.did ?? '',
@@ -1085,9 +1160,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (decision != GovernanceAuthDecision.allowed || knownCell == null) {
           print('[CELL-AUTH] Membership confirmation rejected for '
               '${cell.id}: ${decision.name}');
+          // Possibly confirmed by a moderator this device does not know yet:
+          // check again once the founder's roster arrives (TD-33).
+          if (decision == GovernanceAuthDecision.notAuthorized &&
+              CellService.instance.hasAppliedTo(cell.id)) {
+            _rememberConfirmationAwaitingRoster(cell.id, data);
+          }
           return;
         }
         await CellService.instance.handleMembershipConfirmed(knownCell, member);
+        // The founder's roster seen while applying lists everyone; adopt it
+        // now instead of waiting for the next one (TD-33).
+        final roster = CellService.instance.takeApplicantRoster(cell.id);
+        if (roster != null) await CellService.instance.applyRoster(roster);
       } finally {
         _membershipConfirmationsInFlight.remove(lockKey);
       }
@@ -1157,10 +1242,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final lockKey = '${roster.cellId}|${roster.updatedAtMs}|$signer';
     if (!_rostersInFlight.add(lockKey)) return;
     try {
+      final myCell = CellService.instance.myCells
+          .where((c) => c.id == roster.cellId)
+          .firstOrNull;
+      // TD-33: applicants check the roster against the announced cell.
+      final isApplicant =
+          myCell == null && CellService.instance.hasAppliedTo(roster.cellId);
       final decision = await authorizeCellRoster(
-        cell: CellService.instance.myCells
-            .where((c) => c.id == roster.cellId)
-            .firstOrNull,
+        cell: myCell ?? (isApplicant ? _knownCell(roster.cellId) : null),
         roster: roster,
         signerPubkey: signer,
         idProof: data[IdentityProof.contentKey],
@@ -1169,12 +1258,51 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (decision != GovernanceAuthDecision.allowed) {
         print('[CELL-AUTH] Roster rejected for ${roster.cellId}: '
             '${decision.name}');
+        // Possibly from a new founder whose handover has not arrived yet:
+        // check again after the next handover (TD-33).
+        if (decision == GovernanceAuthDecision.notAuthorized) {
+          _rostersAwaitingHandover[roster.cellId] = data;
+        }
         return;
       }
+      if (myCell == null) {
+        if (CellService.instance.rememberApplicantRoster(roster)) {
+          final waiting = _confirmationsAwaitingRoster.remove(roster.cellId);
+          if (waiting != null) await _onCellMembershipConfirmed(waiting);
+        }
+        return;
+      }
+      final founderBefore = myCell.currentFounder;
       await CellService.instance.applyRoster(roster);
+      final founderAfter = CellService.instance.myCells
+          .where((c) => c.id == roster.cellId)
+          .firstOrNull
+          ?.currentFounder;
+      if (founderAfter != null && founderAfter != founderBefore) {
+        final waiting = _rostersAwaitingHandover.remove(roster.cellId);
+        if (waiting != null) await _onCellRoster(waiting);
+      }
     } finally {
       _rostersInFlight.remove(lockKey);
     }
+  }
+
+  /// Rosters rejected because their signer was not (yet) the founder here;
+  /// re-checked after a founder handover was applied (TD-33). Newest per cell.
+  final Map<String, Map<String, dynamic>> _rostersAwaitingHandover = {};
+
+  /// Confirmations rejected because the confirming moderator was unknown;
+  /// re-checked when the founder's roster arrives (TD-33).
+  final Map<String, Map<String, dynamic>> _confirmationsAwaitingRoster = {};
+
+  void _rememberConfirmationAwaitingRoster(
+      String cellId, Map<String, dynamic> data) {
+    if (!_confirmationsAwaitingRoster.containsKey(cellId) &&
+        _confirmationsAwaitingRoster.length >= _maxPendingConfirmations) {
+      _confirmationsAwaitingRoster
+          .remove(_confirmationsAwaitingRoster.keys.first);
+    }
+    _confirmationsAwaitingRoster[cellId] = data;
   }
 
   /// Confirmations that arrived before the cell's announcement (discovered
@@ -1300,6 +1428,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Publishes a Kind-30000 cell-dissolution event (deleted:true) so that
   /// all member devices receive and clean up this cell automatically.
+  ///
+  /// This is the only event sent on dissolution. A NIP-09 Kind-5 for the
+  /// same address made relays reject this event ("deleted: user requested
+  /// deletion") whenever it arrived first, so other devices kept the cell.
   void publishNostrCellDissolution(Map<String, dynamic> cellJson) {
     _nostrTransport?.publishCellDissolution(cellJson);
     print('[CELL-DEL] Publishing cell deletion event: ${cellJson['id']}');
@@ -1333,7 +1465,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final myDid = IdentityService.instance.currentIdentity?.did;
     if (myDid == null) return;
     final cells = CellService.instance.myCells;
-    final founderCells = cells.where((c) => c.createdBy == myDid).toList();
+    final founderCells =
+        cells.where((c) => c.currentFounder == myDid).toList();
     if (founderCells.isEmpty) return;
     debugPrint('[CELL] Republishing ${founderCells.length} founder cell(s) to Nostr');
     for (final cell in founderCells) {
@@ -1467,7 +1600,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final age = nowSec - ts;
         debugPrint('[SYNC] Last seen timestamp: $ts  '
             '(${age}s ago = ${(age / 3600).toStringAsFixed(1)}h)');
-        debugPrint('[SYNC] Subscribing with since: ${ts - 60}  (buffer 60s)');
+        debugPrint('[SYNC] DMs and channels fetched with '
+            '${NostrTransport.catchUpOverlap.inDays} days overlap (Z-2)');
       } else {
         debugPrint('[SYNC] No saved timestamp – defaulting to since=${nowSec - 86400} '
             '(last 24 h)');
@@ -1481,7 +1615,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _saveNostrTimestamp(DateTime timestamp) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final epochSec = timestamp.millisecondsSinceEpoch ~/ 1000;
+      // Capped at now (audit Z-1): the timestamp comes from the sender.
+      final nowSec = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+      final sent = timestamp.millisecondsSinceEpoch ~/ 1000;
+      final epochSec = sent > nowSec ? nowSec : sent;
       final saved = prefs.getInt(_nostrTimestampKey) ?? 0;
       if (epochSec > saved) {
         await prefs.setInt(_nostrTimestampKey, epochSec);
@@ -1596,8 +1733,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // ── Incoming messages ──────────────────────────────────────────────────────
 
   Future<void> _onMessageReceived(NexusMessage msg) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    // A DM we sent ourselves, delivered back by the relays, e.g. from our
+    // other device (TD-57). It belongs to the conversation with the
+    // recipient and is shown as outgoing.
+    final isOwn =
+        !msg.isBroadcast && myDid.isNotEmpty && msg.fromDid == myDid;
+
     // Silent block: discard messages from blocked peers without any feedback.
     if (!msg.isBroadcast &&
+        !isOwn &&
         ContactService.instance.isBlocked(msg.fromDid)) {
       debugPrint('[CHAT] Message from blocked peer dropped: ${msg.fromDid}');
       return;
@@ -1608,7 +1753,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(_saveNostrTimestamp(msg.timestamp));
 
     // ── Key exchange: learn sender's encryption key ──────────────────────────
-    final encKeyFromMsg = msg.metadata?['enc_key'] as String?;
+    // In our own messages this is our own key, not the peer's.
+    final encKeyFromMsg = isOwn ? null : msg.metadata?['enc_key'] as String?;
     if (encKeyFromMsg != null && !msg.isBroadcast) {
       ContactService.instance.setEncryptionKey(msg.fromDid, encKeyFromMsg);
     }
@@ -1616,8 +1762,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // ── Decrypt if encrypted ─────────────────────────────────────────────────
     NexusMessage processedMsg = msg;
     if (msg.metadata?['encrypted'] == true && !msg.isBroadcast) {
-      final senderEncKeyHex =
-          encKeyFromMsg ?? ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
+      // X25519 is symmetric: our own message decrypts with the recipient's
+      // public key, a received one with the sender's.
+      final senderEncKeyHex = isOwn
+          ? ContactService.instance.findByDid(msg.toDid)?.encryptionPublicKey
+          : encKeyFromMsg ??
+              ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
       if (senderEncKeyHex != null) {
         final plaintext = await MessageEncryption.decrypt(
           msg.body,
@@ -1707,6 +1857,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Channel access system messages ────────────────────────────────────────
     final sysType = processedMsg.metadata?['sys_type'] as String?;
+    // Our own system and control DMs (contact requests, channel access, …)
+    // were already handled on the device that sent them (TD-57).
+    if (isOwn &&
+        (sysType != null || processedMsg.metadata?['type'] != null)) {
+      debugPrint('[SYNC] Own control DM ignored: ${processedMsg.id}');
+      return;
+    }
     if (sysType != null && sysType.startsWith('channel_')) {
       try {
         final bodyData =
@@ -1810,8 +1967,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
-
     // Determine conversation ID:
     //   - broadcast / #mesh → NexusMessage.broadcastDid ("broadcast")
     //   - named group channel (channel != '#mesh' and starts with '#') → channel name
@@ -1825,7 +1980,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         convId = NexusMessage.broadcastDid;
       }
     } else {
-      convId = _conversationId(processedMsg.fromDid, myDid);
+      convId = _conversationId(
+          isOwn ? processedMsg.toDid : processedMsg.fromDid, myDid);
     }
 
     debugPrint('[CHAT] Message received: convId=$convId  from=${processedMsg.fromDid}');
@@ -1871,8 +2027,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
 
     // ── Notifications ────────────────────────────────────────────────────────
-    // Don't notify if this exact conversation is open in the UI.
-    if (_activeConversationId != convId) {
+    // Don't notify if this exact conversation is open in the UI, nor for
+    // our own messages from another device.
+    if (!isOwn && _activeConversationId != convId) {
       final contact = ContactService.instance.findByDid(processedMsg.fromDid);
       final muted = !processedMsg.isBroadcast &&
           ContactService.instance.isMuted(processedMsg.fromDid);
@@ -1959,6 +2116,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     notifyListeners();
+  }
+
+  /// Adds a message we just sent to [cache]. If the relays already echoed
+  /// it back (TD-57: own DMs are subscribed), the echo is replaced by the
+  /// local version, which carries plaintext and local file paths.
+  static void _putOwnMessage(List<NexusMessage> cache, NexusMessage msg) {
+    final index = cache.indexWhere((m) => m.id == msg.id);
+    if (index == -1) {
+      cache.add(msg);
+    } else {
+      cache[index] = msg;
+    }
   }
 
   Future<void> _persistMessage(String convId, NexusMessage msg) async {
@@ -2217,7 +2386,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final storedMsg = _withSentNostrEventId(localMsg);
     final convId = _conversationId(recipientDid, myDid);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
@@ -2532,7 +2701,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
@@ -2562,7 +2731,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final convId = _conversationId(recipientDid, myDid);
     final storedMsg = _withSentNostrEventId(msg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
     notifyListeners();
@@ -2588,11 +2757,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _nostrTransport?.publishDeletion(eventId!);
-  }
-
-  /// Publishes a Kind-5 deletion event for a cell (NIP-09 `a`-tag approach).
-  void publishNostrCellDeletion(String cellId, String cellName) {
-    _nostrTransport?.publishCellDeletion(cellId, cellName);
   }
 
   /// Sends a voice message to [recipientDid].
@@ -2701,7 +2865,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final convId = _conversationId(recipientDid, myDid);
     final storedMsg = _withSentNostrEventId(localMsg);
     _conversationCache.putIfAbsent(convId, () => []);
-    _conversationCache[convId]!.add(storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, storedMsg);
     await _persistMessage(convId, storedMsg);
     ConversationService.instance.notifyUpdate();
 
@@ -3156,9 +3320,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Adds a custom Nostr relay URL.
-  void addNostrRelay(String url) {
-    _nostrTransport?.addRelay(url);
+  /// Adds and persists a custom Nostr relay URL (TD-47).
+  ///
+  /// Returns `false` if [url] is not a valid `wss://`/`ws://` relay URL.
+  Future<bool> addNostrRelay(String url) async {
+    final normalized = await addCustomRelay(url);
+    if (normalized == null) return false;
+    _nostrTransport?.addRelay(normalized);
+    print('[RELAY-CONFIG] Added relay $normalized');
+    notifyListeners();
+    return true;
+  }
+
+  /// Removes a custom Nostr relay. Default relays stay.
+  Future<void> removeNostrRelay(String url) async {
+    if (isDefaultRelay(url)) return;
+    final removed = await removeCustomRelay(url);
+    await _nostrTransport?.removeRelay(normalizeRelayUrl(url) ?? url);
+    print('[RELAY-CONFIG] Removed relay $url (stored: $removed)');
     notifyListeners();
   }
 

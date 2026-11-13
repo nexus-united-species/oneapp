@@ -30,9 +30,9 @@ class CellRoster {
     final byDid = <String, CellRosterEntry>{};
     for (final m in members) {
       if (!m.isConfirmed) continue;
-      // Exactly one founder: the cell's createdBy. A local founder role of
-      // anyone else (e.g. after a device-local founder transfer, which is
-      // not synced) is listed as moderator so receivers can parse it.
+      // Exactly one founder: the cell's current founder (after a handover
+      // the new one, TD-33). A stale local founder role of anyone else is
+      // listed as moderator so receivers can parse it.
       final role = m.did == founderDid
           ? MemberRole.founder
           : (m.role == MemberRole.founder ? MemberRole.moderator : m.role);

@@ -30,6 +30,14 @@ class IdentityService {
   NexusIdentity? get currentIdentity => _current;
   bool get hasIdentity => _current != null;
 
+  /// The name generated from the public key, used when no name is known
+  /// (e.g. right after a seed restore). `null` without identity.
+  String? get generatedPseudonym {
+    final current = _current;
+    if (current == null) return null;
+    return PseudonymGenerator.fromBytes(_hexToBytes(current.publicKeyHex));
+  }
+
   /// Loads the existing identity from secure storage. Call at app startup.
   ///
   /// On Android, FlutterSecureStorage can throw a [PlatformException] when the

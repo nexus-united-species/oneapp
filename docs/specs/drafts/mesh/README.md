@@ -19,6 +19,13 @@ Duty Cycle in EU 868 — für Sync-Verkehr um Größenordnungen zu schmal. Dort 
 LoRa nur für signierte Kurzsignale vorgesehen (Präsenz-Beacons,
 Node-Bindungen), nicht als Transport.
 
+**Neu eingeordnet am 10.11.2026:** Wegen des Piloten mit LoRa-Repeatern auf
+Teneriffa wird Mesh als eigener, paralleler Zweig vorgezogen — Beginn
+frühestens ab Stufe C, entschieden wird nach Abschluss von Stufe B. Geplant
+ist ein schlanker Reticulum-Nachbau in Dart statt einer FFI-Brücke. Details
+und Schritte M0–M4: [NOW_NEXT_LATER.md](../../../planning/NOW_NEXT_LATER.md),
+Abschnitt „Mesh-Zweig“.
+
 ## Inhalt dieses Ordners
 
 | Datei | Thema |

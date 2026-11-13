@@ -210,8 +210,6 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
     await CellService.instance.deleteCell(cellId);
     if (mounted) {
       await context.read<ChatProvider>().deleteCellChannels(cellId);
-      // Kind-5 (NIP-09): asks relays to delete the original announcement.
-      context.read<ChatProvider>().publishNostrCellDeletion(cellId, cellName);
       // Kind-30000 with deleted:true + tag: notifies all member devices.
       context.read<ChatProvider>().publishNostrCellDissolution(cellJson);
     }
