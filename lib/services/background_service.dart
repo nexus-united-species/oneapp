@@ -136,11 +136,11 @@ void _onStart(ServiceInstance service) async {
     pubKeyHex = await storage.read(key: 'nostr_public_key');
     localDid = await storage.read(key: 'nexus_did');
     localPseudonym = await storage.read(key: 'nexus_pseudonym');
-    // Reconstruct NostrKeys from cached hex values (seed not needed if keys
-    // are already stored, which they always are after first launch).
-    if (pubKeyHex != null) {
-      nostrKeys = await NostrKeys.loadOrDerive(Uint8List(0));
-    }
+    // Reconstruct NostrKeys from cached hex values. Only ever loads what is
+    // already cached (audit F-004): without a seed phrase on hand, deriving
+    // from an empty one on a partial cache would persist a wrong identity.
+    nostrKeys = await NostrKeys.loadCachedOnly();
+    pubKeyHex = nostrKeys?.publicKeyHex ?? pubKeyHex;
   } catch (_) {}
 
   // ── Presence heartbeat ────────────────────────────────────────────────────

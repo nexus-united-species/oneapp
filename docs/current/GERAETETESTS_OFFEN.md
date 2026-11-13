@@ -25,7 +25,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Update-Signierung, noch nicht committet) | Auf einem Gerät „Nach Updates suchen“ (Einstellungen) | Kein Fehler, Verhalten wie gewohnt (version.json ist mit dem neuen Schlüssel signiert); Log zeigt kein `signature invalid` |
+| (Stufe-B-Restpunkte, noch nicht committet) | Laptop1 und Laptop2 (gleiche Identität): auf Laptop2 im Dorfplatz einen Post von Laptop1 mit 👍 reagieren | Laptop1 zeigt die Reaktion auch; keine Benachrichtigung „du hast reagiert“; kein doppelter Eintrag |
+| 3557e5b | Auf einem Gerät „Nach Updates suchen“ (Einstellungen) | Kein Fehler, Verhalten wie gewohnt (version.json ist mit dem neuen Schlüssel signiert); Log zeigt kein `signature invalid` |
 | 70058c6 | Handy: zwischen WLAN und Mobilfunk wechseln (WLAN aus, warten, WLAN an), danach Nachricht an Laptop1 | Nachricht kommt an; Log zeigt `reconnect in …s (attempt …)` mit wachsenden Pausen statt fester 10 s, nach der Verbindung `connected` |
 | 6a980b9 | Laptop1 WLAN aus: einer Gemeinschaft des Handys eine Beitrittsanfrage stellen, dann WLAN wieder an | Die Anfrage kommt nach dem Wiederverbinden beim Handy an (Log Laptop1 `[OUTBOX] Queued kind=31003`, später `Flush: … delivered`) |
 | 0d2d2de | Laptop1 WLAN aus: im Direktgespräch ein Bild und eine Sprachnachricht, in einem Kanal einen Text schicken; dann WLAN wieder an | Alles bleibt mit „wartet“ stehen und geht nach dem Wiederverbinden raus; „wartet“ verschwindet |

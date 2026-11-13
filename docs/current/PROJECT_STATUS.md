@@ -56,7 +56,7 @@ Entwurf beziehungsweise Platzhalter und kein aktives Produktmodul.
 
 ## Testbaseline (13.11.2026)
 
-- `flutter test`: alle 1864 Tests grün. Ausnahme: LAN-Discovery-Tests
+- `flutter test`: alle 1878 Tests grün. Ausnahme: LAN-Discovery-Tests
   schlagen fehl, wenn eine Windows-App im selben Netz läuft (TD-25).
 - `flutter analyze`: keine Fehler; Hinweise und Warnungen als Baseline.
 - CI (`.github/workflows/ci.yml`, Windows-Runner): `flutter analyze` (bricht nur

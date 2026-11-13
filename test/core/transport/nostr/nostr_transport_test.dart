@@ -518,6 +518,32 @@ void main() {
       await stopTransport(transport, relay);
     });
 
+    test(
+        'a reaction signed with the local key is forwarded, not dropped '
+        '(audit TD-71: a second device of the same identity shares the key)',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final reactions = <Map<String, dynamic>>[];
+      final subscription = transport.onFeedReaction.listen(reactions.add);
+      final aliceKeys = keysFor(aliceMnemonic);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: aliceKeys,
+        kind: NostrKind.reaction,
+        content: '👍',
+        tags: const [
+          ['e', validTargetEventId],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reactions, hasLength(1));
+      expect(reactions.single['senderPubkey'], aliceKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
     // ── F-001 REWORK: message deletion (Kind-5, NIP-09) ───────────────────
 
     test('publishDeletion emits one Kind-5 with the exact valid e-tag',

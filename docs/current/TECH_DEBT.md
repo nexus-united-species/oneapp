@@ -25,7 +25,7 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 | ID | Thema | Stand |
 |---|---|---|
-| TD-32 | `allVotes` auf Empfängergeräten leer | Fallback auf lokale Votes; delegierte Detailstimmen können fehlen |
+| TD-32 | `allVotes` auf Empfängergeräten leer | bewusster Phase-4.5c-Scope-Cut (dokumentiert in `proposal_detail_screen.dart`); Fallback auf lokale Votes zeigt direkte Stimmen korrekt, nur delegierte Detailstimmen fehlen in der Liste; Summen/Ergebnis sind unberührt |
 | TD-33-Rest | Mitgliederliste und Übergabe | Moderatoren-Änderungen erreichen andere über die Liste erst, wenn der Gründer online ist; ein Gerät, das die Zelle neu entdeckt, kennt eine Übergabe erst nach der ersten Mitgliederliste. „Moderatorenrolle entziehen“ fehlt; Übergabe in der Oberfläche versteckt (Zahnrad, lange drücken) |
 | TD-37/38/41 | Eingefrorene Liste, Retry, eigene Auszählung (09.11.2026) | Gerätetests offen; Hash-Kette bleibt geräteabhängig und ist keine Manipulationsprüfung |
 | TD-43 | Backup-Restore stellt Zellmitgliedschaften nicht vollständig her | Restore kann Gemeinschaft zeigen, aber lokale Mitgliedschaft verlieren |
@@ -43,14 +43,10 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 |---|---|---|
 | TD-25 | LAN-Discovery-Tests hängen vom Netz ab | rot, solange eine Windows-App im selben Netz läuft (sie empfangen deren echte Ankündigung auf UDP 51000); sonst ist die Suite grün (13.11.2026: 1838 Tests). Für CI die Tests vom echten Netz trennen |
 | TD-28 | `publish_results.vote_id` polymorph | später in `payload_id` umbenennen |
-| TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | nur gecachte vollständige Keys akzeptieren |
-| TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Abstimmung ohne Pubkey ablehnen |
-| TD-46 | Geräteübergreifende Idempotenz teils in SharedPreferences | nach Reset/Zweitgerät sind doppelte Auto-Aktionen möglich |
+| TD-46 | Geräteübergreifende Idempotenz teils in SharedPreferences | nach Reset/Zweitgerät sind doppelte Auto-Aktionen möglich; laut [ADR-0002](../decisions/ADR-0002-geraet-und-person.md) auch ohne Geräte-Identität lösbar, aber eigener, noch nicht geschnittener Schritt |
 | TD-47-Rest | `nos.lol` begrenzt Events auf 128 KB | große Bilder erreichen nur die anderen Relays, bis TD-64 |
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen (Z-9) |
 | TD-64 | Medien inline als Base64 in Events | keine Videos oder Dateien; Lösung über Medienserver (Blossom) |
-| TD-65 | Verdacht: veralteter Nostr-Schlüssel im Hintergrunddienst | nicht am Gerät bestätigt; verwandt mit TD-44 |
-| TD-71 | Reaktionen vom eigenen Zweitgerät werden nicht übertragen | eigene Kind-7-Events werden verworfen |
 | TD-78 | Keine Anmeldung nach NIP-42 am eigenen Relay | DMs sind für jeden abrufbar, der den Empfänger kennt (Block 4) |
 | S-3-Rest | LAN | Inhalt ohne bekannten Schlüssel weiter unverschlüsselt; UDP-Ankündigung nennt die DID ungeprüft (nur Erreichbarkeit) |
 | Z-8 | BLE und LAN sind Direktverbindungen | kein Weiterleiten (Mesh-Zweig) |
@@ -79,7 +75,11 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
   Schritte), S-2, S-3/C-4, S-4 (Medien und neuer Kanalschlüssel beim
   Entfernen), Z-1/Z-2.
 - 13.11.2026: Debug-Keystore gesichert (R-1, Teil 1); Dokumentation
-  berichtigt (D-1, D-2), Verlauf ausgelagert.
+  berichtigt (D-1, D-2), Verlauf ausgelagert; `version.json` signiert
+  (TD-61); 5 rote Tests repariert; CI angelegt; Chat ohne Bluetooth (Z-7);
+  Zustellstatus für alle Nachrichtenarten (Z-3/Z-4); Warteschlange für alle
+  wichtigen Ereignisse (Z-5); Relay-Reconnect mit Backoff und Ping (Z-6);
+  Stufe-B-Restpunkte Teil 1 (TD-44, TD-45, TD-65, TD-71), Gerätetest offen.
 
 ## Quellen
 

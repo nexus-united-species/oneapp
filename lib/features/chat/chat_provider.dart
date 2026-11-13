@@ -352,6 +352,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Wire FeedService to the Nostr transport for publishing and receiving.
       FeedService.instance.setNostrPublisher((kind, content, tags) =>
           _nostrTransport?.publishFeedEvent(kind, content, tags));
+      FeedService.instance.getMyNostrPubkeyHex =
+          () => _nostrTransport?.localNostrPubkeyHex;
       _nostrTransport!.onFeedPost
           .listen((data) => FeedService.instance.handleIncomingPost(data));
       _nostrTransport!.onFeedComment

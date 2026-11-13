@@ -667,3 +667,36 @@ Liste:
   - Tests signieren ihre Testdaten mit einem eigenen Wegwerf-Schlüssel
     (`publicKeyHexOverride`, nur für Tests), nie mit dem echten privaten
     Schlüssel.
+
+- **Stufe-B-Restpunkte, Teil 1 (13.11.2026, Gerätetest offen): TD-44,
+  TD-45, TD-65, TD-71.**
+  - **TD-44 / F-004 behoben:** Der Android-Hintergrunddienst rief
+    `NostrKeys.loadOrDerive(Uint8List(0))` mit leerem Seed auf. Lag nur
+    der öffentliche Schlüssel im Secure Storage (Teilverlust), hätte das
+    aus dem leeren Seed einen falschen Schlüssel abgeleitet **und
+    gespeichert** — eine verfälschte Identität. Neuer, strikter Lader
+    `NostrKeys.loadCachedOnly()` gibt `null` zurück, wenn nicht beide
+    Schlüssel vorliegen, leitet nie ab und schreibt nie.
+  - **TD-65 ebenfalls behoben, dabei die eigentliche Ursache gefunden:**
+    Nichts im Code schrieb `nostr_private_key`/`nostr_public_key` jemals
+    in den Secure Storage — der Hintergrunddienst fand dort also nie
+    etwas, unabhängig vom TD-44-Fix. `NostrTransport.initKeys` sichert
+    den gerade abgeleiteten echten Schlüssel jetzt bei jedem Start
+    (`NostrKeys.cacheForBackground`), überschreibt dabei immer, damit
+    ein Kontowechsel auf demselben Gerät keinen alten Schlüssel
+    zurücklässt.
+  - **TD-45 / F-005 behoben:** `castVote` prüft jetzt vor jeder
+    Zustandsänderung, ob der eigene Nostr-Pubkey bekannt ist, und wirft
+    sonst einen `StateError`, bevor etwas gespeichert oder eine
+    Delegation automatisch widerrufen wird. Vorher hätte eine Stimme mit
+    leerem `voterPubkey` über `UNIQUE(proposal_id, voter_pubkey)` die
+    Stimme einer anderen Person überschreiben können.
+  - **TD-71 behoben:** Der Transport verwarf jedes Kind-7 mit dem
+    eigenen Schlüssel — auch von einem zweiten Gerät derselben
+    Identität (gleicher Seed, gleicher Nostr-Schlüssel), analog zu den
+    eigenen DMs (TD-57). Eigene Reaktionen werden jetzt zugestellt; neue
+    Hilfsfunktionen `resolveFeedReactorId`
+    (`message_reaction_policy.dart`) ordnen den Signaturschlüssel der
+    eigenen DID zu, damit es dieselbe Zeile bleibt statt einer
+    doppelten „Gefällt mir“; eine Benachrichtigung über die eigene
+    Reaktion bleibt aus.

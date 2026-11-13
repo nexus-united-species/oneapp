@@ -65,6 +65,43 @@ class NostrKeys {
     return keys;
   }
 
+  /// Persists [keys] to secure storage so the Android background isolate
+  /// (no seed phrase at hand) can read them via [loadCachedOnly] (audit
+  /// TD-65). Call once after deriving the real keypair from the seed phrase
+  /// (app start, identity restore); always overwrites, so a switch to a
+  /// different identity on the same device never leaves a stale cached key
+  /// behind for the background isolate to pick up.
+  static Future<void> cacheForBackground(
+    NostrKeys keys, {
+    FlutterSecureStorage? storage,
+  }) async {
+    final store = storage ?? const FlutterSecureStorage();
+    await store.write(key: _keyNostrPriv, value: _bytesToHex(keys.privateKey));
+    await store.write(key: _keyNostrPub, value: _bytesToHex(keys.publicKey));
+  }
+
+  /// Loads the keypair from secure storage only when BOTH values are
+  /// cached; never derives from a seed and never writes (audit F-004).
+  ///
+  /// The Android background isolate has no seed phrase at hand. Calling
+  /// [loadOrDerive] there with an empty seed would, if only the public key
+  /// survived (a partial cache state), silently derive and persist a wrong
+  /// private key from that empty seed — a corrupted identity. This loader
+  /// returns null instead, so the caller can skip Nostr in the background
+  /// rather than adopt a bogus key pair.
+  static Future<NostrKeys?> loadCachedOnly({
+    FlutterSecureStorage? storage,
+  }) async {
+    final store = storage ?? const FlutterSecureStorage();
+    final privHex = await store.read(key: _keyNostrPriv);
+    final pubHex = await store.read(key: _keyNostrPub);
+    if (privHex == null || pubHex == null) return null;
+    return NostrKeys._(
+      Uint8List.fromList(_hexToBytes(privHex)),
+      Uint8List.fromList(_hexToBytes(pubHex)),
+    );
+  }
+
   // ── Public API ────────────────────────────────────────────────────────────
 
   /// Public key encoded as npub bech32 string.

@@ -532,6 +532,13 @@ class NostrTransport implements MessageTransport {
   /// Must be called before the transport can send/receive DMs.
   Future<void> initKeys(Uint8List seed64) async {
     _keys = NostrKeys.fromBip39Seed(seed64);
+    // Refreshes the cache the background isolate reads (audit TD-65): on
+    // every (re-)init with the real seed, not just the first one, so a
+    // switch to a different identity never leaves a stale key behind for
+    // it to pick up. Best-effort — a failure here must not block startup.
+    unawaited(NostrKeys.cacheForBackground(_keys!).catchError((Object e) {
+      print('[NOSTR] Could not cache keys for background isolate: $e');
+    }));
     print('[NOSTR] Keys initialised, pubkey: ${_keys!.publicKeyHex}');
     if (_state == TransportState.connected) {
       _setupSubscriptions();
@@ -2719,9 +2726,14 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  /// Own-pubkey events are intentionally forwarded (audit TD-71): devices
+  /// of the same identity share the Nostr keypair (same seed phrase), so a
+  /// reaction added on one device must reach the others. The receiver
+  /// resolves the signer to its own DID and stores it idempotently under
+  /// the same key the sending device already used, so this is a no-op on
+  /// the very device that published the reaction, not a duplicate.
   void _handleReaction(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own reaction
     final referencedEventId = event.tagValue('e');
     if (referencedEventId == null || !isValidNostrEventId(referencedEventId)) {
       print('[REACTION-RECV] Kind-7 received with invalid e-tag — ignored');
