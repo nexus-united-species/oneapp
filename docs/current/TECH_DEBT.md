@@ -39,7 +39,7 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 
 | ID | Thema | Hinweis |
 |---|---|---|
-| TD-25 | Rote Tests | 5 Tests in `transport_manager_test.dart` (Sende-Kaskade, LAN-Vorrang) schlagen auch auf unverändertem Stand fehl; LAN-Discovery-Tests rot, solange eine Windows-App im selben Netz läuft |
+| TD-25 | LAN-Discovery-Tests hängen vom Netz ab | rot, solange eine Windows-App im selben Netz läuft (sie empfangen deren echte Ankündigung auf UDP 51000); sonst ist die Suite grün (13.11.2026: 1838 Tests). Für CI die Tests vom echten Netz trennen |
 | TD-28 | `publish_results.vote_id` polymorph | später in `payload_id` umbenennen |
 | TD-44 / F-004 | Background-Isolate kann aus leerem Seed ableiten | nur gecachte vollständige Keys akzeptieren |
 | TD-45 / F-005 | Vote mit leerem `voterPubkey` möglich | Abstimmung ohne Pubkey ablehnen |

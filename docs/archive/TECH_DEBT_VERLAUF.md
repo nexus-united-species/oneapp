@@ -574,3 +574,10 @@ Liste:
   (`channelKeyChangeDecision`). Frühere Schlüssel bleiben zum Entschlüsseln
   älterer Beiträge erhalten (`GroupChannel.previousSecrets`, höchstens 10)
   und werden nie veröffentlicht.
+
+- **TD-25: TransportManager-Tests grün (13.11.2026):** Die 5 roten Tests in
+  `transport_manager_test.dart` schickten Rundrufe und erwarteten die
+  frühere Kaskade (erster Weg gewinnt). Rundrufe gehen aber absichtlich
+  über alle Wege; nur gezielte Nachrichten laufen als Kaskade. Die Tests
+  nutzen jetzt gezielte Nachrichten, ein neuer Test prüft den Rundruf über
+  alle Wege. Der App-Code war richtig. Volle Suite: 1838 Tests grün.

@@ -56,10 +56,8 @@ Entwurf beziehungsweise Platzhalter und kein aktives Produktmodul.
 
 ## Testbaseline (13.11.2026)
 
-- `flutter test`: 1832 bestanden, 5 fehlgeschlagen. Die 5 Fehler liegen in
-  `transport_manager_test.dart` (Sende-Kaskade, LAN-Vorrang) und bestehen
-  auch auf unverändertem Stand (TD-25). LAN-Discovery-Tests schlagen
-  zusätzlich fehl, wenn eine Windows-App im selben Netz läuft.
+- `flutter test`: alle 1838 Tests grün. Ausnahme: LAN-Discovery-Tests
+  schlagen fehl, wenn eine Windows-App im selben Netz läuft (TD-25).
 - `flutter analyze`: keine Fehler; Hinweise und Warnungen als Baseline.
 - Es gibt noch keine CI (Block 2).
 

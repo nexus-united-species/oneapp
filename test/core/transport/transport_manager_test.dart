@@ -115,6 +115,11 @@ Future<NexusMessage> _signedMessage(
 
 const _settle = Duration(milliseconds: 200);
 
+/// A directed message to Bob. Directed messages cascade through the
+/// transports (first success wins); broadcasts go out on every transport.
+NexusMessage _toBob(String body) => NexusMessage.create(
+    fromDid: 'did:key:zA', toDid: 'did:key:zBob', body: body);
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
@@ -164,11 +169,30 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hello');
-      await manager.sendMessage(msg);
+      await manager.sendMessage(_toBob('hello'), recipientDid: 'did:key:zBob');
 
       expect(ble.sent, hasLength(1));
       expect(nostr.sent, isEmpty);
+    });
+
+    test('a broadcast goes out on every transport', () async {
+      final manager = _freshManager();
+      final ble = FakeTransport(type: TransportType.ble);
+      final nostr = FakeTransport(type: TransportType.nostr, shouldFailSend: true);
+      final lan = FakeTransport(type: TransportType.lan);
+
+      manager
+        ..registerTransport(ble)
+        ..registerTransport(nostr)
+        ..registerTransport(lan);
+      await manager.start();
+
+      await manager.sendMessage(
+          NexusMessage.create(fromDid: 'did:key:zA', body: 'an alle'));
+
+      expect(ble.sent, hasLength(1));
+      expect(lan.sent, hasLength(1),
+          reason: 'one failing transport does not stop the others');
     });
 
     test('falls back to Nostr when BLE send fails', () async {
@@ -181,9 +205,8 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zA', body: 'fallback');
-      await manager.sendMessage(msg);
+      await manager.sendMessage(_toBob('fallback'),
+          recipientDid: 'did:key:zBob');
 
       expect(nostr.sent, hasLength(1));
     });
@@ -200,9 +223,8 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'none');
       await expectLater(
-        manager.sendMessage(msg),
+        manager.sendMessage(_toBob('none'), recipientDid: 'did:key:zBob'),
         throwsA(isA<StateError>()),
       );
     });
@@ -210,10 +232,8 @@ void main() {
     test('throws when no transport is registered', () async {
       final manager = _freshManager();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zA', body: 'nobody');
       await expectLater(
-        manager.sendMessage(msg),
+        manager.sendMessage(_toBob('nobody'), recipientDid: 'did:key:zBob'),
         throwsA(isA<StateError>()),
       );
     });
@@ -237,8 +257,7 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hi Bob');
-      await manager.sendMessage(msg, recipientDid: 'did:key:zBob');
+      await manager.sendMessage(_toBob('hi Bob'), recipientDid: 'did:key:zBob');
 
       expect(lan.sent, hasLength(1), reason: 'LAN should be preferred');
       expect(ble.sent, isEmpty);
@@ -261,9 +280,8 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hi Bob');
-      // Send broadcast (no recipientDid) → should go via BLE (first registered)
-      await manager.sendMessage(msg);
+      // Bob is not on LAN → registration order, BLE first.
+      await manager.sendMessage(_toBob('hi Bob'), recipientDid: 'did:key:zBob');
 
       expect(ble.sent, hasLength(1));
       expect(lan.sent, isEmpty);
