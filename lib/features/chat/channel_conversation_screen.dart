@@ -24,6 +24,7 @@ import 'channel_access_service.dart';
 import 'channel_admin_screen.dart';
 import 'channel_share_sheet.dart';
 import 'chat_provider.dart';
+import 'delivery_indicator.dart';
 import 'conversation_screen.dart';
 import 'conversation_service.dart';
 import 'group_channel.dart';
@@ -1374,7 +1375,11 @@ class _ChannelMessageBubble extends StatelessWidget {
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
-                children: [bubble, reactions],
+                children: [
+                  bubble,
+                  DeliveryIndicator(message: msg),
+                  reactions,
+                ],
               ),
             ),
           ],

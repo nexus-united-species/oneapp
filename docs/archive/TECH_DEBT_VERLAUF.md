@@ -611,3 +611,14 @@ Liste:
   Fehler; der `TransportManager` gibt zurück, welcher Weg die Nachricht
   übernommen hat. Ältere Nachrichten (Status `pending`) zeigen keinen
   Zustand.
+
+- **Zustellstatus für alle Chatnachrichten (13.11.2026, Gerätetest offen):**
+  Bilder, Sprachnachrichten, weitergeleitete Bilder, Kanal- und
+  #mesh-Beiträge laufen jetzt wie Text-Direktnachrichten über einen
+  gemeinsamen Ablauf (`_storeThenSend`): erst speichern, dann senden, Status
+  setzen. Kanalbeiträge warten auf die Annahme durch ein Relay (Outbox),
+  #mesh-Rundrufe zählen nach der Übergabe als gesendet. Die Anzeige
+  (`DeliveryIndicator`: Uhr „wartet“, rot „Nicht gesendet – erneut senden“)
+  steht in Direktgesprächen und Kanälen unter jeder eigenen Nachricht.
+  „Erneut senden“ funktioniert für Text, Bilder und Sprachnachrichten in
+  allen drei Gesprächsarten.

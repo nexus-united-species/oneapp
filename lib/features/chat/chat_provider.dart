@@ -2437,11 +2437,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    // Save first, then send (audit Z-3): the message exists locally even if
-    // every transport fails, and shows its delivery state (Z-4).
-    final convId = _conversationId(recipientDid, myDid);
-    final pendingMsg = localMsg.copyWith(metadata: {
-      ...?localMsg.metadata,
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: localMsg,
+      wire: transportMsg,
+      recipientDid: recipientDid,
+    );
+  }
+
+  /// Saves [local] in [convId] as „sending“, hands [wire] to the transports
+  /// and records the outcome (audit Z-3/Z-4): the message exists even if
+  /// every transport fails. A directed message waits for a relay when Nostr
+  /// took it; a channel post waits when it went into the relay outbox;
+  /// #mesh broadcasts are fire-and-forget and count as sent.
+  Future<void> _storeThenSend({
+    required String convId,
+    required NexusMessage local,
+    required NexusMessage wire,
+    String? recipientDid,
+  }) async {
+    final pendingMsg = local.copyWith(metadata: {
+      ...?local.metadata,
       localDeliveryMetaKey: DeliveryState.sending.value,
     });
     _conversationCache.putIfAbsent(convId, () => []);
@@ -2454,31 +2470,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     TransportType? deliveredVia;
     try {
       deliveredVia =
-          await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
+          await _manager.sendMessage(wire, recipientDid: recipientDid);
     } catch (e) {
-      debugPrint('[DELIVERY] ${localMsg.id} not sent: $e');
-      await _setDelivery(convId, localMsg.id, DeliveryState.failed);
+      debugPrint('[DELIVERY] ${local.id} not sent: $e');
+      await _setDelivery(convId, local.id, DeliveryState.failed);
       return;
     }
 
     // Keep the outer Nostr event ID produced from the wire copy.
-    final withEventId = _withSentNostrEventId(localMsg);
+    final withEventId = _withSentNostrEventId(local);
     final eventId = withEventId.nostrEventId;
     if (eventId != null) {
       await PodDatabase.instance
-          .attachNostrEventId(localMsg.id, withEventId.toJson());
-      _updateCachedMessage(convId, localMsg.id,
+          .attachNostrEventId(local.id, withEventId.toJson());
+      _updateCachedMessage(convId, local.id,
           (m) => m.withNostrEventId(eventId));
     }
-    await _setDelivery(
-      convId,
-      localMsg.id,
-      deliveryAfterHandOff(
-        deliveredVia,
-        relayAlreadyAccepted:
-            eventId != null && _acceptedEventIds.contains(eventId),
-      ),
-    );
+    final accepted = eventId != null && _acceptedEventIds.contains(eventId);
+    final DeliveryState state;
+    if (recipientDid != null && recipientDid != NexusMessage.broadcastDid) {
+      state = deliveryAfterHandOff(deliveredVia, relayAlreadyAccepted: accepted);
+    } else {
+      final viaOutbox = wire.channel != null &&
+          wire.channel != '#mesh' &&
+          eventId != null;
+      state = viaOutbox && !accepted ? DeliveryState.sending : DeliveryState.sent;
+    }
+    await _setDelivery(convId, local.id, state);
   }
 
   /// Sets the delivery state of an own message in cache and database.
@@ -2525,23 +2543,64 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Sends a failed text message again: the old copy is removed and the
-  /// text goes out as a new message (with its reply reference).
+  /// Sends a failed own message again: the old copy is removed and the
+  /// content goes out as a new message to the same conversation. Text keeps
+  /// its reply reference; voice is resent from its local file.
   Future<void> resendFailedMessage(NexusMessage msg) async {
     final myDid = IdentityService.instance.currentIdentity?.did ?? '';
-    if (msg.fromDid != myDid || msg.isBroadcast) return;
+    if (msg.fromDid != myDid) return;
     if (DeliveryState.fromValue(msg.metadata?[localDeliveryMetaKey] as String?) !=
         DeliveryState.failed) {
       return;
     }
-    final convId = _conversationId(msg.toDid, myDid);
-    await deleteMessageLocally(msg, convId);
-    final keep = <String, dynamic>{
-      for (final e in (msg.metadata ?? const <String, dynamic>{}).entries)
+    final channel = msg.channel;
+    final isMesh = msg.isBroadcast && (channel == null || channel == '#mesh');
+    final isChannel = msg.isBroadcast && !isMesh;
+    final convId = isMesh
+        ? NexusMessage.broadcastDid
+        : isChannel
+            ? channel!
+            : _conversationId(msg.toDid, myDid);
+    final meta = msg.metadata ?? const <String, dynamic>{};
+    final replyMeta = <String, dynamic>{
+      for (final e in meta.entries)
         if (e.key.startsWith('reply_to_')) e.key: e.value,
     };
-    await sendMessage(msg.toDid, msg.body,
-        extraMeta: keep.isEmpty ? null : keep);
+    final audioPath = meta['audio_local_path'] as String?;
+    final durationMs = (meta['duration_ms'] as num?)?.toInt() ?? 0;
+
+    await deleteMessageLocally(msg, convId);
+    switch (msg.type) {
+      case NexusMessageType.image:
+        if (isChannel) {
+          await sendImageToChannel(channel!, base64Decode(msg.body));
+        } else {
+          await sendImageBase64(isMesh ? NexusMessage.broadcastDid : msg.toDid,
+              msg.body,
+              meta: {
+                for (final key in const ['width', 'height', 'thumbnail', 'enc_key'])
+                  if (meta[key] != null) key: meta[key],
+              });
+        }
+      case NexusMessageType.voice:
+        if (audioPath == null) return;
+        if (isChannel) {
+          await sendVoiceToChannel(channel!, audioPath, durationMs);
+        } else if (isMesh) {
+          await sendVoiceBroadcast(audioPath, durationMs);
+        } else {
+          await sendVoice(msg.toDid, audioPath, durationMs);
+        }
+      default:
+        final extra = replyMeta.isEmpty ? null : replyMeta;
+        if (isChannel) {
+          await sendToChannel(channel!, msg.body, extraMeta: extra);
+        } else if (isMesh) {
+          await sendBroadcast(msg.body, extraMeta: extra);
+        } else {
+          await sendMessage(msg.toDid, msg.body, extraMeta: extra);
+        }
+    }
   }
 
   /// Sends a broadcast message to the #mesh channel.
@@ -2584,15 +2643,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       metadata: meta.isNotEmpty ? meta : null,
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
-    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+        convId: NexusMessage.broadcastDid, local: msg, wire: msg);
   }
 
   /// Sends a text message to a named group channel (e.g. "#teneriffa").
@@ -2627,8 +2679,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       metadata: wire.metadata,
     );
 
-    await _manager.sendMessage(wireMsg);
-
     // Store plaintext locally so the sender can read their own messages.
     final localMeta = <String, dynamic>{
       if (isChEnc) 'ch_enc': true,
@@ -2648,14 +2698,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           )
         : wireMsg;
 
-    final storedMsg = _withSentNostrEventId(localMsg);
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(convId: name, local: localMsg, wire: wireMsg);
   }
 
   /// Attaches the outer Nostr event ID generated for [message] while it was
@@ -2927,19 +2970,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg, recipientDid: recipientDid);
-
     final convId = recipientDid == NexusMessage.broadcastDid
         ? NexusMessage.broadcastDid
         : _conversationId(recipientDid, myDid);
 
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+        convId: convId, local: msg, wire: msg, recipientDid: recipientDid);
   }
 
   /// Forwards an already-base64-encoded image to [recipientDid].
@@ -2960,15 +2996,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       metadata: meta,
     );
 
-    await _manager.sendMessage(msg, recipientDid: recipientDid);
-
-    final convId = _conversationId(recipientDid, myDid);
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: msg,
+      wire: msg,
+      recipientDid: recipientDid,
+    );
   }
 
   /// Publishes a Nostr Kind-5 deletion event referencing [message]'s real
@@ -3094,16 +3127,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // No 'encrypted' flag → receiver plays audio directly.
     }
 
-    await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
-
-    final convId = _conversationId(recipientDid, myDid);
-    final storedMsg = _withSentNostrEventId(localMsg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: localMsg,
+      wire: transportMsg,
+      recipientDid: recipientDid,
+    );
   }
 
   /// Sends a voice broadcast to the #mesh channel (no E2E encryption).
@@ -3152,16 +3181,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     // The local file path stays on this device (public #mesh broadcast).
-    await _manager.sendMessage(msg.copyWith(
-        metadata: {...?msg.metadata}..remove('audio_local_path')));
-
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
-    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+      convId: NexusMessage.broadcastDid,
+      local: msg,
+      wire: msg.copyWith(
+          metadata: {...?msg.metadata}..remove('audio_local_path')),
+    );
   }
 
   /// The secret of [channel] when it is private, else null.
@@ -3169,9 +3194,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       channel != null && !channel.isPublic ? channel.channelSecret : null;
 
   /// Sends an image or voice post in [name]; in a private channel the
-  /// content and its metadata are encrypted (audit S-4). Returns the
-  /// plaintext message to store locally (with `ch_enc` for the lock icon).
-  Future<NexusMessage> _sendChannelMedia(NexusMessage msg, String name) async {
+  /// content and its metadata are encrypted (audit S-4). The plaintext copy
+  /// is stored first and shows its delivery state (audit Z-3/Z-4).
+  Future<void> _sendChannelMedia(NexusMessage msg, String name) async {
     final channel = GroupChannelService.instance.findByName(name);
     final wire = await sealChannelPayload(
       body: msg.body,
@@ -3179,19 +3204,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       channelId: channel?.id ?? name,
       channelSecret: _privateSecretOf(channel),
     );
-    await _manager.sendMessage(NexusMessage(
-      id: msg.id,
-      fromDid: msg.fromDid,
-      toDid: msg.toDid,
-      type: msg.type,
-      channel: msg.channel,
-      body: wire.body,
-      timestamp: msg.timestamp,
-      ttlHours: msg.ttlHours,
-      metadata: wire.metadata,
-    ));
-    if (!wire.encrypted) return msg;
-    return msg.copyWith(metadata: {...?msg.metadata, 'ch_enc': true});
+    await _storeThenSend(
+      convId: name,
+      local: wire.encrypted
+          ? msg.copyWith(metadata: {...?msg.metadata, 'ch_enc': true})
+          : msg,
+      wire: NexusMessage(
+        id: msg.id,
+        fromDid: msg.fromDid,
+        toDid: msg.toDid,
+        type: msg.type,
+        channel: msg.channel,
+        body: wire.body,
+        timestamp: msg.timestamp,
+        ttlHours: msg.ttlHours,
+        metadata: wire.metadata,
+      ),
+    );
   }
 
   /// Sends an image to a named group channel.
@@ -3215,14 +3244,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    final storedMsg =
-        _withSentNostrEventId(await _sendChannelMedia(msg, name));
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _sendChannelMedia(msg, name);
   }
 
   /// Sends a voice message to a named group channel.
@@ -3271,14 +3293,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    final storedMsg =
-        _withSentNostrEventId(await _sendChannelMedia(msg, name));
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _sendChannelMedia(msg, name);
   }
 
   /// Adds an emoji reaction to a channel message.
