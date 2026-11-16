@@ -322,10 +322,12 @@ class FeedService {
       final comment = FeedComment.fromJson(data);
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
 
-      if (comment.authorDid == myDid) return; // own comment
-
       await PodDatabase.instance.insertFeedComment(comment.toJson());
       _streamController.add(null);
+
+      // Own comment, e.g. written on our other device: stored above
+      // (idempotent by id), but no notification about ourselves.
+      if (comment.authorDid == myDid) return;
 
       final senderName = _senderName(comment.authorDid);
       final preview = _truncate(comment.content, 50);

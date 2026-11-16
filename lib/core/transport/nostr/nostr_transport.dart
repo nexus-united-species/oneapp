@@ -2701,9 +2701,11 @@ class NostrTransport implements MessageTransport {
     _delegationEventController.add(event);
   }
 
+  /// Own-pubkey posts are forwarded (device test 16.11.2026): our other
+  /// devices share the keypair, so a post written there must show up here.
+  /// FeedService drops the echo on the writing device by post id.
   void _handleFeedPost(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own event, already stored
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       _feedPostController.add({
@@ -2716,9 +2718,10 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  /// Own-pubkey comments are forwarded like posts (device test 16.11.2026);
+  /// FeedService stores them idempotently and never notifies about them.
   void _handleFeedComment(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own event
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       _feedCommentController.add({
@@ -3155,9 +3158,11 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  /// Own-pubkey posts are forwarded (device test 16.11.2026) so a channel
+  /// post written on our other device appears here; ChatProvider drops the
+  /// echo on the writing device by message id and never notifies about it.
   Future<void> _handleChannelMessageEvent(NostrEvent event) async {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return;
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
@@ -3177,6 +3182,16 @@ class NostrTransport implements MessageTransport {
     String label,
   ) async {
     final parsed = _withWrapperId(NexusMessage.fromJson(msgJson), event);
+    // Signed with our own key: only our own devices can have written it.
+    // It must carry our own DID; no proof check and no peer to learn.
+    if (event.pubkey == _keys!.publicKeyHex) {
+      if (!isOwnDeviceMessage(parsed.fromDid, localDid)) {
+        print('[SYNC] Own $label ${event.id.substring(0, 8)} ignored: '
+            'sender ${parsed.fromDid} is not us');
+        return null;
+      }
+      return parsed.withSenderCheck(NexusMessage.senderVerified);
+    }
     final check = await checkSender(
       proof: msgJson[IdentityProof.contentKey],
       signerPubkey: event.pubkey,
@@ -3321,7 +3336,6 @@ class NostrTransport implements MessageTransport {
 
   Future<void> _handleBroadcast(NostrEvent event) async {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return;
 
     // Must have nexus-mesh tag
     if (!event.tagValues('t').contains('nexus-mesh')) return;

@@ -25,22 +25,19 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| 64c4ed0 | Laptop1 und Laptop2 (gleiche Identität): auf Laptop2 im Dorfplatz einen Post von Laptop1 mit 👍 reagieren | Laptop1 zeigt die Reaktion auch; keine Benachrichtigung „du hast reagiert“; kein doppelter Eintrag |
 | 3557e5b | Auf einem Gerät „Nach Updates suchen“ (Einstellungen) | Kein Fehler, Verhalten wie gewohnt (version.json ist mit dem neuen Schlüssel signiert); Log zeigt kein `signature invalid` |
 | 70058c6 | Handy: zwischen WLAN und Mobilfunk wechseln (WLAN aus, warten, WLAN an), danach Nachricht an Laptop1 | Nachricht kommt an; Log zeigt `reconnect in …s (attempt …)` mit wachsenden Pausen statt fester 10 s, nach der Verbindung `connected` |
 | 6a980b9 | Laptop1 WLAN aus: einer Gemeinschaft des Handys eine Beitrittsanfrage stellen, dann WLAN wieder an | Die Anfrage kommt nach dem Wiederverbinden beim Handy an (Log Laptop1 `[OUTBOX] Queued kind=31003`, später `Flush: … delivered`) |
 | 0d2d2de | Laptop1 WLAN aus: im Direktgespräch ein Bild und eine Sprachnachricht, in einem Kanal einen Text schicken; dann WLAN wieder an | Alles bleibt mit „wartet“ stehen und geht nach dem Wiederverbinden raus; „wartet“ verschwindet |
 | 12c0636 | Laptop1 online: dem Handy schreiben | Nachricht erscheint sofort, kurz mit Uhr-Symbol, das nach Annahme durch ein Relay verschwindet |
 | 12c0636 | Laptop1 WLAN aus: dem Handy schreiben, dann WLAN wieder an | Nachricht bleibt mit Uhr-Symbol stehen (kein Verlust), nach dem Wiederverbinden verschwindet die Uhr und das Handy erhält die Nachricht |
-| 681fbbd | Handy: in den Android-Einstellungen der App Bluetooth/„Geräte in der Nähe“ verbieten, App neu starten | Chat funktioniert über Internet (Nachricht an Laptop1 kommt an); oben orangener Hinweis „Bluetooth ist nicht erlaubt …“; „Erlauben“ öffnet die App-Einstellungen. Danach wieder erlauben |
-| 7e540ef | Handy legt einen privaten Kanal an, Laptop1 und Laptop2 treten bei; Handy entfernt Laptop2 und schreibt danach eine Nachricht | Laptop1 liest die neue Nachricht; Laptop2 sieht sie nicht (bzw. nur „konnte nicht entschlüsselt werden“); ältere Nachrichten bleiben auf Laptop1 lesbar; Handy-Log `[CHAN-KEY] … members informed` |
+| 681fbbd | Optional (Alltag mit ausgeschaltetem Bluetooth läuft seit Tagen): Handy: in den Android-Einstellungen der App Bluetooth/„Geräte in der Nähe“ verbieten, App neu starten | Chat funktioniert über Internet (Nachricht an Laptop1 kommt an); oben orangener Hinweis „Bluetooth ist nicht erlaubt …“; „Erlauben“ öffnet die App-Einstellungen. Danach wieder erlauben |
+| 7e540ef | Braucht eine dritte Identität (Laptop1 und Laptop2 sind dieselbe): Handy legt einen privaten Kanal an, zwei andere Identitäten treten bei; Handy entfernt Laptop2 und schreibt danach eine Nachricht | Laptop1 liest die neue Nachricht; Laptop2 sieht sie nicht (bzw. nur „konnte nicht entschlüsselt werden“); ältere Nachrichten bleiben auf Laptop1 lesbar; Handy-Log `[CHAN-KEY] … members informed` |
 | e1e834b | Privaten Kanal mit Handy und Laptop1: Bild, Sprachnachricht und eine Antwort auf eine Nachricht schicken | Alles kommt an und ist sichtbar bzw. abspielbar, Antwortzitat wird angezeigt, Schloss-Symbol an den Nachrichten |
-| e1e834b | Laptop2 (alte ZIP) ist Mitglied im selben privaten Kanal | Text und Bild kommen an; Vorschaubild und Antwortzitat fehlen dort (erwartet) |
 | af026a8 | Handy und Laptop1 im selben WLAN, beide auf neuem Stand: einander schreiben (geht per LAN, wenn erreichbar) | Nachricht kommt an; kein `[S3-REJECT]` im Log |
 | 24ea9d3 | Handy und Laptop1 auf neuem Stand: im Kanal einer gemeinsamen Gemeinschaft schreiben | Kein Hinweis unter den neuen Beiträgen; Log ohne `[S1-REJECT]` |
 | 252b060 | Handy und Laptop1 auf neuem Stand starten, kurz warten | Log auf beiden `[NOSTR] Presence sender=verified`; kein `[S1-REJECT]` für das andere Gerät |
 | b3aa4b5 | Handy und Laptop1 auf neuem Stand: einander schreiben | Kein Hinweis unter den Nachrichten; Log `sender=verified` |
-| b3aa4b5 | Laptop2 mit der alten ZIP vom 11.11. schreibt dem Handy | Nachricht kommt auf dem Handy an, darunter in Orange „Absender nicht bestätigt“; Log `sender=unverified` |
 | 46aceec | Optional: Windows offline (WLAN aus), dem Handy eine Nachricht schreiben (bleibt in der Warteschlange); auf dem Handy derweil eine neuere Nachricht von jemand anderem empfangen und die App schließen; Windows wieder online, dann Handy-App starten | Die nachgereichte Nachricht von Windows erscheint auf dem Handy; Log `[SYNC] DMs and channels fetched with 7 days overlap` |
 | 208fa71 | Zwei Geräte derselben Identität: Kontakt auf Gerät 2 löschen, kurz danach auf Gerät 1 die Vertrauensstufe dieses Kontakts ändern; Gerät 1 neu starten | Der Kontakt bleibt auf Gerät 1 erhalten, auch nach dem Neustart, samt Notiz; auf Gerät 2 kommt er zurück |
 | 0f43b2f | Optional, braucht drei Identitäten: Handy gründet eine Gemeinschaft und ernennt Windows zum Moderator; ein drittes Gerät stellt eine Beitrittsanfrage, **Windows** bestätigt | Das dritte Gerät nimmt die Bestätigung an (Log `[ROSTER] Applicant roster …`, danach „Membership confirmed“) und sieht sofort alle Mitglieder |
@@ -57,6 +54,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
+| OWNPOSTHASH, 64c4ed0 | 16.11.2026 | Runde 3 (Laptop2 auf neuem Stand): Dorfplatz-Beitrag und Kanalbeitrag von Laptop1 erscheinen auf Laptop2 (vorher verworfen, behoben); Reaktion von Laptop2 erscheint auf Laptop1 ohne Benachrichtigung und ohne Doppel (TD-71) |
+| b3aa4b5, e1e834b | 16.11.2026 | Übersprungen: Laptop2 mit der alten ZIP erreichte die Relays nicht mehr (auch nach Korrektur der um 1 h vorgehenden Uhr). Prüfung ohne Nachweis durch Tests abgedeckt; Handy-Log zeigt `sender=unverified` für alte Nachrichten vom 12.11. (Anzeige fehlt dort, weil sie vor S-1 gespeichert wurden) |
 | c55900c | 16.11.2026 | Runde 1: „wartet“ verschwindet von selbst; Sprachnachricht im Kanal ohne Einfrieren; Gemeinschafts-Diskussion mit gemeinsamem Kanalschlüssel von beiden Seiten lesbar; Namen („Josh Richman“) statt DID-Bruchstück; Sprachnachricht nach Offline-Phase kommt zügig an; verlassene „test1211“ kommt nicht zurück; lokale Gemeinschaften ohne Standort sichtbar, Beitritt möglich |
 | 252b060 | 13.11.2026 | Handy-App im Hintergrund, DM von Laptop1 kommt an |
 | a6dbd7e | 12.11.2026 | Drei Standard-Relays verbunden; eigenes Relay übersteht den Neustart und lässt sich entfernen; eine Benachrichtigung im Hintergrund |

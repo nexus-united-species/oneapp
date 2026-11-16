@@ -2091,8 +2091,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Notifications ────────────────────────────────────────────────────────
     // Don't notify if this exact conversation is open in the UI, nor for
-    // our own messages from another device.
-    if (!isOwn && _activeConversationId != convId) {
+    // our own messages from another device (DMs and channel posts alike).
+    final isFromMe = myDid.isNotEmpty && processedMsg.fromDid == myDid;
+    if (!isFromMe && _activeConversationId != convId) {
       final contact = ContactService.instance.findByDid(processedMsg.fromDid);
       final muted = !processedMsg.isBroadcast &&
           ContactService.instance.isMuted(processedMsg.fromDid);

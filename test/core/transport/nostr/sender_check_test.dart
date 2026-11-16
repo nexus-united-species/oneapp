@@ -110,4 +110,20 @@ void main() {
       );
     });
   });
+
+  group('isOwnDeviceMessage (device test 16.11.2026)', () {
+    const me = 'did:key:z6MkMe';
+
+    test('a post from our other device carries our DID', () {
+      expect(isOwnDeviceMessage(me, me), isTrue);
+    });
+
+    test('our key with a foreign DID is not accepted as ours', () {
+      expect(isOwnDeviceMessage('did:key:z6MkOther', me), isFalse);
+    });
+
+    test('never without an own identity', () {
+      expect(isOwnDeviceMessage('', ''), isFalse);
+    });
+  });
 }

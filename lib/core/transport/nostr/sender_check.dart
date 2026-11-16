@@ -39,3 +39,11 @@ Future<SenderCheck> checkSender({
   }
   return SenderCheck.unverified;
 }
+
+/// Whether a public post signed with our own Nostr key really is ours.
+///
+/// Devices of the same identity share the keypair, so such a post was
+/// written on one of our devices and must carry our own DID. Anything else
+/// signed with our key is ignored (device test 16.11.2026).
+bool isOwnDeviceMessage(String claimedDid, String localDid) =>
+    localDid.isNotEmpty && claimedDid == localDid;

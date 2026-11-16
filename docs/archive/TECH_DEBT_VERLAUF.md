@@ -789,3 +789,14 @@ Liste:
   500 KB): Zu große Ereignisse gehen gar nicht erst raus, werden als
   endgültig abgelehnt gemeldet („Nicht gesendet“) und beim Nachsenden
   aus der Warteschlange entfernt.
+
+- **Zweitgerät sah eigene Beiträge vom anderen Gerät nicht (16.11.2026,
+  Gerätetest offen):** Ein Dorfplatz-Beitrag von Laptop1 kam auf Laptop2
+  (gleiche Identität) nicht an. Dorfplatz-Beiträge, Kommentare,
+  Kanalbeiträge und #mesh-Rundrufe mit dem eigenen Nostr-Schlüssel wurden
+  beim Empfang verworfen („schon gespeichert“) – das stimmt nur auf dem
+  schreibenden Gerät. Damit lief auch die Wiederherstellung eigener
+  Beiträge nach Seed-Restore ins Leere. Jetzt werden sie wie Reaktionen
+  (TD-71) durchgereicht: Sie müssen die eigene DID tragen
+  (`isOwnDeviceMessage`), das schreibende Gerät erkennt das Echo an der
+  ID, und über eigene Beiträge gibt es keine Benachrichtigung.
