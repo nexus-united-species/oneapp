@@ -57,7 +57,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
-| RUNDE1HASH | 16.11.2026 | Runde 1: „wartet“ verschwindet von selbst; Sprachnachricht im Kanal ohne Einfrieren; Gemeinschafts-Diskussion mit gemeinsamem Kanalschlüssel von beiden Seiten lesbar; Namen („Josh Richman“) statt DID-Bruchstück; Sprachnachricht nach Offline-Phase kommt zügig an; verlassene „test1211“ kommt nicht zurück; lokale Gemeinschaften ohne Standort sichtbar, Beitritt möglich |
+| c55900c | 16.11.2026 | Runde 1: „wartet“ verschwindet von selbst; Sprachnachricht im Kanal ohne Einfrieren; Gemeinschafts-Diskussion mit gemeinsamem Kanalschlüssel von beiden Seiten lesbar; Namen („Josh Richman“) statt DID-Bruchstück; Sprachnachricht nach Offline-Phase kommt zügig an; verlassene „test1211“ kommt nicht zurück; lokale Gemeinschaften ohne Standort sichtbar, Beitritt möglich |
 | 252b060 | 13.11.2026 | Handy-App im Hintergrund, DM von Laptop1 kommt an |
 | a6dbd7e | 12.11.2026 | Drei Standard-Relays verbunden; eigenes Relay übersteht den Neustart und lässt sich entfernen; eine Benachrichtigung im Hintergrund |
 | 0f43b2f | 12.11.2026 | Gründer-Übergabe Handy → Windows, auch mit Flugmodus (Bedienung versteckt: Zahnrad, lange drücken) |
