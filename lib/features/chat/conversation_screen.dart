@@ -31,6 +31,7 @@ import '../contacts/contact_detail_screen.dart';
 import '../contacts/widgets/trust_badge.dart';
 import 'chat_provider.dart';
 import 'delivery_indicator.dart';
+import 'delivery_status.dart';
 import 'conversation.dart';
 import 'conversation_service.dart';
 import 'voice_player.dart';
@@ -1378,9 +1379,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         // Refresh when new messages arrive
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           final fresh = await provider.getMessages(_convId);
-          if (mounted && fresh.length != _messages.length) {
+          if (mounted && messageListChanged(_messages, fresh)) {
+            final grew = fresh.length != _messages.length;
             setState(() => _messages = List.from(fresh));
-            if (!_showScrollDown) _scrollToBottom();
+            if (grew && !_showScrollDown) _scrollToBottom();
           }
         });
 

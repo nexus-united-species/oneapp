@@ -52,4 +52,35 @@ void main() {
       throwsA(isA<StateError>()),
     );
   });
+
+  group('messageListChanged (device test 14.11.2026)', () {
+    NexusMessage msg(String id, String? state) => NexusMessage(
+          id: id,
+          fromDid: 'did:key:a',
+          toDid: 'did:key:b',
+          type: NexusMessageType.text,
+          body: 'x',
+          timestamp: DateTime.utc(2026, 11, 14),
+          metadata: state == null ? null : {localDeliveryMetaKey: state},
+        );
+
+    test('a delivery state change alone triggers a refresh', () {
+      expect(
+        messageListChanged(
+            [msg('1', DeliveryState.sending.value)], [msg('1', null)]),
+        isTrue,
+        reason: '„wartet“ must disappear without leaving the chat',
+      );
+    });
+
+    test('identical lists do not refresh (no rebuild loop)', () {
+      expect(messageListChanged([msg('1', null)], [msg('1', null)]), isFalse);
+    });
+
+    test('new or replaced messages refresh', () {
+      expect(messageListChanged([msg('1', null)], [msg('1', null), msg('2', null)]),
+          isTrue);
+      expect(messageListChanged([msg('1', null)], [msg('2', null)]), isTrue);
+    });
+  });
 }

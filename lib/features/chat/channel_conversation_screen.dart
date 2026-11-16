@@ -25,6 +25,7 @@ import 'channel_admin_screen.dart';
 import 'channel_share_sheet.dart';
 import 'chat_provider.dart';
 import 'delivery_indicator.dart';
+import 'delivery_status.dart';
 import 'conversation_screen.dart';
 import 'conversation_service.dart';
 import 'group_channel.dart';
@@ -63,20 +64,23 @@ class _ChannelConversationScreenState
   // Edit state
   NexusMessage? _editingMessage;
 
+  // Kept from initState: looking the provider up in dispose() is not
+  // allowed once the element is deactivated (logged as a crash).
+  late final ChatProvider _chatProvider;
+
   @override
   void initState() {
     super.initState();
     _channel = widget.channel;
     ConversationService.instance.markAsRead(_channel.conversationId);
     _loadMessages();
-    context
-        .read<ChatProvider>()
-        .setActiveConversation(_channel.conversationId);
+    _chatProvider = context.read<ChatProvider>()
+      ..setActiveConversation(_channel.conversationId);
   }
 
   @override
   void dispose() {
-    context.read<ChatProvider>().setActiveConversation(null);
+    _chatProvider.setActiveConversation(null);
     _scrollController.dispose();
     _textController.dispose();
     _focusNode.dispose();
@@ -238,7 +242,8 @@ class _ChannelConversationScreenState
   }
 
   void _startReply(NexusMessage msg) {
-    final senderName = ContactService.instance.getDisplayName(msg.fromDid);
+    final senderName = ContactService.instance.getDisplayName(msg.fromDid,
+        claimedName: msg.metadata?['sender_name'] as String?);
     setState(() {
       _replyToMessage = msg;
       _replyToSenderName = senderName;
@@ -1128,12 +1133,15 @@ class _ChannelConversationScreenState
                               .getMessages(_channel.conversationId)
                               .then((msgs) {
                             if (mounted &&
-                                msgs.length != _messages.length) {
+                                messageListChanged(_messages, msgs)) {
+                              final grew = msgs.length != _messages.length;
                               setState(
                                   () => _messages = List.from(msgs));
-                              WidgetsBinding.instance
-                                  .addPostFrameCallback(
-                                      (_) => _scrollToBottom());
+                              if (grew) {
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback(
+                                        (_) => _scrollToBottom());
+                              }
                             }
                           });
                           final myDid = _myDid;
@@ -1388,8 +1396,8 @@ class _ChannelMessageBubble extends StatelessWidget {
     }
 
     // Other's message: avatar + sender name + bubble
-    final senderName =
-        ContactService.instance.getDisplayName(msg.fromDid);
+    final senderName = ContactService.instance.getDisplayName(msg.fromDid,
+        claimedName: msg.metadata?['sender_name'] as String?);
     final badge = _roleBadge();
 
     return Padding(
@@ -1765,7 +1773,12 @@ class _WaveformBars extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final heights = _heights();
+    // A fixed width: the bubble's Row shrink-wraps its children, so the
+    // Expanded bars would otherwise get unbounded width and break layout
+    // (froze the channel view on Windows, device test 14.11.2026). Same
+    // width as the bubble in direct conversations.
     return SizedBox(
+      width: 120,
       height: 28,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,

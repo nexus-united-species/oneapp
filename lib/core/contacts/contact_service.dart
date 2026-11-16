@@ -377,7 +377,12 @@ class ContactService {
   ///   1. Contact's pseudonym (if set and not just a raw DID fragment).
   ///   2. Live transport peer name (correct but ephemeral – requires peer online).
   ///   3. Last 12 characters of the DID as final fallback.
-  String getDisplayName(String did) {
+  ///
+  /// [claimedName] is the name the sender put into its own message (channel
+  /// posts carry `sender_name`). It is used only when the sender is neither
+  /// a contact nor a live peer, so members who are not contacts appear by
+  /// name instead of a DID fragment (device test 14.11.2026).
+  String getDisplayName(String did, {String? claimedName}) {
     final contact = _findByDid(did);
     if (contact != null) {
       final p = contact.pseudonym.trim();
@@ -390,6 +395,8 @@ class ContactService {
     if (livePeer != null && livePeer.pseudonym.isNotEmpty) {
       return livePeer.pseudonym;
     }
+    final claimed = sanitizeClaimedName(claimedName);
+    if (claimed != null && !_isDidFragment(claimed, did)) return claimed;
     return did.length > 12 ? did.substring(did.length - 12) : did;
   }
 
@@ -625,3 +632,18 @@ class ImportResult {
     this.error,
   });
 }
+
+/// A display name sent along by a message's author, trimmed, without
+/// control characters and at most [maxClaimedNameLength] characters; null
+/// when nothing usable is left.
+String? sanitizeClaimedName(Object? raw) {
+  if (raw is! String) return null;
+  final cleaned = raw.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '').trim();
+  if (cleaned.isEmpty) return null;
+  return cleaned.length > maxClaimedNameLength
+      ? cleaned.substring(0, maxClaimedNameLength)
+      : cleaned;
+}
+
+/// Longest name taken over from a message's own `sender_name`.
+const int maxClaimedNameLength = 40;

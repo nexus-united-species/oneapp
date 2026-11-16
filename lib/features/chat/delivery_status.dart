@@ -1,4 +1,5 @@
 import '../../core/transport/message_transport.dart';
+import '../../core/transport/nexus_message.dart';
 
 /// Delivery state of an own chat message (audit Z-3/Z-4).
 ///
@@ -42,4 +43,19 @@ DeliveryState deliveryAfterHandOff(
     return DeliveryState.sending;
   }
   return DeliveryState.sent;
+}
+
+/// Whether a chat screen showing [shown] must take over [fresh]: new or
+/// removed messages, or a changed delivery state (audit Z-4). Comparing the
+/// length alone left „wartet“ on screen after the message was sent.
+bool messageListChanged(List<NexusMessage> shown, List<NexusMessage> fresh) {
+  if (shown.length != fresh.length) return true;
+  for (var i = 0; i < shown.length; i++) {
+    if (shown[i].id != fresh[i].id) return true;
+    if (shown[i].metadata?[localDeliveryMetaKey] !=
+        fresh[i].metadata?[localDeliveryMetaKey]) {
+      return true;
+    }
+  }
+  return false;
 }

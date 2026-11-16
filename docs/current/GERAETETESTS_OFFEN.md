@@ -25,7 +25,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Was prüfen | Erwartung |
 |---|---|---|
-| (Stufe-B-Restpunkte, noch nicht committet) | Laptop1 und Laptop2 (gleiche Identität): auf Laptop2 im Dorfplatz einen Post von Laptop1 mit 👍 reagieren | Laptop1 zeigt die Reaktion auch; keine Benachrichtigung „du hast reagiert“; kein doppelter Eintrag |
+| 64c4ed0 | Laptop1 und Laptop2 (gleiche Identität): auf Laptop2 im Dorfplatz einen Post von Laptop1 mit 👍 reagieren | Laptop1 zeigt die Reaktion auch; keine Benachrichtigung „du hast reagiert“; kein doppelter Eintrag |
 | 3557e5b | Auf einem Gerät „Nach Updates suchen“ (Einstellungen) | Kein Fehler, Verhalten wie gewohnt (version.json ist mit dem neuen Schlüssel signiert); Log zeigt kein `signature invalid` |
 | 70058c6 | Handy: zwischen WLAN und Mobilfunk wechseln (WLAN aus, warten, WLAN an), danach Nachricht an Laptop1 | Nachricht kommt an; Log zeigt `reconnect in …s (attempt …)` mit wachsenden Pausen statt fester 10 s, nach der Verbindung `connected` |
 | 6a980b9 | Laptop1 WLAN aus: einer Gemeinschaft des Handys eine Beitrittsanfrage stellen, dann WLAN wieder an | Die Anfrage kommt nach dem Wiederverbinden beim Handy an (Log Laptop1 `[OUTBOX] Queued kind=31003`, später `Flush: … delivered`) |
@@ -36,7 +36,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 | 7e540ef | Handy legt einen privaten Kanal an, Laptop1 und Laptop2 treten bei; Handy entfernt Laptop2 und schreibt danach eine Nachricht | Laptop1 liest die neue Nachricht; Laptop2 sieht sie nicht (bzw. nur „konnte nicht entschlüsselt werden“); ältere Nachrichten bleiben auf Laptop1 lesbar; Handy-Log `[CHAN-KEY] … members informed` |
 | e1e834b | Privaten Kanal mit Handy und Laptop1: Bild, Sprachnachricht und eine Antwort auf eine Nachricht schicken | Alles kommt an und ist sichtbar bzw. abspielbar, Antwortzitat wird angezeigt, Schloss-Symbol an den Nachrichten |
 | e1e834b | Laptop2 (alte ZIP) ist Mitglied im selben privaten Kanal | Text und Bild kommen an; Vorschaubild und Antwortzitat fehlen dort (erwartet) |
-| (Audit S-3/C-4, noch nicht committet) | Handy und Laptop1 im selben WLAN, beide auf neuem Stand: einander schreiben (geht per LAN, wenn erreichbar) | Nachricht kommt an; kein `[S3-REJECT]` im Log |
+| af026a8 | Handy und Laptop1 im selben WLAN, beide auf neuem Stand: einander schreiben (geht per LAN, wenn erreichbar) | Nachricht kommt an; kein `[S3-REJECT]` im Log |
 | 24ea9d3 | Handy und Laptop1 auf neuem Stand: im Kanal einer gemeinsamen Gemeinschaft schreiben | Kein Hinweis unter den neuen Beiträgen; Log ohne `[S1-REJECT]` |
 | 252b060 | Handy und Laptop1 auf neuem Stand starten, kurz warten | Log auf beiden `[NOSTR] Presence sender=verified`; kein `[S1-REJECT]` für das andere Gerät |
 | b3aa4b5 | Handy und Laptop1 auf neuem Stand: einander schreiben | Kein Hinweis unter den Nachrichten; Log `sender=verified` |
@@ -57,6 +57,7 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
+| RUNDE1HASH | 16.11.2026 | Runde 1: „wartet“ verschwindet von selbst; Sprachnachricht im Kanal ohne Einfrieren; Gemeinschafts-Diskussion mit gemeinsamem Kanalschlüssel von beiden Seiten lesbar; Namen („Josh Richman“) statt DID-Bruchstück; Sprachnachricht nach Offline-Phase kommt zügig an; verlassene „test1211“ kommt nicht zurück; lokale Gemeinschaften ohne Standort sichtbar, Beitritt möglich |
 | 252b060 | 13.11.2026 | Handy-App im Hintergrund, DM von Laptop1 kommt an |
 | a6dbd7e | 12.11.2026 | Drei Standard-Relays verbunden; eigenes Relay übersteht den Neustart und lässt sich entfernen; eine Benachrichtigung im Hintergrund |
 | 0f43b2f | 12.11.2026 | Gründer-Übergabe Handy → Windows, auch mit Flugmodus (Bedienung versteckt: Zahnrad, lange drücken) |

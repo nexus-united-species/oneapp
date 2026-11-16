@@ -128,4 +128,31 @@ void main() {
       expect(r1, equals(r2));
     });
   });
+
+  group('getDisplayName – name sent along with the post (14.11.2026)', () {
+    const stranger = 'did:nexus:STRANGER0000000000000000';
+
+    test('a non-contact member appears by the name in their post', () {
+      expect(
+        ContactService.instance
+            .getDisplayName(stranger, claimedName: '  Josh Richman  '),
+        'Josh Richman',
+      );
+    });
+
+    test('without a usable claimed name the DID fragment stays', () {
+      expect(ContactService.instance.getDisplayName(stranger, claimedName: '   '),
+          stranger.substring(stranger.length - 12));
+      expect(ContactService.instance.getDisplayName(stranger, claimedName: null),
+          stranger.substring(stranger.length - 12));
+    });
+  });
+
+  group('sanitizeClaimedName', () {
+    test('strips control characters and caps the length', () {
+      expect(sanitizeClaimedName('Anna' + String.fromCharCode(10) + 'X'), 'AnnaX');
+      expect(sanitizeClaimedName('x' * 100), hasLength(maxClaimedNameLength));
+      expect(sanitizeClaimedName(42), isNull);
+    });
+  });
 }

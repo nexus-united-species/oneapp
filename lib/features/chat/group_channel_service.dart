@@ -216,6 +216,25 @@ class GroupChannelService {
     _joinedController.add(joinedChannels);
   }
 
+  /// Replaces the joined channel [old] by [replacement], which may carry a
+  /// different ID (cell channels adopting the founder's shared ID). The old
+  /// record is removed so it does not come back as a second channel of the
+  /// same name after a restart. Messages are stored by channel name and are
+  /// not affected.
+  Future<void> replaceChannelIdentity(
+      GroupChannel old, GroupChannel replacement) async {
+    final idx = _joined.indexWhere((c) => c.id == old.id);
+    if (idx < 0) return;
+    _joined[idx] = replacement;
+    if (old.id != replacement.id) {
+      await PodDatabase.instance.deleteChannel(old.id);
+    }
+    await PodDatabase.instance.upsertChannel(
+        replacement.id, replacement.toJson());
+    _joinedController.add(joinedChannels);
+    _channelChangedController.add(null);
+  }
+
   /// Updates the member list of a joined channel and persists it.
   Future<void> updateMembers(String name, List<String> newMembers) async {
     final n = GroupChannel.normaliseName(name);

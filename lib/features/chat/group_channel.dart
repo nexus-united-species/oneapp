@@ -265,6 +265,30 @@ class GroupChannel {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
+  /// A copy with the shared [id] and [secret] the cell founder distributes
+  /// (device test 14.11.2026). The previous secret is kept in
+  /// [previousSecrets]; members, settings and history stay unchanged.
+  GroupChannel withSharedIdentity({required String id, required String secret}) {
+    final rotated = withRotatedSecret(secret);
+    return GroupChannel(
+      id: id,
+      name: name,
+      description: description,
+      createdBy: createdBy,
+      createdAt: createdAt,
+      isPublic: isPublic,
+      isDiscoverable: isDiscoverable,
+      channelSecret: rotated.channelSecret,
+      previousSecrets: rotated.previousSecrets,
+      nostrTag: nostrTag,
+      joinedAt: joinedAt,
+      channelMode: channelMode,
+      members: List.from(members),
+      cellId: cellId,
+      nostrEventId: nostrEventId,
+    );
+  }
+
   /// A fresh channel secret, e.g. after removing a member (audit S-4).
   static String generateSecret() => _generateSecret();
 

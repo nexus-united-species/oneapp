@@ -700,3 +700,92 @@ Liste:
     eigenen DID zu, damit es dieselbe Zeile bleibt statt einer
     doppelten „Gefällt mir“; eine Benachrichtigung über die eigene
     Reaktion bleibt aus.
+
+- **Gerätetest Runde 1 vom 14.11.2026, drei Befunde behoben (Gerätetest
+  offen):**
+  - **„wartet“ blieb stehen:** Die Chat- und Kanalansicht übernahm neue
+    Daten nur, wenn sich die Anzahl der Nachrichten änderte; eine
+    Statusänderung allein blieb unsichtbar, bis man den Chat neu
+    öffnete. Jetzt vergleicht `messageListChanged` auch den
+    Zustellstatus.
+  - **Sprachnachricht im Kanal fror die Ansicht ein:** Die
+    Wellenform-Balken hatten im Kanal keine feste Breite (Layout-Fehler
+    „unbounded width“). Wie im Direktgespräch jetzt 120 Pixel breit.
+    Nebenbei: die Kanalansicht las den ChatProvider in `dispose()`
+    (Fehler „deactivated widget's ancestor“), jetzt gemerkt aus
+    `initState`.
+  - **Gemeinschaftskanäle zwischen Geräten nicht lesbar (seit April
+    2026):** Pinnwand und Diskussion legte jedes Gerät selbst an, mit
+    eigener Kennung und eigenem Schlüssel, also konnte kein Gerät die
+    Beiträge eines anderen öffnen. Entscheidung Joachim (14.11.2026):
+    ein gemeinsamer Schlüssel pro Gemeinschaft. Der aktuelle Gründer
+    schickt Kennung und Schlüssel beider Kanäle als Systemnachricht
+    (`channel_cell_keys`, nur über Nostr, NIP-04 und wenn möglich
+    zusätzlich verschlüsselt) an jedes Mitglied: beim Start, bei jeder
+    Relay-Verbindung und nach jeder Aufnahme; je Mitglied und Schlüssel
+    nur einmal (`nexus_cell_keys_sent`). Mitglieder übernehmen die
+    Schlüssel nur vom bestätigten aktuellen Gründer
+    (`cellChannelKeysDecision`) und ersetzen ihre eigenen Kanäle
+    (`replaceChannelIdentity`); Nachrichten bleiben erhalten, da sie
+    nach Kanalnamen gespeichert sind. Ältere, mit fremden Schlüsseln
+    verschlüsselte Beiträge bleiben unlesbar.
+
+- **Namen im Gemeinschaftskanal (Gerätetest 16.11.2026, Gerätetest
+  offen):** Beiträge von Mitgliedern, die keine Kontakte sind, zeigten
+  nur ein DID-Bruchstück. Kanalbeiträge tragen jetzt den Namen des
+  Verfassers (`sender_name`, in privaten Kanälen verschlüsselt);
+  `getDisplayName` nutzt ihn als letzte Rückfallstufe vor dem
+  DID-Bruchstück, nach Kontaktname und Live-Peer (bereinigt, höchstens
+  40 Zeichen). Der Name ist vom Verfasser selbst angegeben, wie bei der
+  Präsenz; ältere Beiträge ohne Namen zeigen weiter das Bruchstück.
+
+- **Gerätetest Runde 1, zweiter Durchgang (16.11.2026), Befunde behoben
+  (Gerätetest offen):**
+  - **Namen in der Gemeinschafts-Diskussion:** Die Diskussion in der
+    Gemeinschaft hat eine eigene Nachrichtenblase, die fest ein
+    DID-Bruchstück zeigte, auch für Kontakte. Jetzt `getDisplayName` mit
+    `sender_name`; ebenso in den Gemeinschafts-Einstellungen (Mitglieder,
+    Nachfolger, Entfernen, Gründer-Übergabe).
+  - **Warteschlange hielt erledigte Meldungen fest:** Relays antworten
+    auf eine ältere Fassung eines ersetzbaren Ereignisses (Profil,
+    Mitgliederliste, Zellankündigung) mit `replaced:`. Das galt als
+    „nicht angenommen“; 55 solcher Meldungen wurden bei jeder Verbindung
+    erneut gesendet, damus sperrte uns wegen zu vieler Anfragen
+    (`banned:`), und neue Nachrichten warteten hinten bis zu 15 Sekunden
+    je alter Meldung. Jetzt: `verdictFor` unterscheidet angenommen
+    (auch `duplicate:`), endgültig abgelehnt (`replaced:`, `invalid:`,
+    `blocked:`, `restricted:`, `pow:`, `deleted:` – wird entfernt) und
+    erneut versuchen (keine Antwort, `rate-limited:`, `banned:`). Das
+    Nachsenden läuft mit bis zu 8 Meldungen gleichzeitig.
+  - **Zu große Sprachnachricht von Windows:** Unser Relay lehnt Events
+    über 512 KB ab (`invalid: event too large: 642150`); unter Windows
+    wird unkomprimiert als WAV aufgenommen. Die Nachricht zeigt jetzt
+    „Nicht gesendet“ statt ewig „wartet“ (`onChatEventRejected`). Die
+    eigentliche Lösung ist die Sprachkompression unter Windows (Block 3).
+  - **Lokale Gemeinschaften ohne Standort unsichtbar:** Ohne GPS bzw.
+    Windows-Ortung blendete die App alle lokalen Gemeinschaften aus.
+    Jetzt zeigt sie dann alle bekannten lokalen Gemeinschaften nach Namen
+    mit Hinweis „Standort unbekannt“.
+
+- **Gemeinschaft „test1211“ kam auf dem Handy immer wieder zurück
+  (16.11.2026, Gerätetest offen):** Laptop1 hatte sie am 12.11. als
+  Gründer aufgelöst – noch vor der Kind-5-Behebung (dc5cab8), daher kam
+  die Auflösung nie bei den Relays an, und die alte Ankündigung des
+  Handys (Ersteller) blieb dort stehen. Das Handy hatte die Gemeinschaft
+  verlassen, die automatische Wiederherstellung („Found own cell via
+  Nostr“, für Datenverlust gedacht) trat ihr aber bei jedem Start wieder
+  als Gründer bei, weil sie nur auf `createdBy` schaute und eine
+  Gründer-Übergabe nicht kennt. Jetzt gilt `shouldAutoRecoverOwnCell`:
+  keine Wiederherstellung für verlassene Gemeinschaften, sie bleiben nur
+  auffindbar. Laptop1 zeigt „test1211“ zu Recht nicht (Grabstein der
+  eigenen Auflösung).
+
+- **Lange Sprachnachricht von Windows blieb auf „wartet“ (16.11.2026,
+  Gerätetest offen):** Bei 45 Sekunden (deutlich über 512 KB) trennten
+  alle drei Relays die Verbindung, ohne mit OK oder Ablehnung zu
+  antworten; die Warteschlange hielt das als „erneut versuchen“ fest und
+  schickte es bei jeder Verbindung wieder los. Jetzt prüft die
+  Warteschlange die Größe vor dem Senden selbst (`maxEventBytes`,
+  500 KB): Zu große Ereignisse gehen gar nicht erst raus, werden als
+  endgültig abgelehnt gemeldet („Nicht gesendet“) und beim Nachsenden
+  aus der Warteschlange entfernt.

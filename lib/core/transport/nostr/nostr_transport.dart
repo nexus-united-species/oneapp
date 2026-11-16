@@ -1011,6 +1011,11 @@ class NostrTransport implements MessageTransport {
   /// relay accepted, immediately or later from the outbox (audit Z-4).
   Stream<String> get onChatEventAccepted => _outbox.onAccepted;
 
+  /// Queued events no relay will ever accept (e.g. too large), so the chat
+  /// marks the message as not sent (device test 16.11.2026).
+  Stream<({String eventId, String reason})> get onChatEventRejected =>
+      _outbox.onRejected;
+
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
   /// reaction, Kind-5 deletion) and returns the assigned Nostr event ID.
   ///
