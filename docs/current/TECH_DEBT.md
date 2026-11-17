@@ -47,7 +47,7 @@ Arbeit: [NOW_NEXT_LATER.md](../planning/NOW_NEXT_LATER.md).
 | TD-47-Rest | `nos.lol` begrenzt Events auf 128 KB | große Bilder erreichen nur die anderen Relays, bis TD-64 |
 | TD-48 | Governance-Sync mit begrenzten `since`-Fenstern | längere Offline-Zeiten können Historie unvollständig machen (Z-9) |
 | TD-64 | Medien inline als Base64 in Events | keine Videos oder Dateien; Lösung über Medienserver (Blossom) |
-| Voice-Win | Sprachnachrichten unter Windows unkomprimiert (WAV) | überschreiten schnell die 512 KB des eigenen Relays und werden abgelehnt („Nicht gesendet“); zu große Nachrichten zeigen seit 16.11.2026 sofort „Nicht gesendet“ (Größenprüfung in der Warteschlange, Gerätetest kommt zusammen mit der Kompression); Kompression aus Block 3 folgt später |
+| Voice-Win | Sprachnachrichten kurz | seit 17.11.2026 AAC unter Windows und Aufnahme-Stopp vor der Größengrenze: Windows DM 17 s, Kanal 23 s; Android DM 53 s, Kanal 70 s (Gerätetest offen). Längere Nachrichten erst mit Medienserver (TD-64) |
 | TD-78 | Keine Anmeldung nach NIP-42 am eigenen Relay | DMs sind für jeden abrufbar, der den Empfänger kennt (Block 4) |
 | S-3-Rest | LAN | Inhalt ohne bekannten Schlüssel weiter unverschlüsselt; UDP-Ankündigung nennt die DID ungeprüft (nur Erreichbarkeit) |
 | Z-8 | BLE und LAN sind Direktverbindungen | kein Weiterleiten (Mesh-Zweig) |

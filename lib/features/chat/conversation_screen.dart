@@ -35,6 +35,7 @@ import 'delivery_status.dart';
 import 'conversation.dart';
 import 'conversation_service.dart';
 import 'voice_player.dart';
+import 'voice_limits.dart';
 import 'voice_recorder.dart';
 
 /// Direkt-Chat-Bildschirm mit einem einzelnen Peer oder dem #mesh Kanal.
@@ -2565,6 +2566,7 @@ class _InputBar extends StatefulWidget {
 
 class _InputBarState extends State<_InputBar> with TickerProviderStateMixin {
   final _recorder = VoiceRecorder();
+  Duration _maxRecord = maxVoiceDurationCap;
 
   bool _isRecording = false;
   Duration _recordDuration = Duration.zero;
@@ -2643,6 +2645,10 @@ class _InputBarState extends State<_InputBar> with TickerProviderStateMixin {
       _isRecording = true;
       _recordDuration = Duration.zero;
       _dragOffset = 0;
+      _maxRecord = maxVoiceDuration(
+        audioBytesPerSecond: _recorder.audioBytesPerSecond,
+        expansion: dmVoiceExpansion,
+      );
     });
 
     _pulseCtrl.repeat(reverse: true);
@@ -2650,8 +2656,8 @@ class _InputBarState extends State<_InputBar> with TickerProviderStateMixin {
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _recordDuration += const Duration(seconds: 1));
-      // Auto-send after 5 minutes
-      if (_recordDuration.inSeconds >= 300) _stopAndSend();
+      // Auto-send at the longest length that still fits into one message.
+      if (_recordDuration >= _maxRecord) _stopAndSend();
     });
   }
 
@@ -2873,7 +2879,8 @@ class _InputBarState extends State<_InputBar> with TickerProviderStateMixin {
           ),
           const SizedBox(width: 8),
           Text(
-            _formatDuration(_recordDuration),
+            '${_formatDuration(_recordDuration)} / '
+            '${_formatDuration(_maxRecord)}',
             style: const TextStyle(
               color: Colors.redAccent,
               fontWeight: FontWeight.w600,

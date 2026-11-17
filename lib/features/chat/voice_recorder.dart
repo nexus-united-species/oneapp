@@ -16,8 +16,21 @@ class VoiceRecorder {
 
   bool _isRecording = false;
   String? _currentPath;
+  int _audioBytesPerSecond = _mobileAacBytesPerSecond;
 
   bool get isRecording => _isRecording;
+
+  /// Size of one second of the current (or last) recording, used to stop
+  /// before the message gets too large to send.
+  int get audioBytesPerSecond => _audioBytesPerSecond;
+
+  // Android/iOS: AAC with the requested 32 kbit/s.
+  static const int _mobileAacBytesPerSecond = 32000 ~/ 8;
+  // Windows Media Foundation encodes AAC at 44.1 kHz with at least 96 kbit/s
+  // and ignores lower requested bitrates.
+  static const int _desktopAacBytesPerSecond = 96000 ~/ 8;
+  // Uncompressed fallback: 16 kHz, 16 bit, mono.
+  static const int _wavBytesPerSecond = 16000 * 2;
 
   // ── Permission ─────────────────────────────────────────────────────────────
 
@@ -42,25 +55,51 @@ class VoiceRecorder {
     if (!voiceDir.existsSync()) voiceDir.createSync(recursive: true);
 
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final ext = (Platform.isAndroid || Platform.isIOS) ? 'm4a' : 'wav';
+    final config = await _config();
+    final ext = config.encoder == AudioEncoder.wav ? 'wav' : 'm4a';
     final path = '${voiceDir.path}/voice_$ts.$ext';
 
-    final encoder =
-        (Platform.isAndroid || Platform.isIOS) ? AudioEncoder.aacLc : AudioEncoder.wav;
-
-    await _recorder.start(
-      RecordConfig(
-        encoder: encoder,
-        sampleRate: 16000,
-        bitRate: 32000,
-        numChannels: 1,
-      ),
-      path: path,
-    );
+    await _recorder.start(config, path: path);
 
     _isRecording = true;
     _currentPath = path;
     return path;
+  }
+
+  /// AAC everywhere it is available; on Windows (Block 3) instead of the
+  /// former uncompressed WAV, which made even short messages too large.
+  Future<RecordConfig> _config() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      _audioBytesPerSecond = _mobileAacBytesPerSecond;
+      return const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        sampleRate: 16000,
+        bitRate: 32000,
+        numChannels: 1,
+      );
+    }
+    var aac = false;
+    try {
+      aac = await _recorder.isEncoderSupported(AudioEncoder.aacLc);
+    } on Exception catch (e) {
+      print('[VOICE] AAC check failed: $e');
+    }
+    print('[VOICE] Desktop encoder: ${aac ? 'aacLc 44.1 kHz' : 'wav (no AAC)'}');
+    if (aac) {
+      _audioBytesPerSecond = _desktopAacBytesPerSecond;
+      return const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        sampleRate: 44100,
+        bitRate: 96000,
+        numChannels: 1,
+      );
+    }
+    _audioBytesPerSecond = _wavBytesPerSecond;
+    return const RecordConfig(
+      encoder: AudioEncoder.wav,
+      sampleRate: 16000,
+      numChannels: 1,
+    );
   }
 
   /// Stops recording and returns the final file path, or null on failure.

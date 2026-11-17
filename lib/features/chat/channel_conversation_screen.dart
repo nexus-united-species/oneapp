@@ -31,6 +31,7 @@ import 'conversation_service.dart';
 import 'group_channel.dart';
 import 'group_channel_service.dart';
 import 'voice_player.dart';
+import 'voice_limits.dart';
 import 'voice_recorder.dart';
 
 /// Chat screen for a named group channel (e.g. #teneriffa).
@@ -1864,6 +1865,7 @@ class _ChannelInputBar extends StatefulWidget {
 class _ChannelInputBarState extends State<_ChannelInputBar>
     with TickerProviderStateMixin {
   final _recorder = VoiceRecorder();
+  Duration _maxRecord = maxVoiceDurationCap;
 
   bool _isRecording = false;
   Duration _recordDuration = Duration.zero;
@@ -1931,13 +1933,18 @@ class _ChannelInputBarState extends State<_ChannelInputBar>
       _isRecording = true;
       _recordDuration = Duration.zero;
       _dragOffset = 0;
+      _maxRecord = maxVoiceDuration(
+        audioBytesPerSecond: _recorder.audioBytesPerSecond,
+        expansion: channelVoiceExpansion,
+      );
     });
     _pulseCtrl.repeat(reverse: true);
 
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _recordDuration += const Duration(seconds: 1));
-      if (_recordDuration.inSeconds >= 300) _stopAndSend();
+      // Auto-send at the longest length that still fits into one message.
+      if (_recordDuration >= _maxRecord) _stopAndSend();
     });
   }
 
@@ -2004,7 +2011,8 @@ class _ChannelInputBarState extends State<_ChannelInputBar>
         ),
         const SizedBox(width: 8),
         Text(
-          _formatDuration(_recordDuration),
+          '${_formatDuration(_recordDuration)} / '
+          '${_formatDuration(_maxRecord)}',
           style: const TextStyle(color: AppColors.onDark, fontSize: 14),
         ),
         const SizedBox(width: 12),

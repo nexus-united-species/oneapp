@@ -800,3 +800,27 @@ Liste:
   (TD-71) durchgereicht: Sie müssen die eigene DID tragen
   (`isOwnDeviceMessage`), das schreibende Gerät erkennt das Echo an der
   ID, und über eigene Beiträge gibt es keine Benachrichtigung.
+
+- **Sprachkompression unter Windows (17.11.2026, Block 3, Gerätetest
+  offen):** Windows nimmt jetzt AAC auf (Media Foundation, 44,1 kHz,
+  mindestens 96 kbit/s) statt unkomprimiertem WAV, Rückfall auf WAV
+  ohne AAC-Encoder (Windows N). Weil jede Verschlüsselungsschicht das
+  Audio als base64 einpackt (verschlüsselte DM ×2,37, Kanal ×1,78),
+  stoppt die Aufnahme jetzt selbst, bevor die Nachricht zu groß wird;
+  die Anzeige zeigt „0:05 / 0:17“. Grenzen: Windows DM 17 s, Kanal
+  23 s (vorher WAV: 6 bzw. 8 s), Android DM 53 s, Kanal 70 s (vorher 5
+  Minuten, über ~50 s „Nicht gesendet“). Empfänger wählen die
+  Dateiendung nach dem Inhalt (`voiceFileExtension`). Längere
+  Nachrichten erst mit Medienserver (TD-64).
+
+- **Kanäle auf neuen Geräten nicht auffindbar (17.11.2026, Gerätetest
+  offen):** Laptop1 zeigte nur nexus-global, das Handy fünf Kanäle. Die
+  Kanal-Ankündigung (Kind 40) wurde nur einmal beim Anlegen
+  veröffentlicht; auf keinem Relay lag für #vespla, #technik, #elsid und
+  #bugs-aenderungen noch eine (damus/nos.lol löschen alte Events, das
+  eigene Relay läuft erst seit 11.11.). Jetzt kündigt das Gerät des
+  Erstellers seine Kanäle bei der Relay-Verbindung erneut an, höchstens
+  einmal pro Woche und Kanal (`channelsToReannounce`, Zeitpunkte in
+  SharedPreferences `nexus_channel_announced_at`). Gemeinschaftskanäle
+  sind ausgenommen. Kanäle anderer Ersteller tauchen erst wieder auf,
+  wenn deren Gerät die neue Version hat.

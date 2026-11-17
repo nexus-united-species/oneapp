@@ -17,6 +17,8 @@ import 'channel_payload.dart';
 import 'transport_plan.dart';
 import 'delivery_status.dart';
 import 'cell_channel_keys.dart';
+import 'voice_limits.dart';
+import 'channel_reannounce.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
@@ -411,6 +413,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         unawaited(CellService.instance.republishPendingHandovers());
         // Keys not delivered at startup (no Nostr key yet) go out now.
         unawaited(distributeCellChannelKeys());
+        unawaited(reannounceOwnChannels());
       });
 
       // G2 governance – wire ProposalService callbacks to NostrTransport.
@@ -2235,8 +2238,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final audioBytes = base64Decode(msg.body);
       final dir = await getApplicationDocumentsDirectory();
-      // Use .m4a for AAC recordings (Android/iOS) and .wav for desktop.
-      final ext = (Platform.isAndroid || Platform.isIOS) ? 'm4a' : 'wav';
+      // The format follows the data, not this device: Windows records AAC
+      // since Block 3, older Windows versions sent WAV.
+      final ext = voiceFileExtension(audioBytes,
+          fallback: (Platform.isAndroid || Platform.isIOS) ? 'm4a' : 'wav');
       final path = '${dir.path}/nexus_voice_${msg.id}.$ext';
       await File(path).writeAsBytes(audioBytes);
       debugPrint('[CHAT] Voice audio cached → $path');
@@ -2940,6 +2945,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // ── Shared cell channel keys (device test 14.11.2026) ───────────────────────
+
+  static const _channelAnnouncedPrefsKey = 'nexus_channel_announced_at';
+  bool _reannouncing = false;
+
+  /// Announces our own channels again, at most once a week each, so that
+  /// relays that dropped the original Kind-40 still let others find them
+  /// (device test 17.11.2026).
+  Future<void> reannounceOwnChannels() async {
+    final nostr = _nostrTransport;
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    // Several relays connect at once; only one run at a time.
+    if (nostr == null || myDid.isEmpty || _reannouncing) return;
+    _reannouncing = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = <String, int>{};
+      final raw = prefs.getString(_channelAnnouncedPrefsKey);
+      if (raw != null) {
+        try {
+          (jsonDecode(raw) as Map<String, dynamic>)
+              .forEach((k, v) => last[k] = v as int);
+        } on FormatException catch (e) {
+          print('[CHANNEL-REANNOUNCE] Stored times unreadable: $e');
+        }
+      }
+      final now = DateTime.now();
+      final due = channelsToReannounce(
+        channels: GroupChannelService.instance.joinedChannels,
+        myDid: myDid,
+        lastAnnouncedMs: last,
+        now: now,
+      );
+      if (due.isEmpty) return;
+      for (final channel in due) {
+        await nostr.publishChannelCreate(channel.toJson());
+        last[channel.id] = now.millisecondsSinceEpoch;
+        print('[CHANNEL-REANNOUNCE] Announced again: ${channel.name}');
+      }
+      await prefs.setString(_channelAnnouncedPrefsKey, jsonEncode(last));
+    } finally {
+      _reannouncing = false;
+    }
+  }
 
   static const _cellKeysSentPrefsKey = 'nexus_cell_keys_sent';
   static const _cellKeysSentCap = 500;
