@@ -54,8 +54,8 @@ TD-40 auf beiden Seiten den Identitätsnachweis brauchen.
 
 | Commit | Geprüft am | Ergebnis |
 |---|---|---|
-| CHANHASH | 17.11.2026 | Handy kündigt eigene Kanäle erneut an; Laptop1 findet #vespla, #technik, #elsid, #bugs-aenderungen und kann beitreten |
-| VOICEHASH | 17.11.2026 | Sprachkompression: Windows nimmt AAC auf, Aufnahme stoppt an der Grenze, Sprachnachrichten Laptop1 ↔ Handy in DM und Kanal abspielbar; damit auch der offene Test der langen Sprachnachricht erledigt |
+| 977fe1e | 17.11.2026 | Handy kündigt eigene Kanäle erneut an; Laptop1 findet #vespla, #technik, #elsid, #bugs-aenderungen und kann beitreten |
+| 977fe1e | 17.11.2026 | Sprachkompression: Windows nimmt AAC auf, Aufnahme stoppt an der Grenze, Sprachnachrichten Laptop1 ↔ Handy in DM und Kanal abspielbar; damit auch der offene Test der langen Sprachnachricht erledigt |
 | 9fe6644, 64c4ed0 | 16.11.2026 | Runde 3 (Laptop2 auf neuem Stand): Dorfplatz-Beitrag und Kanalbeitrag von Laptop1 erscheinen auf Laptop2 (vorher verworfen, behoben); Reaktion von Laptop2 erscheint auf Laptop1 ohne Benachrichtigung und ohne Doppel (TD-71) |
 | b3aa4b5, e1e834b | 16.11.2026 | Übersprungen: Laptop2 mit der alten ZIP erreichte die Relays nicht mehr (auch nach Korrektur der um 1 h vorgehenden Uhr). Prüfung ohne Nachweis durch Tests abgedeckt; Handy-Log zeigt `sender=unverified` für alte Nachrichten vom 12.11. (Anzeige fehlt dort, weil sie vor S-1 gespeichert wurden) |
 | c55900c | 16.11.2026 | Runde 1: „wartet“ verschwindet von selbst; Sprachnachricht im Kanal ohne Einfrieren; Gemeinschafts-Diskussion mit gemeinsamem Kanalschlüssel von beiden Seiten lesbar; Namen („Josh Richman“) statt DID-Bruchstück; Sprachnachricht nach Offline-Phase kommt zügig an; verlassene „test1211“ kommt nicht zurück; lokale Gemeinschaften ohne Standort sichtbar, Beitritt möglich |
