@@ -671,7 +671,8 @@ class CellService {
     // Triggered when cell.createdBy matches the local DID (kryptographisch gesichert
     // durch die Nostr-Schnorr-Signatur des Kind-30000 Events).  Idempotent: upsert
     // statt insert, und der ownedIdx-Guard oben verhindert Doppel-Einträge.
-    if (myDid != null && cell.createdBy == myDid) {
+    if (shouldAutoRecoverOwnCell(
+        cell: cell, myDid: myDid, leftCellIds: _leftCells.keys.toSet())) {
       print('[AUTO-RECOVERY] Found own cell via Nostr: name="${cell.name}" id=${cell.id} createdBy=${cell.createdBy}');
       // Temporarily place in _discovered so claimDiscoveredCell() can locate it.
       _discovered.removeWhere((c) => c.id == cell.id);
@@ -679,6 +680,10 @@ class CellService {
       await claimDiscoveredCell(cell.id);
       print('[AUTO-RECOVERY] Founder membership restored: name="${cell.name}"');
       return;
+    }
+    if (myDid != null && cell.createdBy == myDid) {
+      print('[AUTO-RECOVERY] Skipped for ${cell.id}: I left this cell '
+          '(no automatic re-join as founder)');
     }
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -2059,3 +2064,18 @@ class CellService {
     _myRequests.clear();
   }
 }
+
+/// Whether an announcement of a cell I created should restore my founder
+/// membership automatically (recovery after data loss).
+///
+/// Not for a cell I left on purpose, e.g. after handing over the founder
+/// role (TD-33): its old announcement is still on the relays, and without
+/// this check the device re-joined it as founder on every start (device
+/// test 16.11.2026, „test1211“). A left cell stays discoverable instead.
+@visibleForTesting
+bool shouldAutoRecoverOwnCell({
+  required Cell cell,
+  required String? myDid,
+  required Set<String> leftCellIds,
+}) =>
+    myDid != null && cell.createdBy == myDid && !leftCellIds.contains(cell.id);

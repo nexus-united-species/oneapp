@@ -518,6 +518,32 @@ void main() {
       await stopTransport(transport, relay);
     });
 
+    test(
+        'a reaction signed with the local key is forwarded, not dropped '
+        '(audit TD-71: a second device of the same identity shares the key)',
+        () async {
+      final (:transport, :relay) = await startTransport();
+      final reactions = <Map<String, dynamic>>[];
+      final subscription = transport.onFeedReaction.listen(reactions.add);
+      final aliceKeys = keysFor(aliceMnemonic);
+
+      relay.injectEvent(NostrEvent.create(
+        keys: aliceKeys,
+        kind: NostrKind.reaction,
+        content: '👍',
+        tags: const [
+          ['e', validTargetEventId],
+        ],
+      ));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reactions, hasLength(1));
+      expect(reactions.single['senderPubkey'], aliceKeys.publicKeyHex);
+
+      await subscription.cancel();
+      await stopTransport(transport, relay);
+    });
+
     // ── F-001 REWORK: message deletion (Kind-5, NIP-09) ───────────────────
 
     test('publishDeletion emits one Kind-5 with the exact valid e-tag',
@@ -543,20 +569,26 @@ void main() {
         () async {
       final (:transport, :relay) = await startTransport();
 
+      // Only the deletion counts; the queued Kind-0 from the start is resent
+      // as well since Z-5.
+      List<NostrEvent> deletions() => relay.published
+          .where((e) => e.kind == NostrKind.deletion)
+          .toList();
+
       transport.publishDeletion(validTargetEventId);
       await Future<void>.delayed(const Duration(milliseconds: 20));
       relay.accepts = true;
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(relay.published, hasLength(2));
-      expect(relay.published.last.id, relay.published.first.id,
+      expect(deletions(), hasLength(2));
+      expect(deletions().last.id, deletions().first.id,
           reason: 'The signed event is resent unchanged');
 
       // Delivered now: a further reconnect sends nothing again.
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(relay.published, hasLength(2));
+      expect(deletions(), hasLength(2));
       await stopTransport(transport, relay);
     });
 
@@ -569,7 +601,8 @@ void main() {
       relay.connectRelay();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(relay.published, hasLength(1));
+      expect(relay.published.where((e) => e.kind == NostrKind.reaction),
+          hasLength(1));
       await stopTransport(transport, relay);
     });
 

@@ -31,7 +31,7 @@ nicht Funktionsgleichstand.
 | Block | Dauer (grob) | Inhalt | Audit / bisher |
 |---|---|---|---|
 | **1 – Vertrauen** | 3–4 Wochen | Kontakt-Sync korrigieren (C-1 bis C-3); Stimmen nach DID deduplizieren (S-2); Zeitmarke begrenzen, Abholfenster überlappen (Z-1, Z-2); Identitätsnachweis für DMs, Präsenz, Kanalbeiträge, Schlüsselwechsel nur mit Hinweis (S-1); Signaturprüfung LAN/BLE, Entpackgrenze (S-3, C-4); Medien in privaten Kanälen verschlüsseln (S-4); Debug-Keystore sichern (R-1, siehe Anpassung); Gerätetests abarbeiten und pushen; `docs/current/`, CLAUDE.md und Hinweis zu Bauplan 9.0 berichtigen (D-1, D-2) | Stufe A + neu |
-| **2 – Zustellung und Werkzeuge** | 4–6 Wochen | CI (`flutter analyze` + `flutter test`); Zwei-Instanzen-Test im Code; Wächtertests (Importrichtung, Speichergrenze, Dateigröße), ADR-0004/0005 annehmen; ADR-0003 neu fassen, erst speichern dann senden, Status „wartet/gesendet“; Outbox für alle Event-Arten, Backoff, Ping; Bluetooth-Verweigerung stoppt den Chat nicht; `version.json` signieren; Rest Stufe B (TD-32, TD-44, TD-45, TD-46, TD-65, TD-71); Lokalisierungs-Grundlage | Rest B, Teile C und E |
+| **2 – Zustellung und Werkzeuge** | 4–6 Wochen | CI (`flutter analyze` + `flutter test`); Zwei-Instanzen-Test im Code; Wächtertests (Importrichtung, Speichergrenze, Dateigröße), ADR-0004/0005 annehmen; ADR-0003 neu fassen, erst speichern dann senden, Status „wartet/gesendet“; Outbox für alle Event-Arten, Backoff, Ping; Bluetooth-Verweigerung stoppt den Chat nicht; `version.json` signieren; Rest Stufe B (TD-44, TD-45, TD-65, TD-71 erledigt 13.11.2026, Gerätetest offen; TD-32 bewusster Scope-Cut; TD-46 wartet auf ADR-0002); Lokalisierungs-Grundlage | Rest B, Teile C und E |
 | **3 – Messenger-Alltag** | 6–8 Wochen | Zielbild-Entscheidungen 1–4; kürzerer Erstnutzer-Weg, Alltagssprache, Platzhalter ausblenden; verständliche Fehlermeldungen; Desktop (Rechtsklick, dann zwei Spalten); Benachrichtigungen Windows/Kanäle; DB-Indizes, seitenweises Laden; Bearbeiten, Weiterleiten, Entwürfe, Kanalsuche, Kanal stummschalten, Sprachkompression Windows; Datenschutzerklärung, Abmelden/Löschen, Meldewege; danach Übersetzung DE/EN | Stufe D, Rest C |
 | **4 – Format und Funk** | ab Monat 4 | Mesh M0/M1 zeitlich begrenzt; **ein** Nachrichtenformat (NIP-17/NIP-44 + kompakte Funkform, Empfangsbestätigung, Absendernachweis) als ADR; Medienserver; GovernanceBridge, `lib/app/`, Modul-Liste; NIP-42 | Stufe D/E + Mesh-Zweig |
 | Danach | – | Gruppenschlüssel mit Wechsel, vertrauliche Governance (TD-42), Übergabe-Kette (C-5), ADR-0002; Bürgschaften gegen Mehrfachidentitäten, Social Recovery, Ablauf des Superadmin-Mandats; dann Stufe F (interzellulär, Quadratic Voting, AETHER) und G (Linux vor iOS) | Stufe E–G |
@@ -416,7 +416,13 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Stand 11. November 2026: Block 1 des Arbeitsplans nach dem Audit, beginnend
+Stand 13. November 2026: Block 1 ist im Code bis auf R-1 Teil 2 (Wechsel
+auf einen Release-Schlüssel, bewusst später) umgesetzt: C-1 bis C-3, S-1,
+S-2, S-3/C-4, S-4 mit neuem Kanalschlüssel beim Entfernen, Z-1/Z-2,
+Debug-Keystore gesichert, D-1/D-2. Offen: die gesammelten Gerätetests,
+danach Push und Block 2.
+
+Frühere Fassung, Stand 11. November 2026: Block 1 des Arbeitsplans nach dem Audit, beginnend
 mit den Korrekturen am Kontakt-Sync (C-1 bis C-3).
 
 Frühere Fassung, Stand 10. November 2026: Stufe A abschließen

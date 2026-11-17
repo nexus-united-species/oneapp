@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import 'package:geolocator/geolocator.dart';
 
 import 'package:provider/provider.dart';
 
+import '../../core/contacts/contact_service.dart';
 import '../../core/identity/identity_service.dart';
 import '../../core/utils/geohash.dart';
 import '../chat/chat_provider.dart';
@@ -265,7 +267,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
           title: const Text('Gründer-Rolle übertragen',
               style: TextStyle(color: AppColors.onDark)),
           content: Text(
-            'Möchtest du …${successor.did.substring(successor.did.length > 12 ? successor.did.length - 12 : 0)} '
+            'Möchtest du ${ContactService.instance.getDisplayName(successor.did)} '
             'zum neuen Gründer von "${_cell.name}" ernennen und die Gemeinschaft verlassen?',
             style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
           ),
@@ -339,7 +341,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
             itemCount: candidates.length,
             itemBuilder: (_, i) {
               final m = candidates[i];
-              final shortDid = '…${m.did.substring(m.did.length > 12 ? m.did.length - 12 : 0)}';
+              final shortDid = ContactService.instance.getDisplayName(m.did);
               final roleLabel = m.role == MemberRole.moderator
                   ? 'Moderator'
                   : 'Mitglied';
@@ -367,7 +369,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
 
   Future<void> _removeMember(CellMember target) async {
     final shortDid =
-        '…${target.did.substring(target.did.length > 12 ? target.did.length - 12 : 0)}';
+        ContactService.instance.getDisplayName(target.did);
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -428,7 +430,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
         title: const Text('Gründer-Rolle übertragen',
             style: TextStyle(color: AppColors.onDark)),
         content: Text(
-          'Möchtest du …${target.did.substring(target.did.length > 12 ? target.did.length - 12 : 0)} '
+          'Möchtest du ${ContactService.instance.getDisplayName(target.did)} '
           'zum neuen Gründer von "${_cell.name}" ernennen? '
           'Du wirst danach zum normalen Mitglied.',
           style: TextStyle(color: AppColors.onDark.withValues(alpha: 0.85)),
@@ -450,7 +452,7 @@ class _CellInfoScreenState extends State<CellInfoScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                '…${target.did.substring(target.did.length > 12 ? target.did.length - 12 : 0)} ist jetzt Gründer von ${_cell.name}.'),
+                '${ContactService.instance.getDisplayName(target.did)} ist jetzt Gründer von ${_cell.name}.'),
             backgroundColor: Colors.green,
           ),
         );
@@ -747,7 +749,7 @@ class _MemberTile extends StatelessWidget {
 
     final shortDid = isMe
         ? 'Du'
-        : '…${member.did.substring(member.did.length > 12 ? member.did.length - 12 : 0)}';
+        : ContactService.instance.getDisplayName(member.did);
 
     Widget tile = Container(
       margin: const EdgeInsets.only(bottom: 4),

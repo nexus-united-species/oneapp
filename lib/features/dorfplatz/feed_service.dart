@@ -49,6 +49,12 @@ class FeedService {
   // Nostr publisher — set from ChatProvider after NostrTransport is ready.
   FeedNostrPublisher? _publisher;
 
+  /// The local Nostr public key (hex), set from ChatProvider. Used so an
+  /// incoming reaction signed with this device's own key — including one
+  /// added from another device of the same identity — is attributed to
+  /// [myDid] rather than stored under the raw pubkey (audit TD-71).
+  String? Function()? getMyNostrPubkeyHex;
+
   final _streamController = StreamController<void>.broadcast();
 
   /// Fires whenever the post list or reactions change.
@@ -316,10 +322,12 @@ class FeedService {
       final comment = FeedComment.fromJson(data);
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
 
-      if (comment.authorDid == myDid) return; // own comment
-
       await PodDatabase.instance.insertFeedComment(comment.toJson());
       _streamController.add(null);
+
+      // Own comment, e.g. written on our other device: stored above
+      // (idempotent by id), but no notification about ourselves.
+      if (comment.authorDid == myDid) return;
 
       final senderName = _senderName(comment.authorDid);
       final preview = _truncate(comment.content, 50);
@@ -379,6 +387,11 @@ class FeedService {
       print('[DORFPLATZ-REACT-RECV] Kind-7 from $senderPubkey: emoji=$emoji target=$shortTarget…');
 
       final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+      final reactorDid = resolveFeedReactorId(
+        signerPubkey: senderPubkey,
+        myDid: myDid,
+        myNostrPubkey: getMyNostrPubkeyHex?.call(),
+      );
 
       // Find ANY post with this Nostr event ID (not just own posts).
       final matched = _posts.where((p) => p.nostrEventId == referencedId).toList();
@@ -393,13 +406,16 @@ class FeedService {
         await PodDatabase.instance.upsertReaction(
           messageId: matchingPost.id,
           emoji: emoji,
-          reactorDid: senderPubkey,
+          reactorDid: reactorDid,
           nostrEventId: reactionEventId,
         );
         _streamController.add(null);
 
-        // Notification only for reactions on my own posts (Trigger 4).
-        if (matchingPost.authorDid == myDid && await NotificationSettings.feedLikes()) {
+        // Notification only for reactions on my own posts, never for my own
+        // reaction echoed back from another of my devices (TD-71).
+        if (matchingPost.authorDid == myDid &&
+            reactorDid != myDid &&
+            await NotificationSettings.feedLikes()) {
           final contact = ContactService.instance.contacts.firstWhere(
             (c) => c.nostrPubkey == senderPubkey,
             orElse: () => ContactService.instance.contacts.first,

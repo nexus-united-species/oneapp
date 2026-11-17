@@ -1709,6 +1709,16 @@ class ProposalService {
     final isMember = CellService.instance.isMember(p.cellId);
     if (!isMember) throw StateError('Not a member of this cell');
 
+    // Audit F-005: without the Nostr pubkey (transport not yet ready), the
+    // vote would be stored with voterPubkey=='', and the DB's
+    // UNIQUE(proposal_id, voter_pubkey) with REPLACE lets a second such
+    // vote from anyone else silently overwrite the first. Checked before
+    // any write (including the auto-revoke below) happens.
+    if ((getMyNostrPubkeyHex?.call() ?? '').isEmpty) {
+      throw StateError(
+          'Transport noch nicht bereit — Stimme kann nicht sicher abgegeben werden');
+    }
+
     // ── Phase 4.7b: Modus-Validierung ───────────────────────────────────────
     // Stellt sicher dass die (choice, selectedOptionId)-Kombination zur
     // votingMode des Proposals passt. Verstöße werden als StateError geworfen

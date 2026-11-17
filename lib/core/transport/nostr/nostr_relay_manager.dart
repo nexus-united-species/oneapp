@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'nostr_event.dart';
 import 'nostr_event_verifier.dart';
 import 'publish_result.dart';
+import 'relay_backoff.dart';
 import 'relay_config.dart';
 
 export 'relay_config.dart' show defaultRelays;
@@ -74,6 +76,17 @@ class NostrRelayManager {
   // relay URL → pending reconnect timer
   final Map<String, Timer> _reconnectTimers = {};
 
+  // relay URL → failed connection attempts in a row (audit Z-6)
+  final Map<String, int> _failures = {};
+
+  /// WebSocket ping interval: a connection that stops answering (e.g. after
+  /// switching between WLAN and mobile data) is closed and reconnected
+  /// instead of hanging silently (audit Z-6).
+  static const Duration pingInterval = Duration(seconds: 30);
+
+  /// Gives up a handshake that takes longer than this.
+  static const Duration connectTimeout = Duration(seconds: 15);
+
   // Active subscriptions: subId → filter JSON
   final Map<String, Map<String, dynamic>> _subscriptions = {};
 
@@ -115,6 +128,7 @@ class NostrRelayManager {
   /// Opens connections to all configured relays.
   Future<void> start() async {
     _running = true;
+    _failures.clear();
     for (final url in _statuses.keys) {
       _connect(url);
     }
@@ -291,7 +305,11 @@ class NostrRelayManager {
     late WebSocketChannel channel;
 
     try {
-      channel = WebSocketChannel.connect(Uri.parse(url));
+      channel = IOWebSocketChannel.connect(
+        Uri.parse(url),
+        pingInterval: pingInterval,
+        connectTimeout: connectTimeout,
+      );
     } catch (e) {
       print('[NOSTR] $url – sync connect error: $e');
       _statuses[url]?.state = RelayState.error;
@@ -311,6 +329,7 @@ class NostrRelayManager {
       print('[NOSTR] $url – connected (${latency}ms)');
       _statuses[url]?.latencyMs = latency;
       _statuses[url]?.state = RelayState.connected;
+      _failures.remove(url);
       _resubscribe(url);
       _relayConnectedController.add(url);
     }).catchError((Object e) {
@@ -344,9 +363,16 @@ class NostrRelayManager {
 
   void _scheduleReconnect(String url) {
     if (!_running) return;
-    print('[NOSTR] $url – reconnect in 10s');
-    _reconnectTimers[url]?.cancel();
-    _reconnectTimers[url] = Timer(const Duration(seconds: 10), () {
+    // Several error callbacks may fire for one lost connection; only the
+    // first schedules (and counts) a new attempt.
+    if (_reconnectTimers[url]?.isActive ?? false) return;
+    final failures = (_failures[url] ?? 0) + 1;
+    _failures[url] = failures;
+    final delay = reconnectDelay(failures, jitter: randomJitter());
+    print('[NOSTR] $url – reconnect in ${delay.inSeconds}s '
+        '(attempt $failures)');
+    _reconnectTimers[url] = Timer(delay, () {
+      _reconnectTimers.remove(url);
       if (_running) _connectSafe(url);
     });
   }

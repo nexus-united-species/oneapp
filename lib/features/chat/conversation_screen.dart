@@ -30,6 +30,8 @@ import '../../shared/widgets/linkified_text.dart';
 import '../contacts/contact_detail_screen.dart';
 import '../contacts/widgets/trust_badge.dart';
 import 'chat_provider.dart';
+import 'delivery_indicator.dart';
+import 'delivery_status.dart';
 import 'conversation.dart';
 import 'conversation_service.dart';
 import 'voice_player.dart';
@@ -1377,9 +1379,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         // Refresh when new messages arrive
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           final fresh = await provider.getMessages(_convId);
-          if (mounted && fresh.length != _messages.length) {
+          if (mounted && messageListChanged(_messages, fresh)) {
+            final grew = fresh.length != _messages.length;
             setState(() => _messages = List.from(fresh));
-            if (!_showScrollDown) _scrollToBottom();
+            if (grew && !_showScrollDown) _scrollToBottom();
           }
         });
 
@@ -1931,6 +1934,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
               onTapQuote: widget.onTapQuote,
               highlightQuery: widget.highlightQuery,
             ),
+            if (widget.isMe) DeliveryIndicator(message: widget.message),
             _ReactionsRow(
               messageId: widget.message.id,
               onToggle: widget.onReactionToggle,
@@ -2148,6 +2152,18 @@ class _TextContent extends StatelessWidget {
               ],
             ],
           ),
+          // Audit S-1: sent by an older app version without identity proof.
+          if (!isMe && message.isSenderUnverified)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'Absender nicht bestätigt',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.orange.withValues(alpha: 0.85),
+                ),
+              ),
+            ),
         ],
       ),
     );

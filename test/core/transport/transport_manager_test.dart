@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nexus_oneapp/core/identity/did.dart';
 import 'package:nexus_oneapp/core/transport/message_transport.dart';
 import 'package:nexus_oneapp/core/transport/nexus_message.dart';
 import 'package:nexus_oneapp/core/transport/nexus_peer.dart';
@@ -91,6 +94,32 @@ NexusPeer _peer(String did, TransportType type) => NexusPeer(
       lastSeen: DateTime.now(),
     );
 
+/// A message signed by the key of its own `did:key` sender, as every
+/// outgoing message is (audit S-3). [signerSeed] lets tests sign with a key
+/// that does not match the sender.
+Future<NexusMessage> _signedMessage(
+  String body, {
+  int senderSeed = 3,
+  int? signerSeed,
+}) async {
+  Future<SimpleKeyPair> keyPair(int seed) =>
+      Ed25519().newKeyPairFromSeed(List<int>.filled(32, seed));
+  final sender = await keyPair(senderSeed);
+  final did =
+      DidKey.fromPublicKeyBytes((await sender.extractPublicKey()).bytes);
+  final msg = NexusMessage.create(fromDid: did, body: body);
+  final signer = signerSeed == null ? sender : await keyPair(signerSeed);
+  final sig = await Ed25519().sign(msg.toSignableBytes(), keyPair: signer);
+  return msg.withSignature(base64.encode(sig.bytes));
+}
+
+const _settle = Duration(milliseconds: 200);
+
+/// A directed message to Bob. Directed messages cascade through the
+/// transports (first success wins); broadcasts go out on every transport.
+NexusMessage _toBob(String body) => NexusMessage.create(
+    fromDid: 'did:key:zA', toDid: 'did:key:zBob', body: body);
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
@@ -140,11 +169,30 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hello');
-      await manager.sendMessage(msg);
+      await manager.sendMessage(_toBob('hello'), recipientDid: 'did:key:zBob');
 
       expect(ble.sent, hasLength(1));
       expect(nostr.sent, isEmpty);
+    });
+
+    test('a broadcast goes out on every transport', () async {
+      final manager = _freshManager();
+      final ble = FakeTransport(type: TransportType.ble);
+      final nostr = FakeTransport(type: TransportType.nostr, shouldFailSend: true);
+      final lan = FakeTransport(type: TransportType.lan);
+
+      manager
+        ..registerTransport(ble)
+        ..registerTransport(nostr)
+        ..registerTransport(lan);
+      await manager.start();
+
+      await manager.sendMessage(
+          NexusMessage.create(fromDid: 'did:key:zA', body: 'an alle'));
+
+      expect(ble.sent, hasLength(1));
+      expect(lan.sent, hasLength(1),
+          reason: 'one failing transport does not stop the others');
     });
 
     test('falls back to Nostr when BLE send fails', () async {
@@ -157,10 +205,10 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zA', body: 'fallback');
-      await manager.sendMessage(msg);
+      final via = await manager.sendMessage(_toBob('fallback'),
+          recipientDid: 'did:key:zBob');
 
+      expect(via, TransportType.nostr);
       expect(nostr.sent, hasLength(1));
     });
 
@@ -176,9 +224,8 @@ void main() {
         ..registerTransport(nostr);
       await manager.start();
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'none');
       await expectLater(
-        manager.sendMessage(msg),
+        manager.sendMessage(_toBob('none'), recipientDid: 'did:key:zBob'),
         throwsA(isA<StateError>()),
       );
     });
@@ -186,10 +233,8 @@ void main() {
     test('throws when no transport is registered', () async {
       final manager = _freshManager();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zA', body: 'nobody');
       await expectLater(
-        manager.sendMessage(msg),
+        manager.sendMessage(_toBob('nobody'), recipientDid: 'did:key:zBob'),
         throwsA(isA<StateError>()),
       );
     });
@@ -213,9 +258,11 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hi Bob');
-      await manager.sendMessage(msg, recipientDid: 'did:key:zBob');
+      final via = await manager.sendMessage(_toBob('hi Bob'),
+          recipientDid: 'did:key:zBob');
 
+      expect(via, TransportType.lan,
+          reason: 'the manager reports which transport took it');
       expect(lan.sent, hasLength(1), reason: 'LAN should be preferred');
       expect(ble.sent, isEmpty);
     });
@@ -237,9 +284,8 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      final msg = NexusMessage.create(fromDid: 'did:key:zA', body: 'hi Bob');
-      // Send broadcast (no recipientDid) → should go via BLE (first registered)
-      await manager.sendMessage(msg);
+      // Bob is not on LAN → registration order, BLE first.
+      await manager.sendMessage(_toBob('hi Bob'), recipientDid: 'did:key:zBob');
 
       expect(ble.sent, hasLength(1));
       expect(lan.sent, isEmpty);
@@ -275,15 +321,14 @@ void main() {
       manager.registerTransport(ble);
       await manager.start();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zAlice', body: 'hi!');
+      final msg = await _signedMessage('hi!');
 
       final received = <NexusMessage>[];
       final sub = manager.onMessageReceived.listen(received.add);
 
       ble.simulateReceive(msg);
 
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await Future<void>.delayed(_settle);
       await sub.cancel();
 
       expect(received, hasLength(1));
@@ -300,8 +345,7 @@ void main() {
         ..registerTransport(lan);
       await manager.start();
 
-      final msg =
-          NexusMessage.create(fromDid: 'did:key:zAlice', body: 'dup');
+      final msg = await _signedMessage('dup');
 
       final received = <NexusMessage>[];
       final sub = manager.onMessageReceived.listen(received.add);
@@ -309,7 +353,7 @@ void main() {
       ble.simulateReceive(msg);
       lan.simulateReceive(msg); // same message, different transport
 
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await Future<void>.delayed(_settle);
       await sub.cancel();
 
       expect(received, hasLength(1));
@@ -361,6 +405,75 @@ void main() {
       await sub.cancel();
 
       expect(received, isEmpty);
+    });
+  });
+
+  group('TransportManager – sender signature on LAN/BLE (audit S-3)', () {
+    Future<(FakeTransport, List<NexusMessage>)> start(TransportType type) async {
+      final manager = _freshManager();
+      final transport = FakeTransport(type: type);
+      manager.registerTransport(transport);
+      await manager.start();
+      final received = <NexusMessage>[];
+      manager.onMessageReceived.listen(received.add);
+      return (transport, received);
+    }
+
+    test('an unsigned LAN message is dropped', () async {
+      final (lan, received) = await start(TransportType.lan);
+      lan.simulateReceive(NexusMessage.create(
+          fromDid: (await _signedMessage('x')).fromDid, body: 'unsigned'));
+      await Future<void>.delayed(_settle);
+      expect(received, isEmpty);
+    });
+
+    test('a BLE message signed by another key is dropped', () async {
+      final (ble, received) = await start(TransportType.ble);
+      ble.simulateReceive(await _signedMessage('forged', signerSeed: 9));
+      await Future<void>.delayed(_settle);
+      expect(received, isEmpty);
+    });
+
+    test('a LAN message changed after signing is dropped', () async {
+      final (lan, received) = await start(TransportType.lan);
+      final signed = await _signedMessage('original');
+      lan.simulateReceive(NexusMessage(
+        id: signed.id,
+        fromDid: signed.fromDid,
+        toDid: signed.toDid,
+        type: signed.type,
+        body: 'changed',
+        timestamp: signed.timestamp,
+        signature: signed.signature,
+      ));
+      await Future<void>.delayed(_settle);
+      expect(received, isEmpty);
+    });
+
+    test('a forged copy does not block the genuine message', () async {
+      final (lan, received) = await start(TransportType.lan);
+      final genuine = await _signedMessage('echt');
+      lan.simulateReceive(NexusMessage(
+        id: genuine.id,
+        fromDid: genuine.fromDid,
+        toDid: genuine.toDid,
+        type: genuine.type,
+        body: 'falsch',
+        timestamp: genuine.timestamp,
+      ));
+      await Future<void>.delayed(_settle);
+      lan.simulateReceive(genuine);
+      await Future<void>.delayed(_settle);
+      expect(received.map((m) => m.body), ['echt']);
+    });
+
+    test('Nostr messages are checked in the Nostr transport, not here',
+        () async {
+      final (nostr, received) = await start(TransportType.nostr);
+      nostr.simulateReceive(
+          NexusMessage.create(fromDid: 'did:key:zAlice', body: 'via Nostr'));
+      await Future<void>.delayed(_settle);
+      expect(received, hasLength(1));
     });
   });
 

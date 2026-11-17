@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/contacts/contact.dart';
@@ -128,13 +131,19 @@ class _RadarScreenState extends State<RadarScreen> {
       body: Consumer<ChatProvider>(
         builder: (context, provider, _) {
           if (!provider.initialized) return const _LoadingBody();
-          if (!provider.permissionsGranted) {
-            return _PermissionDeniedBody(onRetry: provider.initialize);
-          }
           if (provider.error != null && !provider.running) {
             return _ErrorBody(
               error: provider.error!,
               onRetry: provider.initialize,
+            );
+          }
+          if (!provider.bluetoothGranted &&
+              (Platform.isAndroid || Platform.isIOS)) {
+            return Column(
+              children: [
+                const _BluetoothOffBanner(),
+                Expanded(child: _ChatBody(provider: provider)),
+              ],
             );
           }
           return _ChatBody(provider: provider);
@@ -263,13 +272,19 @@ class _ChatScreenState extends State<ChatScreen> {
           if (!provider.initialized) {
             return const _LoadingBody();
           }
-          if (!provider.permissionsGranted) {
-            return _PermissionDeniedBody(onRetry: provider.initialize);
-          }
           if (provider.error != null && !provider.running) {
             return _ErrorBody(
               error: provider.error!,
               onRetry: provider.initialize,
+            );
+          }
+          if (!provider.bluetoothGranted &&
+              (Platform.isAndroid || Platform.isIOS)) {
+            return Column(
+              children: [
+                const _BluetoothOffBanner(),
+                Expanded(child: _ChatBody(provider: provider)),
+              ],
             );
           }
           return _ChatBody(provider: provider);
@@ -299,37 +314,31 @@ class _LoadingBody extends StatelessWidget {
   }
 }
 
-class _PermissionDeniedBody extends StatelessWidget {
-  const _PermissionDeniedBody({required this.onRetry});
-  final VoidCallback onRetry;
+/// Hint when Bluetooth is not permitted: the chat keeps running over the
+/// internet and WLAN (audit Z-7).
+class _BluetoothOffBanner extends StatelessWidget {
+  const _BluetoothOffBanner();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return Material(
+      color: Colors.orange.withValues(alpha: 0.15),
       child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+        child: Row(
           children: [
-            const Icon(Icons.bluetooth_disabled, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text(
-              'Bluetooth-Berechtigung benötigt',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
+            const Icon(Icons.bluetooth_disabled, color: Colors.orange),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Bluetooth ist nicht erlaubt. Der Chat läuft über Internet '
+                'und WLAN; Geräte in der Nähe ohne Netz findest du so nicht.',
+                style: TextStyle(fontSize: 13),
+              ),
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'Android benötigt Standort-Berechtigung für BLE-Scanning. '
-              'Deine Daten verlassen das Gerät niemals.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Erneut versuchen'),
+            TextButton(
+              onPressed: openAppSettings,
+              child: const Text('Erlauben'),
             ),
           ],
         ),

@@ -171,13 +171,24 @@ class _ChannelAdminScreenState extends State<ChannelAdminScreen> {
           'Du wurdest aus dem Kanal ${widget.channel.name} entfernt.',
         );
 
-    // Update member list.
-    final newMembers =
-        widget.channel.members.where((d) => d != did).toList();
-    await GroupChannelService.instance
-        .updateMembers(widget.channel.name, newMembers);
+    // Update the member list; a private channel gets a new key that only
+    // the remaining members receive (audit S-4).
+    if (!mounted) return;
+    final current =
+        GroupChannelService.instance.findByName(widget.channel.name) ??
+            widget.channel;
+    final unreachable =
+        await context.read<ChatProvider>().removeChannelMember(current, did);
 
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    if (unreachable > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Neuer Kanalschlüssel: $unreachable Mitglied'
+            '${unreachable == 1 ? '' : 'er'} ohne bekannten Schlüssel '
+            'nicht erreicht. Bitte erneut einladen.'),
+      ));
+    }
   }
 
   // ── Delete channel ────────────────────────────────────────────────────────

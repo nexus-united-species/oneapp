@@ -1,6 +1,6 @@
 # N.E.X.U.S. OneApp – Dokumentationsindex
 
-Stand: 15. Juli 2026
+Stand: 15. Juli 2026, nachgeführt 13. November 2026
 
 Dieser Index ist der Einstiegspunkt in die Projektdokumentation. Aussagen zum
 aktuellen Stand gelten nur dann als aktuell, wenn sie in `current/` oder in
@@ -11,13 +11,14 @@ sind keine Arbeitsgrundlage für neue Änderungen.
 
 | Dokument | Zweck | Status |
 |---|---|---|
-| [Projektstatus](current/PROJECT_STATUS.md) | Was tatsächlich implementiert, getestet und offen ist | aktuell |
+| [Projektstatus](current/PROJECT_STATUS.md) | Was tatsächlich implementiert, getestet und offen ist | aktuell, Stand 13.11.2026 |
 | [Architektur-Ist-Zustand](current/ARCHITECTURE_REALITY.md) | Wie die Architektur im Code tatsächlich aussieht: Schichtung, Kopplungen, Identitätsmodell | aktuell, Stand 18.08.2026 |
-| [Event-Karte](current/EVENT_MAP.md) | Nostr-Kind → Handler → Service, inkl. Empfangspfad und Vertrauenslücken | aktuell; erfüllt Lauf B E-5 |
+| [Event-Karte](current/EVENT_MAP.md) | Nostr-Kind → Handler → Service, inkl. Empfangspfad und Vertrauensprüfungen | aktuell, Stand 13.11.2026 |
 | [Was nicht angefasst werden sollte](current/DO_NOT_TOUCH.md) | Bereiche, die gut genug sind und geschützt werden | aktuell, Stand 18.08.2026 |
-| [Architekturentscheidungen](decisions/) | Offene und getroffene Grundsatzentscheidungen (ADRs) | 5 Entscheidungen offen |
-| [Release Readiness](current/RELEASE_READINESS.md) | Blocker und Reihenfolge vor dem nächsten Alpha-Release | aktuell |
-| [Tech Debt](current/TECH_DEBT.md) | Bestätigte technische Schulden mit Priorität | aktuell, ergänzt 06.11.2026 (TD-57 bis TD-65) |
+| [Architekturentscheidungen](decisions/) | Offene und getroffene Grundsatzentscheidungen (ADRs) | ADR-0001 angenommen (08.11.2026), ADR-0002 bis 0005 vorgeschlagen |
+| [Release Readiness](current/RELEASE_READINESS.md) | Blocker und Reihenfolge vor dem nächsten Alpha-Release | aktuell, Stand 13.11.2026 |
+| [Tech Debt](current/TECH_DEBT.md) | Was offen ist, nach Priorität; Verlauf im [Archiv](archive/TECH_DEBT_VERLAUF.md) | aktuell, neu gegliedert 13.11.2026 |
+| [Offene Gerätetests](current/GERAETETESTS_OFFEN.md) | Gesammelte Prüfungen am Gerät, die vor dem Push laufen | laufend gepflegt |
 | [Bedienungsanleitung](guides/Bedienungsanleitung.md) | Nutzeranleitung für v0.2.0-alpha | aktuell, Alpha-Hinweise beachten |
 | [Testanleitung](guides/testing/TESTING.md) | Reproduzierbarer Testeinstieg und bekannte Baseline | aktuell |
 | [G2-Spezifikation v1.5](specs/governance/G2_Spezifikation_v1.5.md) | Konsolidierte Governance-Spezifikation | aktuell |
@@ -26,23 +27,25 @@ sind keine Arbeitsgrundlage für neue Änderungen.
 
 | Bereich | Inhalt | Einordnung |
 |---|---|---|
-| [Audits Juli 2026](audits/2026-07/) | Technischer Lauf A und strategischer Lauf B | aktuelle Befundquellen; Lauf B teilweise bewusst geparkt |
+| [Audit November 2026](audits/2026-11/AUDIT_BERICHT.md) | Code-, Strategie-, Funktions-, UX-, Dezentralitäts- und Modularitätsprüfung mit Zwischenplan | aktuelle Befundquelle; Grundlage des Arbeitsplans |
+| [Audits Juli 2026](audits/2026-07/) | Technischer Lauf A und strategischer Lauf B | Befunde größtenteils umgesetzt; Lauf B teilweise bewusst geparkt |
 | [AETHER-Entwurf v0.4](specs/drafts/AETHER_Spezifikation_v0.4.docx) | Noch nicht freigegebene AETHER-Spezifikation | Entwurf, AETHER ist nicht implementiert |
 | [Architektur-Briefing 2026](planning/ARCHITEKTUR_BRIEFING_2026.md) | Quellfassung des strategischen Briefings: Messenger First, Modular Underneath, Reality-Audit-Auftrag | Auftragsgrundlage seit 18.08.2026 |
 | [Antwort auf das Briefing](planning/ANTWORT_ARCHITEKTUR_BRIEFING.md) | Architektenantwort: §50-Fragen, Widerspruch, Bewertung einer Kooperation mit Web of Trust (zweimal korrigiert) | Diskussionsgrundlage |
-| [NOW/NEXT/LATER](planning/NOW_NEXT_LATER.md) | Projektablauf Phase 0–5 (seit 06.11.2026), Release-Blocker, die 5 ADRs, zurückgestellte Themen | **Arbeitsgrundlage für den nächsten Schritt** |
+| [NOW/NEXT/LATER](planning/NOW_NEXT_LATER.md) | Arbeitsplan nach dem Audit (Blöcke 1–4, seit 11.11.2026), Stufen A–G als Inhaltsliste, Mesh-Zweig | **Arbeitsgrundlage für den nächsten Schritt** |
 | [Übergabe an ChatGPT](planning/UEBERGABE_CHATGPT.md) | Welche Dokumente die Strategieberatung braucht, was verifiziert ist, was sich zuletzt geändert hat | Handreichung |
 | [Briefing-Abdeckung](planning/BRIEFING_ABDECKUNG.md) | Welche Briefing-Anforderung ist erfüllt, offen oder bewusst verworfen | **fortzuschreiben nach jedem Arbeitsblock** |
 | [Messenger-first-Modus](planning/messenger-first-modus.md) | Analyse einer möglichen Fokusänderung | offene Planungsentscheidung |
 | [Zielbild Gemeinschaften, Portal und OneApp](planning/ZIELBILD_GEMEINSCHAFTEN_HUMHUB_ONEAPP.md) | Wie HumHub-Kreise, Übersicht, Kanäle, Dorfplatz und Gemeinschaften zusammengeführt werden; Übergangspfad zur Ablösung des Portals | Entwurf, Stand 06.11.2026; vor Phase 3 zu entscheiden |
 | [Research](research/) | Analysen fremder Projekte: Web of Trust, Real Life Stack, SourceLess | Recherche, keine Entscheidung |
-| [Bauplan-Extrakt V13.1](vision/BAUPLAN_V13.1_extrakt.txt) | Langfristige Vision | Vision, keine Ist-Beschreibung |
+| [Bauplan-Extrakt V13.1](vision/BAUPLAN_V13.1_extrakt.txt) | Langfristige Vision (aktueller Bauplan: v14, außerhalb des Repos) | Vision, keine Ist-Beschreibung |
+| [Bauplan-Abgleich](vision/BAUPLAN_ABGLEICH.md) | Aussagen des Bauplans, die der Code nicht deckt (Audit D-1) | zur Weitergabe an die Bauplan-Pflege |
 | [Legacy-Chat-Test](guides/testing/legacy-chat-test.md) | Frühere Zwei-Geräte-LAN-Anleitung | Referenz; aktuelle Anleitung hat Vorrang |
 | [Bugmeldungen](guides/testing/bugmeldungen/) | 13 gemeldete Einzelfehler aus dem Testing (Profilbilder, Verschlüsselung, KanalGruppe-Administration u. a.) | ungeprüft gegen aktuellen Code; noch nicht in TECH_DEBT.md konsolidiert |
 | [Änderungswünsche](guides/testing/aenderungswuensche/) | 3 Change Requests aus dem Testing | offen |
 | [Testprotokoll v0.2.0-alpha](guides/testing/NEXUS_OneApp_Testprotokoll_v0.2.0-alpha.docx) + [Bug-Reporting-Tabelle](guides/testing/NEXUS_OneApp_Bug-Reporting_v0.2.0-alpha.xlsx) | Strukturierte Testdokumentation zur v0.2.0-alpha | Referenz |
 | [Masterplan & Baustellen](planning/NEXUS_Masterplan_Baustellen.md) + [Kommandozentrale](planning/NEXUS_Kommandozentrale.md) | Projektweite Priorisierung (Stand 2026-06-26); ordnet OneApp-Entwicklung in Gesamtprojekt ein | Planung, außerhalb reinem App-Scope |
-| [Mesh-Grundlagen](specs/drafts/mesh/) | Reticulum/BLE-Mesh-Referenzmaterial | Hintergrund; Mesh-Transport laut CLAUDE.md geplant, nicht implementiert |
+| [Mesh-Grundlagen](specs/drafts/mesh/) | Reticulum/BLE-Mesh-Referenzmaterial | Hintergrund; Mesh als paralleler Zweig geplant, nicht implementiert (BLE/LAN heute nur Direktverbindung) |
 | [AETHER-Synopse Ökonomie](specs/drafts/AETHER_Synopse_Oekonomie.pdf) | Ökonomisches Begleitdokument zur AETHER-Spezifikation | Entwurf |
 | [Implementierungsplan V5.2 (Developer-Fassung)](archive/plans/NEXUS_OneApp_Implementierungsplan_V5.2_developer.md) | Ausführlichere Entwicklerversion des archivierten Plans | Referenz, überholt |
 | [Claude-Arbeitsweise-Leitfaden](guides/NEXUS_mit_Claude_bauen_Leitfaden.md) + [Onboarding](guides/onboarding_nexus_one_app.md) | Wie mit Claude Code an der OneApp gearbeitet wird | Arbeitsanleitung |
@@ -113,7 +116,8 @@ jeder Änderung vollständig neu.
 | Welcher Nostr-Kind gehört zu welchem Handler? | [current/EVENT_MAP.md](current/EVENT_MAP.md) |
 | Was ist kaputt oder Schuld? | [current/TECH_DEBT.md](current/TECH_DEBT.md) |
 | Was darf ich nicht anfassen? | [current/DO_NOT_TOUCH.md](current/DO_NOT_TOUCH.md) |
-| Was kommt als Nächstes? | [current/RELEASE_READINESS.md](current/RELEASE_READINESS.md) |
+| Was kommt als Nächstes? | [planning/NOW_NEXT_LATER.md](planning/NOW_NEXT_LATER.md) (Reihenfolge), [current/RELEASE_READINESS.md](current/RELEASE_READINESS.md) (Release-Blocker) |
+| Was muss noch am Gerät geprüft werden? | [current/GERAETETESTS_OFFEN.md](current/GERAETETESTS_OFFEN.md) |
 | Was untersuchen wir? | [research/](research/) |
 | Was gilt nicht mehr? | `archive/` |
 

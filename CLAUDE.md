@@ -16,7 +16,7 @@ N.E.X.U.S. ist Offline-First, P2P und asynchron. Nostr-Relays sind nur dumme Pip
 2. **LISTENER VOR TRANSPORT-START:** Streams (`.listen()`) müssen IMMER registriert werden, **bevor** der Transport (`_manager.start()`) oder Nostr-Keys initialisiert werden, sonst kommt es zu Event-Drops beim Startup.
 3. **NIP-01 e-Tag Pflicht:** Ein `e`-Tag MUSS immer eine 64-Hex Nostr-Event-ID sein. Keine UUIDs in `e`-Tags! Für interne UUIDs immer Custom-Tags (z.B. `proposal_id`) verwenden.
 4. **Zustands-Validierung:** Bei jedem Nostr `publish()` MUSS die Antwort des Relays verarbeitet/geloggt werden (`[RELAY-OK]`). Keine stillen Fails.
-5. **Empfang ist eine Vertrauensgrenze:** Neue oder geänderte Empfangspfade MÜSSEN Signatur/ID und die fachliche Absenderberechtigung prüfen, bevor sie lokalen Zustand verändern. Der Bestand erfüllt das noch nicht durchgängig; nicht als gegeben voraussetzen.
+5. **Empfang ist eine Vertrauensgrenze:** Neue oder geänderte Empfangspfade MÜSSEN Signatur/ID und die fachliche Absenderberechtigung prüfen, bevor sie lokalen Zustand verändern. Für die DID eines Absenders gilt nur der Identitätsnachweis (`IdentityProof`, `sender_check.dart`) bzw. bei LAN/BLE die Nachrichtensignatur (`message_signature.dart`). Ohne Nachweis nie einen bekannten Schlüssel ersetzen. Feed, Reaktionen und Löschungen prüfen bisher nur den Nostr-Schlüssel.
 
 ## 🛡️ SECURITY & SAFETY AUDIT
 1. **Kein Klartext:** Alle privaten Daten in der SQLite-DB (`PodDatabase`) MÜSSEN AES-256-GCM verschlüsselt in der `enc`-Spalte landen.
@@ -57,8 +57,8 @@ Prüfe deinen geschriebenen Code selbst:
 ## 📌 TECH-STACK & VISION
 - **Ziel:** Dezentrales Betriebssystem für die Menschheitsfamilie (Protokoll, keine Plattform).
 - **Stack:** Flutter/Dart, SQLite (Proto-POD, verschlüsselt), GoRouter, Provider.
-- **Transport:** Nostr (primär, NIP-konform), BLE Mesh, LAN Discovery. Offline-First ist Gesetz.
+- **Transport:** Nostr (primär, NIP-konform; eigenes Relay `wss://relay.nexus-terminal.org` plus damus und nos.lol), BLE und LAN als Direktverbindung ohne Weiterleiten. Mesh (WiFi Direct, LoRa, Reticulum) ist ein geplanter, paralleler Zweig. Offline-First ist Gesetz.
 - **Identität:** BIP-39 Seed Phrase, Ed25519/SLIP-0010, did:key W3C.
-- **Ist-Stand:** G2.1.6 / Liquid Democracy ist implementiert. Quadratic Voting, AETHER und interzelluläre Governance sind nicht fertig.
-- **Aktueller Fokus:** Release-Härtung nach G2.1.6: Nostr-e-Tags, eingefrorener Stimmberechtigten-Snapshot, vollständiger DecisionRecord-Retry, Cross-Device-Tests sowie anschließend Empfangsverifikation/Autorisierung.
+- **Ist-Stand:** G2.1.6 / Liquid Democracy, Stufe B (eigenes Relay, Kontoumzug, Abgleich zwischen eigenen Geräten, netzweite Gründer-Übergabe) und die P0-Befunde des Audits vom November 2026 (außer R-1) sind umgesetzt. Empfangsprüfung: Nostr-Signatur (TD-39), Absenderberechtigung bei Governance/Zellen (TD-40), Identitätsnachweis bei DMs/Präsenz/Kanälen (S-1, eine Version Übergangszeit), Signatur bei LAN/BLE (S-3). Quadratic Voting, AETHER und interzelluläre Governance sind nicht fertig.
+- **Aktueller Fokus:** Arbeitsplan nach dem Audit (`docs/planning/NOW_NEXT_LATER.md`), Block 1 „Vertrauen“ abschließen und Gerätetests aus `docs/current/GERAETETESTS_OFFEN.md` abarbeiten; danach Block 2 „Zustellung und Werkzeuge“.
 - **Dokumentationseinstieg:** `docs/INDEX.md`; aktueller Status unter `docs/current/`.

@@ -5,6 +5,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 
 import 'message_transport.dart';
+import 'message_signature.dart';
 import 'nexus_message.dart';
 import 'nexus_peer.dart';
 
@@ -128,7 +129,10 @@ class TransportManager {
   ///   - **Directed messages**: prefer LAN if recipient is reachable via LAN,
   ///     otherwise try transports in registration order (cascade: first success
   ///     wins).
-  Future<void> sendMessage(
+  ///
+  /// Returns the transport that took a directed message (null for
+  /// broadcasts), so the chat can tell a direct delivery from a relay hand-off.
+  Future<TransportType?> sendMessage(
     NexusMessage message, {
     String? recipientDid,
   }) async {
@@ -164,7 +168,7 @@ class TransportManager {
           debugPrint('[TRANSPORT]   ✗ ${transport.type}: $e');
         }
       }
-      return;
+      return null;
     }
 
     // Directed message: cascade – first transport that delivers successfully wins.
@@ -180,7 +184,7 @@ class TransportManager {
       if (transport.type == TransportType.lan) {
         await _mirrorToNostr(msg, recipientDid);
       }
-      return;
+      return transport.type;
     }
     throw StateError(
       'No transport available. Register and start at least one transport.',
@@ -244,18 +248,40 @@ class TransportManager {
   void _subscribeToTransport(MessageTransport transport) {
     // Incoming messages
     _subs.add(transport.onMessageReceived.listen((msg) {
-      if (msg.isExpired) return;
-      if (_isDuplicate(msg.id)) {
-        if (msg.nostrEventId != null) _nostrReferenceController.add(msg);
-        return;
-      }
-      _messageController.add(msg);
+      // Processed one after another in arrival order: the signature check
+      // below is asynchronous, and a later copy from another transport must
+      // not overtake an earlier one.
+      _inbound = _inbound
+          .then((_) => _processIncoming(transport.type, msg))
+          .catchError((Object e) {
+        debugPrint('[TRANSPORT] incoming message failed: $e');
+      });
     }));
 
     // Peer list updates
     _subs.add(transport.onPeersChanged.listen((peers) {
       _mergePeerUpdate(transport.type, peers);
     }));
+  }
+
+  Future<void> _inbound = Future<void>.value();
+
+  Future<void> _processIncoming(TransportType type, NexusMessage msg) async {
+    if (msg.isExpired) return;
+    // Audit S-3/C-4: LAN and BLE have no signed envelope, so the message
+    // signature is the only proof of the sender. Checked before the
+    // duplicate filter marks the ID, so a forged copy cannot block the
+    // genuine message. Nostr binds the sender in its own transport.
+    if (type != TransportType.nostr && !await hasValidSenderSignature(msg)) {
+      debugPrint('[S3-REJECT] ${type.name} message ${msg.id} dropped: '
+          'missing or invalid signature for ${msg.fromDid}');
+      return;
+    }
+    if (_isDuplicate(msg.id)) {
+      if (msg.nostrEventId != null) _nostrReferenceController.add(msg);
+      return;
+    }
+    _messageController.add(msg);
   }
 
   void _mergePeerUpdate(

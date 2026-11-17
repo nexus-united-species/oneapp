@@ -8,6 +8,7 @@ import 'package:nexus_oneapp/core/transport/nostr/nostr_event.dart';
 import 'package:nexus_oneapp/core/transport/nostr/nostr_keys.dart';
 import 'package:nexus_oneapp/core/transport/nostr/nostr_relay_manager.dart';
 import 'package:nexus_oneapp/core/transport/nostr/nostr_transport.dart';
+import 'package:nexus_oneapp/core/transport/nostr/publish_result.dart';
 
 const _mnemonic = 'abandon abandon abandon abandon abandon abandon '
     'abandon abandon abandon abandon abandon about';
@@ -29,6 +30,20 @@ class _FakeRelayManager extends NostrRelayManager {
   Future<void> stop() async {}
   @override
   void publishFireAndForget(NostrEvent event) => published.add(event);
+  @override
+  Future<RelayPublishOutcome> publish(
+    NostrEvent event, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    published.add(event);
+    return RelayPublishOutcome(
+      eventId: event.id,
+      sentToRelays: const ['wss://fake.relay'],
+      acceptedRelays: const ['wss://fake.relay'],
+      rejections: const {},
+      timedOut: false,
+    );
+  }
   @override
   String subscribe(Map<String, dynamic> filter) => generateSubId();
   @override

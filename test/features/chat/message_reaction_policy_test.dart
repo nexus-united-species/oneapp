@@ -116,4 +116,39 @@ void main() {
       expect(normalizeReactionContent('x' * (maxReactionLength + 1)), isNull);
     });
   });
+
+  group('resolveFeedReactorId (audit TD-71)', () {
+    test("a reaction signed with the local key counts as my own", () {
+      expect(
+        resolveFeedReactorId(
+          signerPubkey: 'AABB',
+          myDid: 'did:key:me',
+          myNostrPubkey: 'aabb',
+        ),
+        'did:key:me',
+      );
+    });
+
+    test('someone else\'s reaction keeps the raw signer pubkey', () {
+      expect(
+        resolveFeedReactorId(
+          signerPubkey: 'ccdd',
+          myDid: 'did:key:me',
+          myNostrPubkey: 'aabb',
+        ),
+        'ccdd',
+      );
+    });
+
+    test('without a known local key the raw signer pubkey is kept', () {
+      expect(
+        resolveFeedReactorId(
+          signerPubkey: 'aabb',
+          myDid: 'did:key:me',
+          myNostrPubkey: null,
+        ),
+        'aabb',
+      );
+    });
+  });
 }

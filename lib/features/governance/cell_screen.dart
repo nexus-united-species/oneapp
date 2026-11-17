@@ -191,8 +191,7 @@ class _CellScreenState extends State<CellScreen>
             itemCount: candidates.length,
             itemBuilder: (_, i) {
               final m = candidates[i];
-              final shortDid =
-                  '…${m.did.substring(m.did.length > 12 ? m.did.length - 12 : 0)}';
+              final shortDid = ContactService.instance.getDisplayName(m.did);
               return ListTile(
                 leading: const Icon(Icons.person, color: AppColors.gold),
                 title: Text(shortDid,
@@ -526,9 +525,12 @@ class _MessageBubble extends StatelessWidget {
 
     final myDid = IdentityService.instance.currentIdentity?.did ?? '';
     final isMe = msg.fromDid == myDid;
+    // Contact name, live peer or the name sent along with the post; the
+    // DID fragment only as the last resort (device test 16.11.2026).
     final shortSender = isMe
         ? 'Du'
-        : '…${msg.fromDid.length > 12 ? msg.fromDid.substring(msg.fromDid.length - 12) : msg.fromDid}';
+        : ContactService.instance.getDisplayName(msg.fromDid,
+            claimedName: msg.metadata?['sender_name'] as String?);
     final time = _formatTime(msg.timestamp);
 
     return Align(
@@ -981,8 +983,7 @@ class _MitgliederTab extends StatelessWidget {
 
 void _confirmRemove(
     BuildContext context, Cell cell, CellMember target) async {
-  final shortDid =
-      '…${target.did.substring(target.did.length > 12 ? target.did.length - 12 : 0)}';
+  final shortDid = ContactService.instance.getDisplayName(target.did);
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(

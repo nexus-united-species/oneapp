@@ -25,6 +25,14 @@ class NexusMessage {
   /// later delete the message via Kind-5 (NIP-09).
   static const String nostrAuthorPubkeyMetaKey = 'nostr_author_pubkey';
 
+  /// Result of the receiver's sender check (audit S-1): [senderVerified]
+  /// when the sender proved that its DID owns the signing Nostr key,
+  /// [senderUnverified] for messages without proof (older app versions).
+  /// Set only by the receiving transport; a value sent along is discarded.
+  static const String senderCheckMetaKey = 'sender_check';
+  static const String senderVerified = 'verified';
+  static const String senderUnverified = 'unverified';
+
   final String id;
   final String fromDid;
   final String toDid;
@@ -180,10 +188,18 @@ class NexusMessage {
     return Uint8List.fromList(zlib.encode(raw));
   }
 
-  /// Decodes from ZLib-compressed wire bytes.
+  /// Upper limit for a decompressed wire message (audit S-3): a few bytes
+  /// of crafted ZLib data could otherwise expand to gigabytes.
+  static const int maxDecodedWireBytes = 16 * 1024 * 1024;
+
+  /// Decodes from ZLib-compressed wire bytes. Throws [FormatException] when
+  /// the content expands beyond [maxDecodedWireBytes].
   static NexusMessage fromWireBytes(Uint8List bytes) {
-    final decompressed = zlib.decode(bytes);
-    final jsonStr = utf8.decode(decompressed);
+    final collector = _LimitedByteSink(maxDecodedWireBytes);
+    ZLibDecoder().startChunkedConversion(collector)
+      ..add(bytes)
+      ..close();
+    final jsonStr = utf8.decode(collector.bytes);
     return NexusMessage.fromJson(
       jsonDecode(jsonStr) as Map<String, dynamic>,
     );
@@ -207,6 +223,18 @@ class NexusMessage {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
         '${hex.substring(20)}';
+  }
+
+  /// Whether the receiver could not confirm the sender (audit S-1).
+  bool get isSenderUnverified =>
+      metadata?[senderCheckMetaKey] == senderUnverified;
+
+  /// Replaces the sender check result; null removes it.
+  NexusMessage withSenderCheck(String? result) {
+    final updated = Map<String, dynamic>.from(metadata ?? const {})
+      ..remove(senderCheckMetaKey);
+    if (result != null) updated[senderCheckMetaKey] = result;
+    return copyWith(metadata: updated);
   }
 
   NexusMessage withNostrEventId(String eventId, {String? authorPubkey}) =>
@@ -248,4 +276,25 @@ class NexusMessage {
   String toString() =>
       'NexusMessage(id: ${id.substring(0, 8)}, from: ${fromDid.substring(0, 12)}, '
       'type: ${type.name}, body: "${body.length > 30 ? body.substring(0, 30) : body}")';
+}
+
+/// Collects decompressed chunks and aborts once [limit] bytes are exceeded.
+class _LimitedByteSink implements Sink<List<int>> {
+  _LimitedByteSink(this.limit);
+
+  final int limit;
+  final _builder = BytesBuilder(copy: false);
+
+  Uint8List get bytes => _builder.toBytes();
+
+  @override
+  void add(List<int> chunk) {
+    if (_builder.length + chunk.length > limit) {
+      throw const FormatException('Wire message exceeds size limit');
+    }
+    _builder.add(chunk);
+  }
+
+  @override
+  void close() {}
 }

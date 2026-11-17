@@ -13,7 +13,10 @@ import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/contacts/contact_service.dart';
-import '../../core/crypto/channel_encryption.dart';
+import 'channel_payload.dart';
+import 'transport_plan.dart';
+import 'delivery_status.dart';
+import 'cell_channel_keys.dart';
 import '../../core/crypto/encryption_keys.dart';
 import '../../core/crypto/message_encryption.dart';
 import '../../core/identity/bip39.dart';
@@ -125,12 +128,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _nostrTimestampKey = 'last_nostr_timestamp_seconds';
 
   bool _initialized = false;
-  bool _permissionsGranted = false;
+  bool _bluetoothGranted = false;
   bool _running = false;
   String? _error;
 
   bool get initialized => _initialized;
-  bool get permissionsGranted => _permissionsGranted;
+  /// Whether Bluetooth may be used. Without it the chat runs over LAN and
+  /// Nostr (audit Z-7); the UI shows a hint instead of blocking.
+  bool get bluetoothGranted => _bluetoothGranted;
   bool get running => _running;
   String? get error => _error;
 
@@ -222,7 +227,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _reactionSub;
   StreamSubscription<MessageDeletionRequest>? _deletionSub;
   StreamSubscription<NexusMessage>? _nostrReferenceSub;
+  StreamSubscription<String>? _acceptedSub;
+  StreamSubscription<({String eventId, String reason})>? _rejectedSub;
   Timer? _muteExpiryTimer;
+
+  /// Chat event IDs a relay accepted recently (bounded), so an acceptance
+  /// arriving before the message is stored is not lost (audit Z-4).
+  final Set<String> _acceptedEventIds = <String>{};
+
+  /// Chat event IDs no relay will take, for the same race as above.
+  final Set<String> _rejectedEventIds = <String>{};
+  static const int _acceptedEventCap = 500;
 
   /// Reactions already being processed, so parallel relay deliveries of the
   /// same Kind-7 are stored and announced once (bounded, oldest dropped).
@@ -236,6 +251,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Registers the incoming Kind-7 and Kind-5 listeners, replacing any
   /// previous ones.
   void _subscribeToReactions(NostrTransport transport) {
+    _acceptedSub?.cancel();
+    _acceptedSub =
+        transport.onChatEventAccepted.listen(_onChatEventAccepted);
+    _rejectedSub?.cancel();
+    _rejectedSub =
+        transport.onChatEventRejected.listen(_onChatEventRejected);
     _reactionSub?.cancel();
     _reactionSub = transport.onFeedReaction.listen(_handleIncomingReaction);
     _deletionSub?.cancel();
@@ -256,12 +277,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     try {
-      _permissionsGranted = await _requestPermissions();
-      if (!_permissionsGranted) {
-        _error = 'Bluetooth-Berechtigungen verweigert.';
-        notifyListeners();
-        return;
+      // A denied Bluetooth permission only drops Bluetooth; LAN and Nostr
+      // still start (audit Z-7).
+      _bluetoothGranted = await _requestPermissions();
+      if (!_bluetoothGranted) {
+        debugPrint('[PERM] Bluetooth not permitted – chat continues over '
+            'LAN and Nostr');
       }
+      final plan = plannedTransports(
+        isMobile: Platform.isAndroid || Platform.isIOS,
+        bluetoothGranted: _bluetoothGranted,
+      );
 
       final identity = IdentityService.instance.currentIdentity;
       if (identity == null) {
@@ -278,9 +304,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       _manager.clearTransports();
 
-      // BLE transport – mobile only (desktop degrades gracefully via timeout,
-      // but we skip registration entirely on desktop to avoid plugin issues).
-      if (Platform.isAndroid || Platform.isIOS) {
+      // BLE transport – mobile only and only with permission (desktop is
+      // skipped entirely to avoid plugin issues).
+      if (plan.contains(TransportType.ble)) {
         _manager.registerTransport(
           BleTransport(
             localDid: identity.did,
@@ -334,6 +360,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Wire FeedService to the Nostr transport for publishing and receiving.
       FeedService.instance.setNostrPublisher((kind, content, tags) =>
           _nostrTransport?.publishFeedEvent(kind, content, tags));
+      FeedService.instance.getMyNostrPubkeyHex =
+          () => _nostrTransport?.localNostrPubkeyHex;
       _nostrTransport!.onFeedPost
           .listen((data) => FeedService.instance.handleIncomingPost(data));
       _nostrTransport!.onFeedComment
@@ -381,6 +409,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _lastRosterPublishByRelay[relayUrl] = now;
         CellService.instance.publishRostersForFoundedCells();
         unawaited(CellService.instance.republishPendingHandovers());
+        // Keys not delivered at startup (no Nostr key yet) go out now.
+        unawaited(distributeCellChannelKeys());
       });
 
       // G2 governance – wire ProposalService callbacks to NostrTransport.
@@ -467,6 +497,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       // Retrofit existing cells that don't yet have internal channels.
       await _retrofitCellChannels(myDid);
+      // As founder: give members the shared channel keys (device test
+      // 14.11.2026); members who already have them are skipped.
+      unawaited(distributeCellChannelKeys());
 
       // Wire up callback so new cell memberships auto-create channels.
       CellService.instance.onMembershipConfirmed = (cell, did) =>
@@ -475,6 +508,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Wire up callback so approved members get a welcome post.
       CellService.instance.onMemberApproved =
           (cellId, pseudonym) async {
+        unawaited(distributeCellChannelKeys(onlyCellId: cellId));
         final msg = '$pseudonym ist der Gemeinschaft beigetreten! 🌱';
         debugPrint('[CELL] Welcome message posted in discussion: $pseudonym');
         await postCellSystemMessage(cellId, msg);
@@ -1566,6 +1600,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         nostrPubkeyHex: nostrPubkey,
       );
       transport.setIdentityProof(proof);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(IdentityProof.prefsKey, jsonEncode(proof));
       print('[ID-PROOF] Identity binding signed for ${nostrPubkey.substring(0, 8)}…');
     } catch (e) {
       print('[ID-PROOF] Identity binding failed: $e');
@@ -1754,7 +1790,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Key exchange: learn sender's encryption key ──────────────────────────
     // In our own messages this is our own key, not the peer's.
-    final encKeyFromMsg = isOwn ? null : msg.metadata?['enc_key'] as String?;
+    final claimedEncKey = isOwn ? null : msg.metadata?['enc_key'] as String?;
+    // Audit S-1: a sender without proof may not replace a contact's known
+    // encryption key (replies would otherwise be readable by an impostor).
+    final knownEncKey = claimedEncKey == null
+        ? null
+        : ContactService.instance.findByDid(msg.fromDid)?.encryptionPublicKey;
+    final keepKnownKey = msg.isSenderUnverified &&
+        knownEncKey != null &&
+        knownEncKey != claimedEncKey;
+    if (keepKnownKey) {
+      debugPrint('[S1-KEEP] Encryption key of ${msg.fromDid} kept: '
+          'message has no sender proof');
+    }
+    final encKeyFromMsg = keepKnownKey ? null : claimedEncKey;
     if (encKeyFromMsg != null && !msg.isBroadcast) {
       ContactService.instance.setEncryptionKey(msg.fromDid, encKeyFromMsg);
     }
@@ -1818,34 +1867,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         processedMsg.channel != '#mesh') {
       final ch =
           GroupChannelService.instance.findByName(processedMsg.channel!);
-      if (ch != null && ch.channelSecret != null) {
-        final plaintext = await ChannelEncryption.decrypt(
-          processedMsg.body,
-          ch.channelSecret!,
-          ch.id,
-        );
+      final opened = ch != null && ch.channelSecret != null
+          ? await openChannelPayload(
+              body: processedMsg.body,
+              metadata: processedMsg.metadata,
+              channelId: ch.id,
+              channelSecret: ch.channelSecret!,
+              previousSecrets: ch.previousSecrets,
+            )
+          : null;
+      if (opened != null) {
         processedMsg = NexusMessage(
           id: processedMsg.id,
           fromDid: processedMsg.fromDid,
           toDid: processedMsg.toDid,
           type: processedMsg.type,
           channel: processedMsg.channel,
-          body: plaintext ?? '[Nachricht konnte nicht entschlüsselt werden]',
+          body: opened.body,
           timestamp: processedMsg.timestamp,
           ttlHours: processedMsg.ttlHours,
           hopCount: processedMsg.hopCount,
           signature: processedMsg.signature,
-          metadata: processedMsg.metadata,
+          metadata: opened.metadata,
         );
       } else {
-        // Non-member: store a placeholder.
+        // Non-member or undecryptable: a text placeholder, so image and
+        // voice decoders never see ciphertext.
         processedMsg = NexusMessage(
           id: processedMsg.id,
           fromDid: processedMsg.fromDid,
           toDid: processedMsg.toDid,
-          type: processedMsg.type,
+          type: NexusMessageType.text,
           channel: processedMsg.channel,
-          body: '🔒 Verschlüsselte Nachricht',
+          body: ch != null && ch.channelSecret != null
+              ? '[Nachricht konnte nicht entschlüsselt werden]'
+              : '🔒 Verschlüsselte Nachricht',
           timestamp: processedMsg.timestamp,
           ttlHours: processedMsg.ttlHours,
           hopCount: processedMsg.hopCount,
@@ -1869,7 +1925,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final bodyData =
             jsonDecode(processedMsg.body) as Map<String, dynamic>;
         await _handleChannelSystemMessage(
-            sysType, bodyData, processedMsg.fromDid);
+            sysType, bodyData, processedMsg.fromDid,
+            senderVerified: !processedMsg.isSenderUnverified);
       } catch (e) {
         debugPrint('[CHAT] Channel system-message parse error: $e');
       }
@@ -1997,6 +2054,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // permanent local file so playback survives app restarts and temp-dir
     // clean-ups.  This runs for both live and catch-up messages.
     if (processedMsg.type == NexusMessageType.voice) {
+      // A local path sent along by the sender (older versions) points to
+      // the sender's device and must not be used here.
+      if (processedMsg.metadata?.containsKey('audio_local_path') == true) {
+        processedMsg = processedMsg.copyWith(
+            metadata: {...?processedMsg.metadata}..remove('audio_local_path'));
+      }
       processedMsg = await _cacheVoiceAudio(processedMsg);
     }
 
@@ -2028,8 +2091,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // ── Notifications ────────────────────────────────────────────────────────
     // Don't notify if this exact conversation is open in the UI, nor for
-    // our own messages from another device.
-    if (!isOwn && _activeConversationId != convId) {
+    // our own messages from another device (DMs and channel posts alike).
+    final isFromMe = myDid.isNotEmpty && processedMsg.fromDid == myDid;
+    if (!isFromMe && _activeConversationId != convId) {
       final contact = ContactService.instance.findByDid(processedMsg.fromDid);
       final muted = !processedMsg.isBroadcast &&
           ContactService.instance.isMuted(processedMsg.fromDid);
@@ -2130,12 +2194,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _persistMessage(String convId, NexusMessage msg) async {
+  Future<void> _persistMessage(String convId, NexusMessage msg,
+      {String status = 'pending'}) async {
     try {
+      // The delivery state lives in its own column, not in the stored JSON.
+      final meta = msg.metadata;
+      final data = meta != null && meta.containsKey(localDeliveryMetaKey)
+          ? msg
+              .copyWith(
+                  metadata: Map<String, dynamic>.from(meta)
+                    ..remove(localDeliveryMetaKey))
+              .toJson()
+          : msg.toJson();
       await PodDatabase.instance.insertMessage(
         conversationId: convId,
         senderDid: msg.fromDid,
-        data: msg.toJson(),
+        data: data,
+        status: status,
       );
       debugPrint('[CHAT] DB insert OK: convId=$convId');
     } catch (e) {
@@ -2379,18 +2454,202 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: localMsg,
+      wire: transportMsg,
+      recipientDid: recipientDid,
+    );
+  }
 
-    // Optimistic local cache update – always use plaintext local message, but
-    // retain the outer Nostr event ID produced from the wire copy.
-    final storedMsg = _withSentNostrEventId(localMsg);
-    final convId = _conversationId(recipientDid, myDid);
+  /// Saves [local] in [convId] as „sending“, hands [wire] to the transports
+  /// and records the outcome (audit Z-3/Z-4): the message exists even if
+  /// every transport fails. A directed message waits for a relay when Nostr
+  /// took it; a channel post waits when it went into the relay outbox;
+  /// #mesh broadcasts are fire-and-forget and count as sent.
+  Future<void> _storeThenSend({
+    required String convId,
+    required NexusMessage local,
+    required NexusMessage wire,
+    String? recipientDid,
+  }) async {
+    final pendingMsg = local.copyWith(metadata: {
+      ...?local.metadata,
+      localDeliveryMetaKey: DeliveryState.sending.value,
+    });
     _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
+    _putOwnMessage(_conversationCache[convId]!, pendingMsg);
+    await _persistMessage(convId, pendingMsg,
+        status: DeliveryState.sending.value);
     ConversationService.instance.notifyUpdate();
-
     notifyListeners();
+
+    TransportType? deliveredVia;
+    try {
+      deliveredVia =
+          await _manager.sendMessage(wire, recipientDid: recipientDid);
+    } catch (e) {
+      debugPrint('[DELIVERY] ${local.id} not sent: $e');
+      await _setDelivery(convId, local.id, DeliveryState.failed);
+      return;
+    }
+
+    // Keep the outer Nostr event ID produced from the wire copy.
+    final withEventId = _withSentNostrEventId(local);
+    final eventId = withEventId.nostrEventId;
+    if (eventId != null) {
+      await PodDatabase.instance
+          .attachNostrEventId(local.id, withEventId.toJson());
+      _updateCachedMessage(convId, local.id,
+          (m) => m.withNostrEventId(eventId));
+    }
+    final accepted = eventId != null && _acceptedEventIds.contains(eventId);
+    final DeliveryState state;
+    if (eventId != null && _rejectedEventIds.contains(eventId)) {
+      state = DeliveryState.failed;
+    } else if (recipientDid != null &&
+        recipientDid != NexusMessage.broadcastDid) {
+      state = deliveryAfterHandOff(deliveredVia, relayAlreadyAccepted: accepted);
+    } else {
+      final viaOutbox = wire.channel != null &&
+          wire.channel != '#mesh' &&
+          eventId != null;
+      state = viaOutbox && !accepted ? DeliveryState.sending : DeliveryState.sent;
+    }
+    await _setDelivery(convId, local.id, state);
+  }
+
+  /// Sets the delivery state of an own message in cache and database.
+  Future<void> _setDelivery(
+      String convId, String messageId, DeliveryState state) async {
+    await PodDatabase.instance.setMessageStatus(messageId, state.value);
+    _updateCachedMessage(convId, messageId, (m) {
+      final meta = Map<String, dynamic>.from(m.metadata ?? {});
+      if (state == DeliveryState.sent) {
+        meta.remove(localDeliveryMetaKey);
+      } else {
+        meta[localDeliveryMetaKey] = state.value;
+      }
+      return m.copyWith(metadata: meta);
+    });
+    debugPrint('[DELIVERY] $messageId → ${state.value}');
+    notifyListeners();
+  }
+
+  /// A relay accepted a chat event: the matching own message is sent.
+  Future<void> _onChatEventAccepted(String eventId) async {
+    _acceptedEventIds.add(eventId);
+    while (_acceptedEventIds.length > _acceptedEventCap) {
+      _acceptedEventIds.remove(_acceptedEventIds.first);
+    }
+    for (final entry in _conversationCache.entries) {
+      for (final m in entry.value) {
+        if (m.nostrEventId == eventId &&
+            m.metadata?[localDeliveryMetaKey] != null) {
+          await _setDelivery(entry.key, m.id, DeliveryState.sent);
+          return;
+        }
+      }
+    }
+    // Not in memory (e.g. resent from the outbox after a restart).
+    final rows =
+        await PodDatabase.instance.findMessagesByNostrEventIds({eventId});
+    for (final row in rows) {
+      final id = row['message_id'] as String?;
+      if (id != null) {
+        await PodDatabase.instance
+            .setMessageStatus(id, DeliveryState.sent.value);
+      }
+    }
+  }
+
+  /// No relay will take a chat event (e.g. a voice message over the size
+  /// limit): the own message shows as not sent instead of „wartet“.
+  Future<void> _onChatEventRejected(
+      ({String eventId, String reason}) rejection) async {
+    debugPrint('[DELIVERY] Event ${rejection.eventId.substring(0, 8)} refused: '
+        '${rejection.reason}');
+    _rejectedEventIds.add(rejection.eventId);
+    while (_rejectedEventIds.length > _acceptedEventCap) {
+      _rejectedEventIds.remove(_rejectedEventIds.first);
+    }
+    for (final entry in _conversationCache.entries) {
+      for (final m in entry.value) {
+        if (m.nostrEventId == rejection.eventId) {
+          await _setDelivery(entry.key, m.id, DeliveryState.failed);
+          return;
+        }
+      }
+    }
+    final rows = await PodDatabase.instance
+        .findMessagesByNostrEventIds({rejection.eventId});
+    for (final row in rows) {
+      final id = row['message_id'] as String?;
+      if (id != null) {
+        await PodDatabase.instance
+            .setMessageStatus(id, DeliveryState.failed.value);
+      }
+    }
+  }
+
+  /// Sends a failed own message again: the old copy is removed and the
+  /// content goes out as a new message to the same conversation. Text keeps
+  /// its reply reference; voice is resent from its local file.
+  Future<void> resendFailedMessage(NexusMessage msg) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    if (msg.fromDid != myDid) return;
+    if (DeliveryState.fromValue(msg.metadata?[localDeliveryMetaKey] as String?) !=
+        DeliveryState.failed) {
+      return;
+    }
+    final channel = msg.channel;
+    final isMesh = msg.isBroadcast && (channel == null || channel == '#mesh');
+    final isChannel = msg.isBroadcast && !isMesh;
+    final convId = isMesh
+        ? NexusMessage.broadcastDid
+        : isChannel
+            ? channel!
+            : _conversationId(msg.toDid, myDid);
+    final meta = msg.metadata ?? const <String, dynamic>{};
+    final replyMeta = <String, dynamic>{
+      for (final e in meta.entries)
+        if (e.key.startsWith('reply_to_')) e.key: e.value,
+    };
+    final audioPath = meta['audio_local_path'] as String?;
+    final durationMs = (meta['duration_ms'] as num?)?.toInt() ?? 0;
+
+    await deleteMessageLocally(msg, convId);
+    switch (msg.type) {
+      case NexusMessageType.image:
+        if (isChannel) {
+          await sendImageToChannel(channel!, base64Decode(msg.body));
+        } else {
+          await sendImageBase64(isMesh ? NexusMessage.broadcastDid : msg.toDid,
+              msg.body,
+              meta: {
+                for (final key in const ['width', 'height', 'thumbnail', 'enc_key'])
+                  if (meta[key] != null) key: meta[key],
+              });
+        }
+      case NexusMessageType.voice:
+        if (audioPath == null) return;
+        if (isChannel) {
+          await sendVoiceToChannel(channel!, audioPath, durationMs);
+        } else if (isMesh) {
+          await sendVoiceBroadcast(audioPath, durationMs);
+        } else {
+          await sendVoice(msg.toDid, audioPath, durationMs);
+        }
+      default:
+        final extra = replyMeta.isEmpty ? null : replyMeta;
+        if (isChannel) {
+          await sendToChannel(channel!, msg.body, extraMeta: extra);
+        } else if (isMesh) {
+          await sendBroadcast(msg.body, extraMeta: extra);
+        } else {
+          await sendMessage(msg.toDid, msg.body, extraMeta: extra);
+        }
+    }
   }
 
   /// Sends a broadcast message to the #mesh channel.
@@ -2433,15 +2692,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       metadata: meta.isNotEmpty ? meta : null,
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
-    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+        convId: NexusMessage.broadcastDid, local: msg, wire: msg);
   }
 
   /// Sends a text message to a named group channel (e.g. "#teneriffa").
@@ -2458,35 +2710,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final channel = GroupChannelService.instance.findByName(name);
 
-    // Build wire message (possibly encrypted).
-    String wireBody = text;
-    bool isChEnc = false;
-    if (!skipEncryption &&
-        channel != null &&
-        !channel.isPublic &&
-        channel.channelSecret != null) {
-      final enc = await ChannelEncryption.encrypt(
-          text, channel.channelSecret!, channel.id);
-      if (enc != null) {
-        wireBody = enc;
-        isChEnc = true;
-      }
-    }
-
-    final wireMeta = <String, dynamic>{
-      if (isChEnc) 'ch_enc': true,
-      ...?extraMeta,
-    };
+    // Build wire message; in a private channel body and metadata (reply
+    // previews) are encrypted (audit S-4).
+    final wire = await sealChannelPayload(
+      body: text,
+      metadata: {...?extraMeta, 'sender_name': _myDisplayName()},
+      channelId: channel?.id ?? name,
+      channelSecret: skipEncryption ? null : _privateSecretOf(channel),
+    );
+    final isChEnc = wire.encrypted;
 
     final wireMsg = NexusMessage.create(
       fromDid: myDid,
       toDid: NexusMessage.broadcastDid,
-      body: wireBody,
+      body: wire.body,
       channel: name,
-      metadata: wireMeta.isNotEmpty ? wireMeta : null,
+      metadata: wire.metadata,
     );
-
-    await _manager.sendMessage(wireMsg);
 
     // Store plaintext locally so the sender can read their own messages.
     final localMeta = <String, dynamic>{
@@ -2507,14 +2747,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           )
         : wireMsg;
 
-    final storedMsg = _withSentNostrEventId(localMsg);
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(convId: name, local: localMsg, wire: wireMsg);
   }
 
   /// Attaches the outer Nostr event ID generated for [message] while it was
@@ -2571,8 +2804,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Sends an encrypted system DM for channel access control
   /// (join request, invite, acceptance, rejection).
-  Future<void> sendSystemDm(
-      String recipientDid, Map<String, dynamic> data) async {
+  ///
+  /// With [requireEncryption] nothing is sent when the recipient's
+  /// encryption key is unknown (used for channel secrets); returns whether
+  /// the message went out.
+  Future<bool> sendSystemDm(
+      String recipientDid, Map<String, dynamic> data,
+      {bool requireEncryption = false}) async {
     final myDid =
         IdentityService.instance.currentIdentity?.did ?? 'unknown';
     final sysType = data['sys_type'] as String? ?? '';
@@ -2586,6 +2824,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final recipientEncKey =
         ContactService.instance.findByDid(recipientDid)?.encryptionPublicKey;
+    if (requireEncryption && recipientEncKey == null) {
+      debugPrint('[CHAN-KEY] No encryption key for $recipientDid; '
+          '$sysType not sent');
+      return false;
+    }
 
     NexusMessage msg;
     if (recipientEncKey != null) {
@@ -2614,14 +2857,239 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
 
+    if (requireEncryption && msg.metadata?['encrypted'] != true) {
+      debugPrint('[CHAN-KEY] Encryption failed for $recipientDid; '
+          '$sysType not sent');
+      return false;
+    }
     await _manager.sendMessage(msg, recipientDid: recipientDid);
+    return true;
+  }
+
+  // ── Channel key change after removing a member (audit S-4) ─────────────────
+
+  /// System message type carrying a new channel secret.
+  static const channelKeyRotatedType = 'channel_key_rotated';
+
+  /// Removes [removedDid] from the private [channel] and, as its admin,
+  /// gives the remaining members a new secret, so the removed member cannot
+  /// read new posts. Returns how many members could not be reached because
+  /// their encryption key is unknown.
+  Future<int> removeChannelMember(GroupChannel channel, String removedDid) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final remaining = channel.members.where((d) => d != removedDid).toList();
+    final rotate = !channel.isPublic &&
+        channel.channelSecret != null &&
+        channel.createdBy == myDid;
+    final updated = rotate
+        ? channel
+            .withRotatedSecret(GroupChannel.generateSecret())
+            .copyWith(members: remaining)
+        : channel.copyWith(members: remaining);
+    await GroupChannelService.instance.updateChannel(updated);
+    if (!rotate) return 0;
+
+    var unreachable = 0;
+    for (final member in remaining) {
+      if (member == myDid) continue;
+      final sent = await sendSystemDm(
+        member,
+        {
+          'sys_type': channelKeyRotatedType,
+          'channelId': updated.id,
+          'channelName': updated.name,
+          'channelSecret': updated.channelSecret,
+        },
+        requireEncryption: true,
+      );
+      if (!sent) unreachable++;
+    }
+    debugPrint('[CHAN-KEY] ${updated.name}: new key after removing '
+        '$removedDid, ${remaining.length - 1 - unreachable} members informed, '
+        '$unreachable without encryption key');
+    notifyListeners();
+    return unreachable;
+  }
+
+  /// Takes over a new channel secret, only from the channel's admin with a
+  /// confirmed sender (receive is a trust boundary, audit S-1/S-4).
+  Future<void> _applyRotatedChannelKey(
+      Map<String, dynamic> data, String senderDid,
+      {required bool senderVerified}) async {
+    final channelId = data['channelId'] as String? ?? '';
+    final channelName = data['channelName'] as String? ?? '';
+    final newSecret = data['channelSecret'] as String? ?? '';
+    final channel = GroupChannelService.instance.joinedChannels
+            .where((c) => c.id == channelId)
+            .firstOrNull ??
+        GroupChannelService.instance.findByName(channelName);
+    final decision = channelKeyChangeDecision(
+      channel: channel,
+      senderDid: senderDid,
+      senderVerified: senderVerified,
+      newSecret: newSecret,
+    );
+    if (decision != null) {
+      debugPrint('[CHAN-KEY] Key change for $channelName ignored: $decision');
+      return;
+    }
+    await GroupChannelService.instance
+        .updateChannel(channel!.withRotatedSecret(newSecret));
+    debugPrint('[CHAN-KEY] New key for ${channel.name} from admin');
+    notifyListeners();
+  }
+
+  // ── Shared cell channel keys (device test 14.11.2026) ───────────────────────
+
+  static const _cellKeysSentPrefsKey = 'nexus_cell_keys_sent';
+  static const _cellKeysSentCap = 500;
+
+  /// As current founder of a cell, sends the ID and secret of its Pinnwand
+  /// and Diskussion to every member who does not have them yet. Each
+  /// delivery is remembered by fingerprint, so it is sent once and again
+  /// only after the keys change. Goes over Nostr only (NIP-04, plus the
+  /// inner encryption when the member's key is known), never in plain text
+  /// over LAN.
+  Future<void> distributeCellChannelKeys({String? onlyCellId}) async {
+    final myDid = IdentityService.instance.currentIdentity?.did;
+    final transport = _nostrTransport;
+    if (myDid == null || transport == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final sent = (prefs.getStringList(_cellKeysSentPrefsKey) ?? []).toList();
+    var changed = false;
+
+    for (final cell in CellService.instance.myCells) {
+      if (onlyCellId != null && cell.id != onlyCellId) continue;
+      if (cell.currentFounder != myDid) continue;
+      final channels = GroupChannelService.instance
+          .cellChannelsFor(cell.id)
+          .where((c) => c.channelSecret != null)
+          .toList();
+      if (channels.isEmpty) continue;
+      final payload = buildCellChannelKeysPayload(cell.id, channels);
+
+      for (final member in CellService.instance.membersOf(cell.id)) {
+        if (member.did == myDid || member.role == MemberRole.pending) {
+          continue;
+        }
+        final fingerprint = cellKeysFingerprint(cell.id, member.did, channels);
+        if (sent.contains(fingerprint)) continue;
+        if (await _sendCellKeysDm(transport, member.did, payload)) {
+          sent.add(fingerprint);
+          changed = true;
+          debugPrint('[CELL-KEYS] Sent channel keys of ${cell.id} '
+              'to ${member.did}');
+        }
+      }
+    }
+    if (changed) {
+      while (sent.length > _cellKeysSentCap) {
+        sent.removeAt(0);
+      }
+      await prefs.setStringList(_cellKeysSentPrefsKey, sent);
+    }
+  }
+
+  Future<bool> _sendCellKeysDm(NostrTransport transport, String recipientDid,
+      Map<String, dynamic> payload) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final bodyJson = jsonEncode(payload);
+    final recipientEncKey =
+        ContactService.instance.findByDid(recipientDid)?.encryptionPublicKey;
+    final encBody = recipientEncKey == null
+        ? null
+        : await MessageEncryption.encrypt(
+            bodyJson,
+            senderKeyPair: EncryptionKeys.instance.keyPair,
+            recipientPublicKeyBytes: EncryptionKeys.hexToBytes(recipientEncKey),
+          );
+    final msg = NexusMessage.create(
+      fromDid: myDid,
+      toDid: recipientDid,
+      type: NexusMessageType.system,
+      body: encBody ?? bodyJson,
+      metadata: {
+        'sys_type': cellChannelKeysType,
+        if (EncryptionKeys.instance.publicKeyHex != null)
+          'enc_key': EncryptionKeys.instance.publicKeyHex!,
+        if (encBody != null) 'encrypted': true,
+      },
+    );
+    try {
+      await transport.sendMessage(msg, recipientDid: recipientDid);
+      return true;
+    } on StateError catch (e) {
+      // No Nostr key known for the member yet; retried on the next start.
+      debugPrint('[CELL-KEYS] Not sent to $recipientDid: $e');
+      return false;
+    }
+  }
+
+  /// Adopts the shared IDs and secrets of a cell's channels, only from the
+  /// cell's confirmed current founder.
+  Future<void> _applyCellChannelKeys(
+      Map<String, dynamic> data, String senderDid,
+      {required bool senderVerified}) async {
+    final myDid = IdentityService.instance.currentIdentity?.did ?? '';
+    final cellId = data['cellId'] as String? ?? '';
+    final cell =
+        CellService.instance.myCells.where((c) => c.id == cellId).firstOrNull;
+    final decision = cellChannelKeysDecision(
+      cell: cell,
+      myDid: myDid,
+      senderDid: senderDid,
+      senderVerified: senderVerified,
+    );
+    final keys = parseCellChannelKeys(data);
+    if (decision != null || keys == null) {
+      debugPrint('[CELL-KEYS] Keys for $cellId ignored: '
+          '${decision ?? 'malformed'}');
+      return;
+    }
+    var adopted = 0;
+    for (final key in keys) {
+      final local = GroupChannelService.instance.findByName(key.name);
+      if (local == null) {
+        final channel = GroupChannel(
+          id: key.id,
+          name: key.name,
+          description: '',
+          createdBy: senderDid,
+          createdAt: DateTime.now().toUtc(),
+          isPublic: false,
+          isDiscoverable: false,
+          channelSecret: key.secret,
+          nostrTag: GroupChannel.nameToNostrTag(key.name),
+          channelMode: key.name.endsWith('-bulletin')
+              ? ChannelMode.announcement
+              : ChannelMode.discussion,
+          cellId: cellId,
+        );
+        await joinChannelAndSubscribe(channel);
+        adopted++;
+      } else if (local.id != key.id || local.channelSecret != key.secret) {
+        await GroupChannelService.instance.replaceChannelIdentity(
+            local, local.withSharedIdentity(id: key.id, secret: key.secret));
+        _nostrTransport?.subscribeToChannel(local.nostrTag);
+        adopted++;
+      }
+    }
+    debugPrint('[CELL-KEYS] Adopted $adopted shared channel key(s) for $cellId');
+    if (adopted > 0) notifyListeners();
   }
 
   // ── Channel access system-message handlers ─────────────────────────────────
 
   Future<void> _handleChannelSystemMessage(
-      String sysType, Map<String, dynamic> data, String senderDid) async {
+      String sysType, Map<String, dynamic> data, String senderDid,
+      {required bool senderVerified}) async {
     switch (sysType) {
+      case cellChannelKeysType:
+        await _applyCellChannelKeys(data, senderDid,
+            senderVerified: senderVerified);
+      case channelKeyRotatedType:
+        await _applyRotatedChannelKey(data, senderDid,
+            senderVerified: senderVerified);
       case 'channel_join_request':
       case 'channel_invite':
         ChannelAccessService.instance
@@ -2693,19 +3161,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg, recipientDid: recipientDid);
-
     final convId = recipientDid == NexusMessage.broadcastDid
         ? NexusMessage.broadcastDid
         : _conversationId(recipientDid, myDid);
 
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+        convId: convId, local: msg, wire: msg, recipientDid: recipientDid);
   }
 
   /// Forwards an already-base64-encoded image to [recipientDid].
@@ -2726,15 +3187,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       metadata: meta,
     );
 
-    await _manager.sendMessage(msg, recipientDid: recipientDid);
-
-    final convId = _conversationId(recipientDid, myDid);
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: msg,
+      wire: msg,
+      recipientDid: recipientDid,
+    );
   }
 
   /// Publishes a Nostr Kind-5 deletion event referencing [message]'s real
@@ -2860,16 +3318,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // No 'encrypted' flag → receiver plays audio directly.
     }
 
-    await _manager.sendMessage(transportMsg, recipientDid: recipientDid);
-
-    final convId = _conversationId(recipientDid, myDid);
-    final storedMsg = _withSentNostrEventId(localMsg);
-    _conversationCache.putIfAbsent(convId, () => []);
-    _putOwnMessage(_conversationCache[convId]!, storedMsg);
-    await _persistMessage(convId, storedMsg);
-    ConversationService.instance.notifyUpdate();
-
-    notifyListeners();
+    await _storeThenSend(
+      convId: _conversationId(recipientDid, myDid),
+      local: localMsg,
+      wire: transportMsg,
+      recipientDid: recipientDid,
+    );
   }
 
   /// Sends a voice broadcast to the #mesh channel (no E2E encryption).
@@ -2917,15 +3371,56 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
+    // The local file path stays on this device (public #mesh broadcast).
+    await _storeThenSend(
+      convId: NexusMessage.broadcastDid,
+      local: msg,
+      wire: msg.copyWith(
+          metadata: {...?msg.metadata}..remove('audio_local_path')),
+    );
+  }
 
-    final storedMsg = _withSentNostrEventId(msg);
-    _conversationCache.putIfAbsent(NexusMessage.broadcastDid, () => []);
-    _conversationCache[NexusMessage.broadcastDid]!.add(storedMsg);
-    await _persistMessage(NexusMessage.broadcastDid, storedMsg);
-    ConversationService.instance.notifyUpdate();
+  /// The own display name sent along with channel posts, so members who
+  /// are not contacts see a name (device test 14.11.2026).
+  String _myDisplayName() {
+    final profileName =
+        ProfileService.instance.currentProfile?.pseudonym.value.trim() ?? '';
+    if (profileName.isNotEmpty) return profileName;
+    return IdentityService.instance.currentIdentity?.pseudonym ?? '';
+  }
 
-    notifyListeners();
+  /// The secret of [channel] when it is private, else null.
+  String? _privateSecretOf(GroupChannel? channel) =>
+      channel != null && !channel.isPublic ? channel.channelSecret : null;
+
+  /// Sends an image or voice post in [name]; in a private channel the
+  /// content and its metadata are encrypted (audit S-4). The plaintext copy
+  /// is stored first and shows its delivery state (audit Z-3/Z-4).
+  Future<void> _sendChannelMedia(NexusMessage msg, String name) async {
+    final channel = GroupChannelService.instance.findByName(name);
+    final wire = await sealChannelPayload(
+      body: msg.body,
+      metadata: {...?msg.metadata, 'sender_name': _myDisplayName()},
+      channelId: channel?.id ?? name,
+      channelSecret: _privateSecretOf(channel),
+    );
+    await _storeThenSend(
+      convId: name,
+      local: wire.encrypted
+          ? msg.copyWith(metadata: {...?msg.metadata, 'ch_enc': true})
+          : msg,
+      wire: NexusMessage(
+        id: msg.id,
+        fromDid: msg.fromDid,
+        toDid: msg.toDid,
+        type: msg.type,
+        channel: msg.channel,
+        body: wire.body,
+        timestamp: msg.timestamp,
+        ttlHours: msg.ttlHours,
+        metadata: wire.metadata,
+      ),
+    );
   }
 
   /// Sends an image to a named group channel.
@@ -2949,15 +3444,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _sendChannelMedia(msg, name);
   }
 
   /// Sends a voice message to a named group channel.
@@ -3006,15 +3493,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       },
     );
 
-    await _manager.sendMessage(msg);
-
-    final storedMsg = _withSentNostrEventId(msg);
-
-    _conversationCache.putIfAbsent(name, () => []);
-    _conversationCache[name]!.add(storedMsg);
-    await _persistMessage(name, storedMsg);
-    ConversationService.instance.notifyUpdate();
-    notifyListeners();
+    await _sendChannelMedia(msg, name);
   }
 
   /// Adds an emoji reaction to a channel message.
@@ -3377,11 +3856,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         try {
           final isFavorite = (row['_is_favorite'] as int? ?? 0) == 1;
           final editedBody = row['_edited_body'] as String?;
+          final delivery = DeliveryState.fromValue(row['_status'] as String?);
           final cleaned = Map<String, dynamic>.from(row)
             ..remove('sender_did')
             ..remove('_is_favorite')
+            ..remove('_status')
             ..remove('_edited_body');
           var msg = NexusMessage.fromJson(cleaned);
+          if (delivery == DeliveryState.sending ||
+              delivery == DeliveryState.failed) {
+            msg = msg.copyWith(metadata: {
+              ...?msg.metadata,
+              localDeliveryMetaKey: delivery!.value,
+            });
+          }
           // Merge local-state into metadata so the UI can use them.
           if (isFavorite || editedBody != null) {
             final meta = Map<String, dynamic>.from(msg.metadata ?? {});
@@ -3700,6 +4188,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _reactionSub?.cancel();
     _deletionSub?.cancel();
     _nostrReferenceSub?.cancel();
+    _acceptedSub?.cancel();
+    _rejectedSub?.cancel();
     _connectivitySub?.cancel();
     _muteExpiryTimer?.cancel();
     // Only an initialized provider owns a running manager lifecycle. This also
@@ -3756,4 +4246,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     resized.width,
     resized.height,
   );
+}
+
+/// Why a received channel key change must be ignored, or null to accept it
+/// (audit S-4). Only the admin of a known private channel may change its
+/// key, and only with a confirmed sender.
+@visibleForTesting
+String? channelKeyChangeDecision({
+  required GroupChannel? channel,
+  required String senderDid,
+  required bool senderVerified,
+  required String newSecret,
+}) {
+  if (channel == null) return 'unknown channel';
+  if (channel.isPublic) return 'public channel';
+  if (!senderVerified) return 'sender not confirmed';
+  if (channel.createdBy.isEmpty || channel.createdBy != senderDid) {
+    return 'sender is not the channel admin';
+  }
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(newSecret)) return 'malformed key';
+  return null;
 }

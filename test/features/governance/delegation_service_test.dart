@@ -379,6 +379,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     db = await _openTestDb();
     await _setupStandardState();
+    // castVote requires a non-empty Nostr pubkey since the transport-ready
+    // guard was added (audit F-005); these tests only exercise local
+    // delegation/vote state, not real Nostr publishing.
+    ProposalService.instance.getMyNostrPubkeyHex = () => 'a' * 64;
   });
 
   tearDown(() async {
@@ -1113,6 +1117,66 @@ void main() {
           .toList();
       expect(bToC.length, equals(1));
       expect(bToC.first['status'], equals('ACTIVE'));
+    });
+  });
+
+  // ── Audit F-005: castVote requires a ready transport ────────────────────────
+
+  group('castVote transport-ready guard (F-005)', () {
+    test('throws and writes nothing when the Nostr pubkey is empty',
+        () async {
+      ProposalService.instance.getMyNostrPubkeyHex = () => '';
+
+      await expectLater(
+        ProposalService.instance.castVote(_propId, VoteChoice.YES),
+        throwsA(isA<StateError>()),
+      );
+
+      final rows = await PodDatabase.instance.listVotes(_propId);
+      expect(rows, isEmpty,
+          reason: 'a rejected vote must not reach the database');
+    });
+
+    test('throws when the callback itself is unset (null)', () async {
+      ProposalService.instance.getMyNostrPubkeyHex = null;
+
+      await expectLater(
+        ProposalService.instance.castVote(_propId, VoteChoice.YES),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('does not auto-revoke a delegation when the vote is rejected',
+        () async {
+      final d = await ProposalService.instance.createDelegation(
+        delegatorDid: _founderDid,
+        delegateDid: _bDid,
+        proposalId: _propId,
+      );
+      ProposalService.instance.getMyNostrPubkeyHex = () => '';
+
+      await expectLater(
+        ProposalService.instance.castVote(_propId, VoteChoice.YES),
+        throwsA(isA<StateError>()),
+      );
+
+      final row = await PodDatabase.instance.getDelegation(d.delegationId);
+      expect(Delegation.fromMap(row!).status, equals(DelegationStatus.ACTIVE),
+          reason: 'the auto-revoke side effect must not run either');
+    });
+
+    test('a vote succeeds again once the pubkey is available', () async {
+      ProposalService.instance.getMyNostrPubkeyHex = () => '';
+      await expectLater(
+        ProposalService.instance.castVote(_propId, VoteChoice.YES),
+        throwsA(isA<StateError>()),
+      );
+
+      ProposalService.instance.getMyNostrPubkeyHex = () => 'a' * 64;
+      await ProposalService.instance.castVote(_propId, VoteChoice.YES);
+
+      final rows = await PodDatabase.instance.listVotes(_propId);
+      expect(rows, hasLength(1));
     });
   });
 

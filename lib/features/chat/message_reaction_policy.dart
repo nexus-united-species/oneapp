@@ -63,3 +63,22 @@ Set<String> reactorIdsForSigner({
     if (contactDid != null) contactDid,
   };
 }
+
+/// Who a Dorfplatz (feed) reaction is recorded for: [myDid] when the signer
+/// is this identity's own Nostr key, otherwise the raw signer pubkey — the
+/// Dorfplatz does not resolve other signers to a contact DID (audit TD-71).
+///
+/// Own-key events are no longer dropped at the transport, so a reaction
+/// added on one device of an identity reaches the others; without this
+/// resolution it would be stored under the raw pubkey there instead of
+/// [myDid], a different key than the sending device already used — a
+/// duplicate "like" row, not an update of the same one.
+String resolveFeedReactorId({
+  required String signerPubkey,
+  required String myDid,
+  required String? myNostrPubkey,
+}) =>
+    myNostrPubkey != null &&
+            myNostrPubkey.toLowerCase() == signerPubkey.toLowerCase()
+        ? myDid
+        : signerPubkey;

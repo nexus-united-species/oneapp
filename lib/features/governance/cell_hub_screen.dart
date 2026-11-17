@@ -327,7 +327,8 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nearby = _nearbyCells(allKnownCells, myGeohash);
+    final nearby = nearbyCells(allKnownCells, myGeohash,
+        gpsUnavailable: gpsUnavailable);
     final allCategories = ['Alle', 'Sonstiges', ...cellCategories.where((c) => c != 'Sonstiges')];
     final thematic = allKnownCells
         .where((c) => c.cellType == CellType.thematic)
@@ -668,7 +669,8 @@ class _FilledState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final allCategories = ['Alle', 'Sonstiges', ...cellCategories.where((c) => c != 'Sonstiges')];
-    final nearby = _nearbyCells(allKnownCells, myGeohash);
+    final nearby = nearbyCells(allKnownCells, myGeohash,
+        gpsUnavailable: gpsUnavailable);
     final recommended = _recommendedCells(allKnownCells);
     final thematic = allKnownCells
         .where((c) => c.cellType == CellType.thematic)
@@ -980,8 +982,18 @@ List<Cell> _recommendedCells(List<Cell> discovered) {
 /// Returns local cells sorted by geohash proximity.
 /// A common prefix of >= 1 characters (approx. 2500 km) is considered nearby.
 /// Covers large regions to avoid Geohash grid-line cuts.
-List<Cell> _nearbyCells(List<Cell> all, String? myGeohash) {
-  if (myGeohash == null) return [];
+///
+/// Without a location ([gpsUnavailable], e.g. Windows with location off)
+/// every known local cell is returned, sorted by name, so it can still be
+/// found and joined (device test 16.11.2026: Laptop1 saw none at all).
+@visibleForTesting
+List<Cell> nearbyCells(List<Cell> all, String? myGeohash,
+    {bool gpsUnavailable = false}) {
+  if (myGeohash == null) {
+    if (!gpsUnavailable) return [];
+    return all.where((c) => c.cellType == CellType.local).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
   final local = all.where((c) =>
       c.cellType == CellType.local &&
       c.geohash != null &&
@@ -1009,7 +1021,7 @@ class _NearbySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (gpsUnavailable && myGeohash == null) {
-      return SliverToBoxAdapter(
+      final hint = SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -1019,7 +1031,10 @@ class _NearbySection extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Aktiviere GPS um Gemeinschaften in deiner Nähe zu finden.',
+                  nearbyCells.isEmpty
+                      ? 'Aktiviere GPS um Gemeinschaften in deiner Nähe zu finden.'
+                      : 'Standort unbekannt – hier alle bekannten lokalen '
+                          'Gemeinschaften. Mit GPS siehst du die nächsten zuerst.',
                   style: TextStyle(
                     color: AppColors.onDark.withValues(alpha: 0.5),
                     fontSize: 12,
@@ -1029,6 +1044,19 @@ class _NearbySection extends StatelessWidget {
             ],
           ),
         ),
+      );
+      if (nearbyCells.isEmpty) return hint;
+      return SliverMainAxisGroup(
+        slivers: [
+          _SectionHeader(title: 'Lokale Gemeinschaften'),
+          hint,
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, i) => _DiscoveredCellTile(cell: nearbyCells[i]),
+              childCount: nearbyCells.length,
+            ),
+          ),
+        ],
       );
     }
 

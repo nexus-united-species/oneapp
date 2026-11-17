@@ -28,6 +28,7 @@ import '../nexus_peer.dart';
 import 'nostr_event.dart';
 import 'nostr_keys.dart';
 import 'nostr_outbox.dart';
+import 'sender_check.dart';
 import 'nostr_relay_manager.dart';
 import 'publish_result.dart';
 import 'publish_result_dao.dart';
@@ -531,6 +532,13 @@ class NostrTransport implements MessageTransport {
   /// Must be called before the transport can send/receive DMs.
   Future<void> initKeys(Uint8List seed64) async {
     _keys = NostrKeys.fromBip39Seed(seed64);
+    // Refreshes the cache the background isolate reads (audit TD-65): on
+    // every (re-)init with the real seed, not just the first one, so a
+    // switch to a different identity never leaves a stale key behind for
+    // it to pick up. Best-effort — a failure here must not block startup.
+    unawaited(NostrKeys.cacheForBackground(_keys!).catchError((Object e) {
+      print('[NOSTR] Could not cache keys for background isolate: $e');
+    }));
     print('[NOSTR] Keys initialised, pubkey: ${_keys!.publicKeyHex}');
     if (_state == TransportState.connected) {
       _setupSubscriptions();
@@ -644,6 +652,7 @@ class NostrTransport implements MessageTransport {
     // Strip channelSecret before publishing to Nostr.
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
+      ..remove('previousSecrets')
       ..remove('members');
     final event = NostrEvent.create(
       keys: _keys!,
@@ -662,7 +671,7 @@ class NostrTransport implements MessageTransport {
     print('[CHANNEL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CHANNEL-CREATE] Tags: t=$nostrTag t=nexus-channel access=${isPublic ? 'public' : 'private'} discoverable=$isDiscoverable');
     print('[CHANNEL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     return event.id;
   }
 
@@ -741,6 +750,7 @@ class NostrTransport implements MessageTransport {
     final isDiscoverable = (channelData['isDiscoverable'] as bool?) ?? true;
     final publicData = Map<String, dynamic>.from(channelData)
       ..remove('channelSecret')
+      ..remove('previousSecrets')
       ..remove('members');
     final nostrEventId = channelData['nostrEventId'] as String?;
     final tags = <List<String>>[
@@ -761,7 +771,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(publicData),
       tags: tags,
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[NOSTR] Published Kind-41 channel metadata: ${channelData['name']}');
   }
 
@@ -828,7 +838,7 @@ class NostrTransport implements MessageTransport {
     print('[CELL-CREATE] EventId: ${event.id.length >= 8 ? event.id.substring(0, 8) : event.id}…');
     print('[CELL-CREATE] Tags: [d,$cellId] [t,nexus-cell]');
     print('[CELL-CREATE] Relays: $connectedRelays (see [RELAY-OK] for responses)');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL-RENAME] Kind-30000 published: accepted=${connectedRelays > 0}');
   }
 
@@ -851,7 +861,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[JOIN] Request sent to cell: $cellId (requestId: ${requestId.substring(0, 8)}…)');
   }
 
@@ -876,7 +886,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[JOIN] Confirmation sent to ${requesterNostrPubkeyHex.substring(0, 8)}… for cell: $cellId');
   }
 
@@ -904,7 +914,7 @@ class NostrTransport implements MessageTransport {
         ['deleted', 'true'], // explicit tag so receivers can filter without parsing JSON
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL-DEL] Publishing deleted-flag Kind-30000: $cellId ($cellName)'
         ' idProof=${_identityProof != null}');
   }
@@ -937,7 +947,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[CELL] Published Kind-31005 member-$action event for cell: $cellId '
         '(target: ${targetDid.length > 20 ? '${targetDid.substring(0, 20)}…' : targetDid})');
   }
@@ -958,7 +968,7 @@ class NostrTransport implements MessageTransport {
         ['cell', cellId],
       ],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     print('[ROSTER] Published Kind-31007 for cell: $cellId '
         '(${(roster['members'] as List?)?.length ?? 0} members)');
   }
@@ -988,9 +998,23 @@ class NostrTransport implements MessageTransport {
 
   /// Publishes a chat event (DM, channel post, reaction, deletion); if no
   /// relay accepts it, it is queued and resent on reconnect (TD-74).
-  void _publishChatEvent(NostrEvent event) {
+  void _publishChatEvent(NostrEvent event) => _publishQueued(event);
+
+  /// Publishes [event] through the outbox: if no relay accepts it now, it is
+  /// kept and sent again on reconnect (audit Z-5). Only kinds listed in
+  /// [NostrOutbox.queuedKinds] are kept.
+  void _publishQueued(NostrEvent event) {
     unawaited(_outbox.publish(event));
   }
+
+  /// IDs of queued events (chat, cells, channels, profile, feed) that a
+  /// relay accepted, immediately or later from the outbox (audit Z-4).
+  Stream<String> get onChatEventAccepted => _outbox.onAccepted;
+
+  /// Queued events no relay will ever accept (e.g. too large), so the chat
+  /// marks the message as not sent (device test 16.11.2026).
+  Stream<({String eventId, String reason})> get onChatEventRejected =>
+      _outbox.onRejected;
 
   /// Publishes a Dorfplatz feed event (Kind-1 post, Kind-6 repost, Kind-7
   /// reaction, Kind-5 deletion) and returns the assigned Nostr event ID.
@@ -1019,7 +1043,7 @@ class NostrTransport implements MessageTransport {
       print('[NOSTR] Feed Kind-$kind published: ${event.id.substring(0, 8)}… '
           '→ $connectedRelays relay(s)');
     }
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     return event.id;
   }
 
@@ -1680,7 +1704,7 @@ class NostrTransport implements MessageTransport {
           ['status', permit.status.name],
         ],
       );
-      _relayManager.publishFireAndForget(event);
+      _publishQueued(event);
       print('[PERMIT-PUBLISH] action=$action '
           'id=${permit.id.substring(0, 8)}… '
           '→ ${recipient.substring(0, 8)}…');
@@ -1788,8 +1812,12 @@ class NostrTransport implements MessageTransport {
     NexusMessage message, {
     String? recipientDid,
   }) async {
-    if (_keys == null) return;
-    if (_state == TransportState.error) return;
+    // Fail loudly so the TransportManager tries the next transport and the
+    // chat can show the message as not sent (audit Z-3).
+    if (_keys == null) throw StateError('Nostr: keys not initialised');
+    if (_state == TransportState.error) {
+      throw StateError('Nostr: transport in error state');
+    }
 
     if (message.isBroadcast) {
       await _sendBroadcast(message);
@@ -1808,7 +1836,8 @@ class NostrTransport implements MessageTransport {
       final event = NostrEvent.create(
         keys: _keys!,
         kind: NostrKind.channelMessage,
-        content: jsonEncode(message.toJson()),
+        // Identity proof for the sender check (audit S-1).
+        content: jsonEncode(_withIdentityProof(message.toJson())),
         tags: [
           ['t', nostrTag],
         ],
@@ -1830,13 +1859,14 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.textNote,
-      content: jsonEncode(message.toJson()),
+      // Identity proof for the sender check (audit S-1).
+      content: jsonEncode(_withIdentityProof(message.toJson())),
       tags: tags,
     );
     _rememberSentNostrEventId(message.id, event.id);
     print('[NOSTR] Publishing broadcast kind=1 '
         'id=${event.id.substring(0, 8)}… tags=${event.tags.map((t) => t.join('=')).join(',')}');
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
   }
 
   Future<void> _sendDm(NexusMessage message) async {
@@ -1858,8 +1888,10 @@ class NostrTransport implements MessageTransport {
 
     final recipientPubBytes =
         Uint8List.fromList(_hexToBytes(recipientNostrPubkey));
+    // The identity proof travels inside the encrypted content, so the
+    // recipient can bind our DID to the signing key (audit S-1).
     final content = await _nip04Encrypt(
-      jsonEncode(message.toJson()),
+      jsonEncode(_withIdentityProof(message.toJson())),
       recipientPubBytes,
     );
 
@@ -1955,7 +1987,7 @@ class NostrTransport implements MessageTransport {
       content: jsonEncode(content),
       tags: [],
     );
-    _relayManager.publishFireAndForget(event);
+    _publishQueued(event);
     debugPrint('[Nostr] Kind-0 event published: ${event.id}');
   }
 
@@ -2050,11 +2082,12 @@ class NostrTransport implements MessageTransport {
     final event = NostrEvent.create(
       keys: _keys!,
       kind: NostrKind.presence,
-      content: jsonEncode({
+      // The identity proof binds our DID to this key (audit S-1).
+      content: jsonEncode(_withIdentityProof({
         'did': localDid,
         'pseudonym': name,
         if (_encryptionPublicKeyHex != null) 'enc_key': _encryptionPublicKeyHex,
-      }),
+      })),
       tags: tags,
     );
     _relayManager.publishFireAndForget(event);
@@ -2668,9 +2701,11 @@ class NostrTransport implements MessageTransport {
     _delegationEventController.add(event);
   }
 
+  /// Own-pubkey posts are forwarded (device test 16.11.2026): our other
+  /// devices share the keypair, so a post written there must show up here.
+  /// FeedService drops the echo on the writing device by post id.
   void _handleFeedPost(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own event, already stored
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       _feedPostController.add({
@@ -2683,9 +2718,10 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  /// Own-pubkey comments are forwarded like posts (device test 16.11.2026);
+  /// FeedService stores them idempotently and never notifies about them.
   void _handleFeedComment(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own event
     try {
       final data = jsonDecode(event.content) as Map<String, dynamic>;
       _feedCommentController.add({
@@ -2698,9 +2734,14 @@ class NostrTransport implements MessageTransport {
     }
   }
 
+  /// Own-pubkey events are intentionally forwarded (audit TD-71): devices
+  /// of the same identity share the Nostr keypair (same seed phrase), so a
+  /// reaction added on one device must reach the others. The receiver
+  /// resolves the signer to its own DID and stores it idempotently under
+  /// the same key the sending device already used, so this is a no-op on
+  /// the very device that published the reaction, not a duplicate.
   void _handleReaction(NostrEvent event) {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return; // own reaction
     final referencedEventId = event.tagValue('e');
     if (referencedEventId == null || !isValidNostrEventId(referencedEventId)) {
       print('[REACTION-RECV] Kind-7 received with invalid e-tag — ignored');
@@ -3117,21 +3158,56 @@ class NostrTransport implements MessageTransport {
     }
   }
 
-  void _handleChannelMessageEvent(NostrEvent event) {
+  /// Own-pubkey posts are forwarded (device test 16.11.2026) so a channel
+  /// post written on our other device appears here; ChatProvider drops the
+  /// echo on the writing device by message id and never notifies about it.
+  Future<void> _handleChannelMessageEvent(NostrEvent event) async {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return;
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = _withWrapperId(
-        NexusMessage.fromJson(msgJson),
-        event,
-      );
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
-      _msgController.add(message);
+      final message = await _checkedPublicMessage(msgJson, event, 'Kind-42');
+      if (message != null) _msgController.add(message);
     } catch (e) {
       print('[NOSTR] Kind-42 parse FAILED: $e');
     }
+  }
+
+  /// Parses a public chat post (channel or #mesh) and runs the sender check
+  /// (audit S-1). Returns null for a forged post, which must be dropped.
+  /// Learns the sender's key only as far as the check allows.
+  Future<NexusMessage?> _checkedPublicMessage(
+    Map<String, dynamic> msgJson,
+    NostrEvent event,
+    String label,
+  ) async {
+    final parsed = _withWrapperId(NexusMessage.fromJson(msgJson), event);
+    // Signed with our own key: only our own devices can have written it.
+    // It must carry our own DID; no proof check and no peer to learn.
+    if (event.pubkey == _keys!.publicKeyHex) {
+      if (!isOwnDeviceMessage(parsed.fromDid, localDid)) {
+        print('[SYNC] Own $label ${event.id.substring(0, 8)} ignored: '
+            'sender ${parsed.fromDid} is not us');
+        return null;
+      }
+      return parsed.withSenderCheck(NexusMessage.senderVerified);
+    }
+    final check = await checkSender(
+      proof: msgJson[IdentityProof.contentKey],
+      signerPubkey: event.pubkey,
+      claimedDid: parsed.fromDid,
+      knownPubkey: _didToNostrPubkey[parsed.fromDid],
+    );
+    if (check == SenderCheck.forged) {
+      print('[S1-REJECT] $label ${event.id.substring(0, 8)} dropped: claims '
+          '${parsed.fromDid} but is signed by '
+          '${event.pubkey.substring(0, 8)}… without a valid proof');
+      return null;
+    }
+    final verified = check == SenderCheck.verified;
+    _learnPeer(event.pubkey, parsed.fromDid, verified: verified);
+    return parsed.withSenderCheck(
+        verified ? NexusMessage.senderVerified : NexusMessage.senderUnverified);
   }
 
   void _handleDm(NostrEvent event) async {
@@ -3159,19 +3235,40 @@ class NostrTransport implements MessageTransport {
       final senderPubBytes = Uint8List.fromList(_hexToBytes(event.pubkey));
       final plaintext = await _nip04Decrypt(event.content, senderPubBytes);
       final msgJson = jsonDecode(plaintext) as Map<String, dynamic>;
-      final message = _withWrapperId(
+      final parsed = _withWrapperId(
         NexusMessage.fromJson(msgJson),
         event,
       );
 
+      // Audit S-1: the DID inside the message must be bound to the key that
+      // signed the event. Without proof (older versions) the message is
+      // accepted with a hint, but it may not take over a known contact.
+      final check = await checkSender(
+        proof: msgJson[IdentityProof.contentKey],
+        signerPubkey: event.pubkey,
+        claimedDid: parsed.fromDid,
+        knownPubkey: _didToNostrPubkey[parsed.fromDid],
+      );
+      if (check == SenderCheck.forged) {
+        print('[S1-REJECT] DM ${event.id.substring(0, 8)} dropped: claims '
+            '${parsed.fromDid} but is signed by '
+            '${event.pubkey.substring(0, 8)}… without a valid proof');
+        return;
+      }
+      final verified = check == SenderCheck.verified;
+      final message = parsed.withSenderCheck(verified
+          ? NexusMessage.senderVerified
+          : NexusMessage.senderUnverified);
+
       final msgType = message.metadata?['type'] as String?;
       print('[NOSTR] DM decrypted OK: ${message.fromDid} → ${message.toDid}'
+          ' sender=${check.name}'
           '${msgType != null ? '  type=$msgType' : ''}');
       if (msgType == 'contact_request') {
         print('[ContactRequest] contact_request DM arrived – routing to service');
       }
       print('[SYNC] Stored message: ${message.id}');
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
+      _learnPeer(event.pubkey, message.fromDid, verified: verified);
       _msgController.add(message);
     } catch (e) {
       print('[NOSTR] DM decrypt FAILED (not for us or malformed): $e');
@@ -3237,9 +3334,8 @@ class NostrTransport implements MessageTransport {
     }
   }
 
-  void _handleBroadcast(NostrEvent event) {
+  Future<void> _handleBroadcast(NostrEvent event) async {
     if (_keys == null) return;
-    if (event.pubkey == _keys!.publicKeyHex) return;
 
     // Must have nexus-mesh tag
     if (!event.tagValues('t').contains('nexus-mesh')) return;
@@ -3251,22 +3347,19 @@ class NostrTransport implements MessageTransport {
 
     try {
       final msgJson = jsonDecode(event.content) as Map<String, dynamic>;
-      final message = _withWrapperId(
-        NexusMessage.fromJson(msgJson),
-        event,
-      );
+      final message = await _checkedPublicMessage(msgJson, event, 'Broadcast');
+      if (message == null) return;
       final didLen = message.fromDid.length;
       print('[NOSTR] Broadcast parsed OK: from=${message.fromDid.substring(0, didLen.clamp(0, 12))}… '
           'body="${message.body.length > 40 ? message.body.substring(0, 40) : message.body}"');
       print('[SYNC] Stored message: ${message.id}');
-      _learnPeer(event.pubkey, message.fromDid, message.metadata);
       _msgController.add(message);
     } catch (e) {
       print('[NOSTR] Broadcast parse FAILED: $e');
     }
   }
 
-  void _handlePresenceEvent(NostrEvent event) {
+  Future<void> _handlePresenceEvent(NostrEvent event) async {
     if (_keys == null) return;
     // Ignore our own presence events
     if (event.pubkey == _keys!.publicKeyHex) return;
@@ -3288,13 +3381,36 @@ class NostrTransport implements MessageTransport {
           'timestamp=${event.createdAt}, age=${ageSeconds}s, '
           'pseudonym=$pseudonym');
 
+      // Audit S-1: a presence event is public, so anyone can publish one
+      // naming any DID. Only a valid identity proof may change known keys.
+      final check = await checkSender(
+        proof: data[IdentityProof.contentKey],
+        signerPubkey: event.pubkey,
+        claimedDid: did,
+        knownPubkey: _didToNostrPubkey[did],
+      );
+      if (check == SenderCheck.forged) {
+        print('[S1-REJECT] Presence ${event.id.substring(0, 8)} dropped: '
+            'claims $did but is signed by ${event.pubkey.substring(0, 8)}… '
+            'without a valid proof');
+        return;
+      }
+      final verified = check == SenderCheck.verified;
+
       final encKey = data['enc_key'] as String?;
       if (encKey != null) {
-        // Store in ContactService so ChatProvider can encrypt to this peer
-        ContactService.instance.setEncryptionKey(did, encKey);
+        final knownEncKey =
+            ContactService.instance.findByDid(did)?.encryptionPublicKey;
+        if (verified || knownEncKey == null || knownEncKey == encKey) {
+          // Store in ContactService so ChatProvider can encrypt to this peer
+          ContactService.instance.setEncryptionKey(did, encKey);
+        } else {
+          print('[S1-KEEP] Encryption key of $did kept: presence has no proof');
+        }
       }
 
-      // Store DID ↔ Nostr pubkey mapping so we can send DMs.
+      // Store DID ↔ Nostr pubkey mapping so we can send DMs. Without proof
+      // this only happens for an unknown DID or the key already known.
       final isNewPubkey = _didToNostrPubkey[did] != event.pubkey;
       _didToNostrPubkey[did] = event.pubkey;
 
@@ -3302,6 +3418,7 @@ class NostrTransport implements MessageTransport {
       // _setupSubscriptions() can pre-populate _didToNostrPubkey and subscribe
       // to Kind-0 metadata before any messages have been exchanged.
       ContactService.instance.setNostrPubkey(did, event.pubkey);
+      print('[NOSTR] Presence sender=${check.name} for $did');
 
       // If this is a newly learned pubkey, immediately request their Kind-0
       // metadata so the display name is updated without waiting for the
@@ -3435,19 +3552,23 @@ class NostrTransport implements MessageTransport {
     // the transport layer).  A future enhancement could add a download step.
   }
 
+  /// Remembers which Nostr key belongs to [senderDid] (replies go there).
+  ///
+  /// Audit S-1: only a [verified] sender may replace a known key. Without
+  /// proof a key is learned only for a DID not seen before, and a key named
+  /// inside the message content is never used.
   void _learnPeer(
     String nostrPubkey,
-    String senderDid,
-    Map<String, dynamic>? metadata,
-  ) {
-    // Build DID ↔ Nostr pubkey mapping
-    _didToNostrPubkey[senderDid] = nostrPubkey;
-
-    // Also learn from metadata if another transport sent the message
-    final metaNostrPubkey = metadata?['nostr_pubkey'] as String?;
-    if (metaNostrPubkey != null) {
-      _didToNostrPubkey[senderDid] = metaNostrPubkey;
+    String senderDid, {
+    required bool verified,
+  }) {
+    final known = _didToNostrPubkey[senderDid];
+    if (known != null && known != nostrPubkey && !verified) {
+      print('[S1-KEEP] Known key for $senderDid kept; '
+          '${nostrPubkey.substring(0, 8)}… has no proof');
+      return;
     }
+    _didToNostrPubkey[senderDid] = nostrPubkey;
 
     final existing = _peers[nostrPubkey];
     final pseudonym = existing?.pseudonym ?? _shortDid(senderDid);

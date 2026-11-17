@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../core/identity/identity_proof.dart';
 import '../core/transport/nostr/nostr_event.dart';
 import '../core/transport/nostr/nostr_keys.dart';
 import '../core/transport/nostr/relay_config.dart';
@@ -135,11 +136,11 @@ void _onStart(ServiceInstance service) async {
     pubKeyHex = await storage.read(key: 'nostr_public_key');
     localDid = await storage.read(key: 'nexus_did');
     localPseudonym = await storage.read(key: 'nexus_pseudonym');
-    // Reconstruct NostrKeys from cached hex values (seed not needed if keys
-    // are already stored, which they always are after first launch).
-    if (pubKeyHex != null) {
-      nostrKeys = await NostrKeys.loadOrDerive(Uint8List(0));
-    }
+    // Reconstruct NostrKeys from cached hex values. Only ever loads what is
+    // already cached (audit F-004): without a seed phrase on hand, deriving
+    // from an empty one on a partial cache would persist a wrong identity.
+    nostrKeys = await NostrKeys.loadCachedOnly();
+    pubKeyHex = nostrKeys?.publicKeyHex ?? pubKeyHex;
   } catch (_) {}
 
   // ── Presence heartbeat ────────────────────────────────────────────────────
@@ -148,12 +149,24 @@ void _onStart(ServiceInstance service) async {
   Future<void> sendPresenceHeartbeat() async {
     if (sockets.isEmpty || nostrKeys == null || localDid == null) return;
     try {
+      // The identity proof written by the app (audit S-1); without it the
+      // receivers treat this heartbeat as unconfirmed.
+      Object? proof;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
+        final raw = prefs.getString(IdentityProof.prefsKey);
+        if (raw != null) proof = jsonDecode(raw);
+      } catch (e) {
+        debugPrint('[BGS] identity proof unavailable: $e');
+      }
       final event = NostrEvent.create(
         keys: nostrKeys,
         kind: 30078, // NostrKind.presence
         content: jsonEncode({
           'did': localDid,
           'pseudonym': localPseudonym ?? '',
+          if (proof != null) IdentityProof.contentKey: proof,
         }),
         tags: [
           ['d', 'nexus-presence'],
