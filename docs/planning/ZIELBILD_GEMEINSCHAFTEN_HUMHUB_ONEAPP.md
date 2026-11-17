@@ -120,10 +120,10 @@ Gemeinschaften und von Kontakten, keinen ungefilterten Gesamtstrom. Ein
 
 | # | Frage | Empfehlung | Wer |
 |---|---|---|---|
-| 1 | Wird der Dorfplatz die Übersicht der eigenen Gemeinschaften statt einer globalen Timeline? | ja | Community / Josh |
-| 2 | Welcher Gründungsweg für Gemeinschaften gilt (Portal, OneApp, beide)? | Portal-Weg als Vorgabe, OneApp übernimmt ihn | Josh |
-| 3 | Technische Grundlage privater Gemeinschaften: NIP-29 oder Ende-zu-Ende? | als ADR vorbereiten | Architektur |
-| 4 | Konto-Verknüpfung Portal ↔ OneApp: ja oder nein? | ja, als Voraussetzung für den Umzug | Josh / Joachim |
+| 1 | Wird der Dorfplatz die Übersicht der eigenen Gemeinschaften statt einer globalen Timeline? | ja – **zurückgestellt (17.11.2026)** | Community / Josh |
+| 2 | Welcher Gründungsweg für Gemeinschaften gilt (Portal, OneApp, beide)? | Portal-Weg als Vorgabe, OneApp übernimmt ihn – **zurückgestellt (17.11.2026)** | Josh |
+| 3 | Technische Grundlage privater Gemeinschaften: NIP-29 oder Ende-zu-Ende? | **Entschieden 17.11.2026 (Joachim): Ende-zu-Ende** mit Gruppenschlüssel und neuem Schlüssel beim Austritt, aufbauend auf privaten Kanälen und Gemeinschaftskanälen (S-4); ADR, wenn private Gemeinschaften gebaut werden | Architektur |
+| 4 | Konto-Verknüpfung Portal ↔ OneApp: ja oder nein? | **Entschieden 17.11.2026 (Joachim): ja.** Freiwillig und lösbar: Anmeldung im Browser über Authentik (OAuth mit PKCE), danach unterschreibt die OneApp ihre DID, ein kleines HumHub-Modul prüft und speichert sie. Später Portal-Anmeldung per QR-Code. Umsetzung nach den kleineren Schritten von Block 3 | Josh / Joachim |
 | 5 | Ordnung von Kanal und Gruppe | vorläufig zurückgestellt | später |
 | 6 | Welche Plattformen sind Pflicht vor der Ablösung (iOS, macOS, Linux, Browser)? | iOS und macOS mindestens | Joachim |
 

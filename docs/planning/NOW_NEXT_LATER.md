@@ -416,7 +416,31 @@ Kein Neuaufbau. Gezielte Härtung, bevor die OneApp weiter wächst.
 
 ## Nächster konkreter Schritt
 
-Stand 13. November 2026: Block 1 ist im Code bis auf R-1 Teil 2 (Wechsel
+Stand 17. November 2026: Block 1 und 2 sind in `main` (PR 12), Gerätetests
+Runde 1 und 3 bestanden. Block 3 beginnt mit den kleineren Schritten;
+Zielbild-Entscheidungen 1 und 2 sind zurückgestellt, 3 (Ende-zu-Ende) und
+4 (Konto-Verknüpfung) entschieden. Reihenfolge (Joachim/Claude):
+
+1. Sprachkompression unter Windows (mit dem offenen Test der langen
+   Sprachnachricht)
+2. Desktop: Rechtsklick-Menü für Reaktion und Löschen (TD-68)
+3. **Release v0.2.1** – Block 1 und 2 sind getestet und sollen zu allen
+   Testern; ab hier zählt auch die Übergangszeit für Nachrichten ohne
+   Identitätsnachweis (S-1-Ende)
+4. Benachrichtigungen unter Windows und für Kanäle
+5. Datenbank: Indizes und seitenweises Laden
+6. Messenger-Funktionen: Entwürfe, Weiterleiten, Kanal stummschalten,
+   Kanalsuche, Bearbeiten (Bearbeiten zuletzt, braucht ein Protokollfeld)
+7. Verständliche Fehlermeldungen, kürzerer Weg für neue Nutzer,
+   Platzhalter ausblenden
+8. Rechtliches und Konto: Datenschutzerklärung, Abmelden und Löschen,
+   Meldewege
+9. **Release v0.3.0** – Voraussetzung für einen größeren Kreis
+10. Übersetzung DE/EN (vorher Lokalisierungs-Grundlage)
+11. Konto-Verknüpfung Portal ↔ OneApp (Entscheidung 4), danach zwei
+    Spalten am Desktop
+
+Frühere Fassung, Stand 13. November 2026: Block 1 ist im Code bis auf R-1 Teil 2 (Wechsel
 auf einen Release-Schlüssel, bewusst später) umgesetzt: C-1 bis C-3, S-1,
 S-2, S-3/C-4, S-4 mit neuem Kanalschlüssel beim Entfernen, Z-1/Z-2,
 Debug-Keystore gesichert, D-1/D-2. Offen: die gesammelten Gerätetests,
